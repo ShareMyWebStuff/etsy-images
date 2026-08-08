@@ -1,0 +1,345 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Category {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  listings  Listing[]
+  createdAt DateTime  @default(now())
+}
+
+model Listing {
+  id         Int       @id @default(autoincrement())
+  title      String
+  price      Float?
+  shopName   String?
+  etsyId     String?   @unique
+  categoryId Int?
+  category   Category? @relation(fields: [categoryId], references: [id])
+  createdAt  DateTime  @default(now())
+}
+
+model MyCategory {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(50)
+  description String   @db.VarChar(1000)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model EtsyListing {
+  id                        Int                   @id @default(autoincrement())
+  etsyId                    String?               @unique
+  shopId                    String
+  userId                    String?
+  title                     String
+  description               String?               @db.Text
+  state                     String?
+  url                       String?               @db.Text
+  quantity                  Int?
+  priceAmount               Int?
+  priceDivisor              Int?
+  priceCurrencyCode         String?
+  taxonomyId                Int?
+  shopSectionId             Int?
+  whoMade                   String?
+  isSupply                  Boolean?
+  whenMade                  String?
+  shouldAutoRenew           Boolean?
+  isPersonalizable          Boolean?
+  personalizationIsRequired Boolean?
+  language                  String?
+  primaryColour             String?
+  secondaryColour           String?
+  createdTimestamp          Int?
+  updatedTimestamp          Int?
+  originalCreationTimestamp Int?
+  endingTimestamp           Int?
+  rawJson                   Json?
+  subSectionId              Int?
+  localDirectoryName        String?
+  isLocal                   Boolean               @default(false)
+  downloadedAt              DateTime              @default(now())
+  updatedAt                 DateTime              @updatedAt
+  lastLocalChangeAt         DateTime              @default(now())
+  lastSyncedAt              DateTime?
+  tags                      EtsyListingTag[]
+  materials                 EtsyListingMaterial[]
+  images                    EtsyListingImage[]
+  files                     EtsyListingFile[]
+  zippedFiles               EtsyListingZip[]
+  styles                    EtsyListingStyle[]
+  videos                    EtsyListingVideo[]
+  translations              EtsyListingTranslation[]
+  inventoryItems            EtsyListingInventory[]
+  personalizations          EtsyListingPersonalization[]
+  buyerPrices               EtsyListingBuyerPrice[]
+  localProfile              EtsyListingLocalProfile?
+  dropboxFiles              EtsyListingDropboxFile[]
+  dropboxBundle             EtsyListingDropboxBundle?
+  subSection                EtsyShopSubSection?   @relation(fields: [subSectionId], references: [id], onDelete: SetNull)
+
+  @@unique([subSectionId, localDirectoryName])
+  @@index([shopId])
+  @@index([state])
+  @@index([subSectionId])
+  @@map("etsy_listings")
+}
+
+model EtsyListingLocalProfile {
+  id          Int         @id @default(autoincrement())
+  listingId   Int         @unique
+  name        String
+  description String      @db.Text
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  listing     EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@map("etsy_listing_local_profiles")
+}
+
+model EtsyListingDropboxFile {
+  id                  Int         @id @default(autoincrement())
+  listingId           Int
+  sourceListingId     Int?
+  sourceDirectoryName String
+  groupNumber         Int
+  localFileName       String
+  originalFileName    String?
+  sizeBytes           Int?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  listing             EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, groupNumber])
+  @@map("etsy_listing_dropbox_files")
+}
+
+model EtsyListingDropboxBundle {
+  id           Int         @id @default(autoincrement())
+  listingId    Int         @unique
+  folderPath   String
+  sharedUrl    String?     @db.Text
+  instructions String      @db.Text
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  listing      EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@map("etsy_listing_dropbox_bundles")
+}
+
+model EtsyShop {
+  id           Int               @id @default(autoincrement())
+  etsyShopId   BigInt            @unique
+  userId       BigInt
+  shopName     String?
+  title        String?
+  announcement String?           @db.Text
+  url          String?           @db.Text
+  downloadedAt DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  sections     EtsyShopSection[]
+
+  @@index([userId])
+  @@map("etsy_shops")
+}
+
+model EtsyShopSection {
+  id                 Int                  @id @default(autoincrement())
+  shopId             Int?
+  etsyShopId         BigInt?
+  etsyShopSectionId  String?
+  title              String
+  rank               Int?
+  activeListingCount Int?
+  rawJson            Json?
+  downloadedAt       DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  numberOfDownloads  Int                  @default(1)
+  includeAllDownloads Boolean             @default(false)
+  sourceSectionId     Int?
+  shop               EtsyShop?            @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  subSections        EtsyShopSubSection[]
+
+  @@unique([shopId, title])
+  @@unique([shopId, etsyShopSectionId])
+  @@unique([etsyShopId, etsyShopSectionId])
+  @@index([shopId])
+  @@index([etsyShopId])
+  @@map("etsy_shop_sections")
+}
+
+model EtsyShopSubSection {
+  id                  Int             @id @default(autoincrement())
+  shopSectionId       Int
+  name                String
+  numberOfDownloads   Int?
+  includeAllDownloads Boolean         @default(false)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  shopSection         EtsyShopSection @relation(fields: [shopSectionId], references: [id], onDelete: Cascade)
+  listings            EtsyListing[]
+
+  @@unique([shopSectionId, name])
+  @@index([shopSectionId])
+  @@map("etsy_shop_sub_sections")
+}
+
+model EtsyListingTag {
+  id        Int         @id @default(autoincrement())
+  listingId Int
+  tag       String
+  position  Int?
+  listing   EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, tag])
+  @@map("etsy_listing_tags")
+}
+
+model EtsyListingMaterial {
+  id        Int         @id @default(autoincrement())
+  listingId Int
+  material  String
+  position  Int?
+  listing   EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, material])
+  @@map("etsy_listing_materials")
+}
+
+model EtsyListingImage {
+  id           Int         @id @default(autoincrement())
+  listingId    Int
+  etsyImageId  String?
+  localFileName String?
+  originalFileName String?
+  rank         Int?
+  url75x75     String?     @db.Text
+  url170x135   String?     @db.Text
+  url570xN     String?     @db.Text
+  urlFullxFull String?     @db.Text
+  fullHeight   Int?
+  fullWidth    Int?
+  listing      EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, etsyImageId])
+  @@map("etsy_listing_images")
+}
+
+model EtsyListingFile {
+  id                Int         @id @default(autoincrement())
+  listingId         Int
+  etsyListingFileId String?
+  localFileName     String?
+  originalFileName  String?
+  rank              Int?
+  filename          String?
+  filesize          String?
+  sizeBytes         Int?
+  widthPixels       Int?
+  heightPixels      Int?
+  jpegQuality       Int?
+  zipNumber         Int?
+  filetype          String?
+  createTimestamp   Int?
+  createdTimestamp  Int?
+  rawJson           Json
+  downloadedAt      DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  listing           EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@map("etsy_listing_files")
+}
+
+model EtsyListingZip {
+  id        Int         @id @default(autoincrement())
+  listingId Int
+  zipNumber Int
+  fileName  String
+  sizeBytes Int
+  etsyListingFileId String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  listing   EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, zipNumber])
+  @@map("etsy_listing_zips")
+}
+
+model EtsyListingStyle {
+  id        Int         @id @default(autoincrement())
+  listingId Int
+  style     String
+  position  Int?
+  listing   EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, style])
+  @@map("etsy_listing_styles")
+}
+
+model EtsyListingVideo {
+  id               Int         @id @default(autoincrement())
+  listingId        Int
+  localFileName    String?
+  originalFileName String?
+  etsyVideoId      String?
+  rank             Int?
+  listing          EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, etsyVideoId])
+  @@map("etsy_listing_videos")
+}
+
+model EtsyListingTranslation {
+  id          Int         @id @default(autoincrement())
+  listingId   Int
+  language    String
+  title       String?
+  description String?     @db.Text
+  listing     EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, language])
+  @@map("etsy_listing_translations")
+}
+
+model EtsyListingInventory {
+  id        Int         @id @default(autoincrement())
+  listingId Int
+  name      String
+  value     String?
+  sku       String?
+  price     Float?
+  quantity  Int?
+  listing   EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@map("etsy_listing_inventory")
+}
+
+model EtsyListingPersonalization {
+  id           Int         @id @default(autoincrement())
+  listingId    Int
+  instructions String      @db.Text
+  isRequired   Boolean     @default(false)
+  charCountMax Int?
+  listing      EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@map("etsy_listing_personalizations")
+}
+
+model EtsyListingBuyerPrice {
+  id           Int         @id @default(autoincrement())
+  listingId    Int
+  amount       Int
+  divisor      Int         @default(100)
+  currencyCode String      @default("GBP")
+  note         String?
+  listing      EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@map("etsy_listing_buyer_prices")
+}

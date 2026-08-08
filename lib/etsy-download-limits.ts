@@ -1,0 +1,2 @@
+export const ETSY_MAX_DOWNLOAD_FILES = 5;
+export const ETSY_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;

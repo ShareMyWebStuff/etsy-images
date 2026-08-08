@@ -1,0 +1,273 @@
+PROMPT — What Is Included in This Dinosaur Digital Download
+Generate one inline ChatGPT image only.
+Return only the generated image.
+Do not create or attach a downloadable file.
+Do not return a filename, markdown link, sandbox link, download button, ZIP file, or additional text.
+Do not use Python, Code Interpreter, Data Analysis, or file generation.
+PRODUCT THEME
+The product theme is dinosaurs.
+Create a warm, premium, nursery-friendly information graphic suitable for an Etsy listing selling printable dinosaur wall art.
+PRODUCT CONTENT
+The digital download contains:
+•	12 dinosaur artworks
+•	5 print ratios for each artwork
+•	60 high-resolution JPEG files in total
+The image must communicate these quantities clearly and accurately.
+MAIN TASK
+Create one clean, professional Etsy information image explaining exactly what the buyer receives with this digital download.
+The three main product quantities must be the dominant information:
+12 ARTWORKS
+5 RATIOS PER ARTWORK
+60 HIGH-RESOLUTION JPEG FILES
+These three statements must be easy to understand at a glance, including when viewed as a smaller Etsy listing image.
+MAIN HEADING
+Use the exact heading:
+WHAT YOU WILL RECEIVE
+The heading must:
+•	appear near the top
+•	be clearly readable
+•	use clean, modern typography
+•	be prominent without overwhelming the design
+•	remain fully visible within safe margins
+Do not change, shorten, or paraphrase the heading.
+MAIN PRODUCT STATISTICS
+Display three clearly separated information sections.
+Section 1
+Show the exact wording:
+12 ARTWORKS
+Support it with a simple visual representation, such as:
+•	a neat group of small framed dinosaur print thumbnails
+•	a simple gallery icon
+•	a tasteful stack of artwork previews
+Do not attempt to create 12 detailed or different dinosaur illustrations unless actual artwork images are attached.
+The visual is only a supporting symbol for the quantity.
+Section 2
+Show the exact wording:
+5 RATIOS PER ARTWORK
+Support it with a clean ratio or paper-size visual, such as five overlapping page outlines.
+Where there is enough room, include the five ratio families:
+2:3
+3:4
+4:5
+11:14
+ISO A-SERIES
+The five ratios must be shown as separate format options.
+Do not imply that these are five physical prints.
+They represent five digital print-size ratios supplied for each artwork.
+Section 3
+Show the exact wording:
+60 HIGH-RESOLUTION JPEG FILES
+Support it with a simple digital-file visual, such as:
+•	a JPEG file icon
+•	a download folder
+•	a neat set of digital document symbols
+•	a computer download icon
+Make it clear these are digital JPEG files.
+SUPPORTING MESSAGE
+Include the exact wording:
+DIGITAL DOWNLOAD
+Also include:
+NO PHYSICAL ITEM SHIPPED
+These statements should be clearly visible but secondary to the three main product quantities.
+Optionally include the small supporting line:
+Download, print and frame
+Do not include any other promotional claim.
+INFORMATION HIERARCHY
+Use this hierarchy:
+1.	WHAT YOU WILL RECEIVE
+2.	12 ARTWORKS
+3.	5 RATIOS PER ARTWORK
+4.	60 HIGH-RESOLUTION JPEG FILES
+5.	DIGITAL DOWNLOAD
+6.	NO PHYSICAL ITEM SHIPPED
+The three product quantities must receive similar visual prominence.
+Do not make one quantity appear unimportant or difficult to find.
+DESIGN STYLE
+Create a premium dinosaur-themed design suitable for a young child’s bedroom, nursery, or playroom.
+Use:
+•	a warm white, cream, beige, pale sage, or light neutral background
+•	muted earthy dinosaur-inspired colours
+•	soft natural textures
+•	clean modern typography
+•	generous white space
+•	gentle shadows
+•	simple premium icons
+•	a calm and trustworthy layout
+The image should feel:
+•	friendly
+•	polished
+•	high quality
+•	easy to understand
+•	nursery appropriate
+•	suitable for a professional Etsy shop
+Do not make the design overly cartoonish, loud, cluttered, or childish.
+DINOSAUR THEME ACCENTS
+Add two to four restrained dinosaur-themed accents around the information graphic.
+Suitable accents include:
+•	small dinosaur footprints
+•	a subtle fossil motif
+•	a small wooden dinosaur silhouette
+•	a muted leaf or prehistoric plant detail
+•	a delicate dinosaur outline
+•	a soft dinosaur-pattern border
+•	a subtle egg or bone motif
+Keep all accents:
+•	small
+•	decorative
+•	understated
+•	outside the main text
+•	secondary to the product information
+Do not place decorative elements over any text.
+Do not fill the image with dinosaurs.
+Do not use copyrighted characters or recognisable branded dinosaur designs.
+OPTIONAL ARTWORK PREVIEW
+An artwork preview is optional.
+When no source artwork is attached, do not invent a detailed dinosaur print and present it as the actual product.
+Instead, use:
+•	neutral artwork placeholders
+•	simple framed page shapes
+•	generic dinosaur silhouettes
+•	small abstract print previews
+These must be clearly decorative and must not imply they are exact supplied artworks.
+When artwork images are attached, use them only as small previews.
+Do not redraw, alter, recolour, replace, merge, distort, mirror, or heavily crop attached artwork.
+LAYOUT
+Create a clean square information graphic.
+A recommended layout is:
+•	heading across the top
+•	three large information sections across the centre
+•	digital-download message near the bottom
+•	restrained dinosaur accents around the edges
+The three information sections may be arranged:
+•	in one horizontal row
+•	in three equal cards
+•	in a balanced triangular layout
+•	or in a clean stacked composition
+Choose the arrangement that gives the clearest text at Etsy thumbnail size.
+Each information section must have:
+•	one clear number
+•	one short label
+•	one simple supporting icon or visual
+•	adequate spacing from the other sections
+Keep all important content centred with safe margins.
+TEXT ACCURACY
+Use the following wording exactly:
+WHAT YOU WILL RECEIVE
+12 ARTWORKS
+5 RATIOS PER ARTWORK
+60 HIGH-RESOLUTION JPEG FILES
+DIGITAL DOWNLOAD
+NO PHYSICAL ITEM SHIPPED
+When the ratio names are included, use:
+2:3
+3:4
+4:5
+11:14
+ISO A-SERIES
+Optional wording:
+Download, print and frame
+All text must:
+•	be spelled correctly
+•	be easy to read
+•	remain straight and undistorted
+•	use simple modern typography
+•	have sufficient contrast against the background
+•	remain inside safe margins
+Do not:
+•	misspell JPEG
+•	change 60 to another number
+•	change 12 artworks to 12 files
+•	imply there are only five files
+•	imply there are 60 artworks
+•	alter the wording
+•	use decorative handwritten fonts
+•	warp or curve the text
+•	crowd the text together
+If accurate small text rendering is unreliable, prioritise the six required main statements and omit the optional wording.
+PRODUCT ACCURACY
+This is a digital-download product.
+The buyer receives:
+•	12 digital dinosaur artworks
+•	each artwork in 5 print ratios
+•	60 high-resolution JPEG files in total
+The calculation is:
+12 artworks × 5 ratios = 60 JPEG files
+Do not suggest that the buyer receives:
+•	60 different artworks
+•	60 physical prints
+•	12 framed pictures
+•	physical frames
+•	printed posters
+•	packaging
+•	delivery
+•	installation
+•	a physical product of any kind
+Any frames, pages, screens, artwork previews, or printing symbols are visual examples only.
+DO NOT SHOW
+Do not show:
+•	shipping boxes
+•	parcels
+•	mailing tubes
+•	postage labels
+•	delivery vans
+•	wrapped prints
+•	gift packaging
+•	stacks of physical posters
+•	anything suggesting postage or physical delivery
+•	Etsy logos
+•	fake Etsy interface elements
+•	fake download buttons
+•	prices
+•	discounts
+•	sale badges
+•	star ratings
+•	reviews
+•	people
+•	children
+•	faces
+•	pets
+•	unrelated animals
+•	unrelated themes
+•	copyrighted characters
+•	watermarks
+•	brand logos
+AVOID
+Avoid:
+•	cluttered layouts
+•	tiny unreadable text
+•	excessive decorative elements
+•	bright harsh colours
+•	dark backgrounds
+•	heavy shadows
+•	overly cartoonish styling
+•	misleading file quantities
+•	unclear ratio information
+•	physical-product imagery
+•	unrelated nursery decorations
+•	generic information styling with no dinosaur connection
+•	excessive dinosaur decorations that distract from the text
+•	invented detailed artwork presented as the actual product
+FINAL VALIDATION
+Before returning the image, verify that:
+•	the heading reads exactly “WHAT YOU WILL RECEIVE”
+•	“12 ARTWORKS” is clearly visible
+•	“5 RATIOS PER ARTWORK” is clearly visible
+•	“60 HIGH-RESOLUTION JPEG FILES” is clearly visible
+•	“DIGITAL DOWNLOAD” is clearly visible
+•	“NO PHYSICAL ITEM SHIPPED” is clearly visible
+•	all quantities are correct
+•	the design clearly represents dinosaurs
+•	the dinosaur styling remains restrained
+•	the design is clean and professional
+•	the text is spelled correctly
+•	no required text is cropped
+•	no physical-shipping imagery appears
+•	no misleading physical product is shown
+•	all important elements remain within safe margins
+OUTPUT
+Create one square Etsy listing image.
+Target size: 3000 × 3000 pixels.
+Minimum size: 2000 × 2000 pixels.
+Keep all important text and visual elements centred with safe margins so Etsy cropping does not remove anything.
+Return only the generated image in the ChatGPT image viewer.
+

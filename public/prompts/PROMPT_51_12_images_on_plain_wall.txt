@@ -1,0 +1,422 @@
+PROMPT — Twelve Dinosaur Artworks on a Plain Wall
+
+Generate one inline ChatGPT image only.
+
+Return only the generated image. Do not create files, links, filenames, download buttons, ZIP files, or additional text.
+
+DECLARED VARIABLES
+
+ANIMALS: Apatosaurus, Argentinosaurus, Brachiosaurus, Camptosaurus, Diplodocus, Edmontosaurus, Iguanodon, Maiasaura, Mamenchisaurus, Parasaurolophus, Plateosaurus, Triceratops
+
+ROOM_THEME: dinosaurs
+
+FRAME_COLOUR: dark brown wood
+
+PRODUCT_LABEL: SET OF 12 DIGITAL PRINTS
+
+REQUIRED IMAGE INPUTS
+
+Exactly 12 separate artwork images must be attached to this prompt.
+
+Each attachment represents one individual digital print included in the Etsy set.
+
+MANDATORY PREFLIGHT VALIDATION
+
+Before generating the mockup, count the usable artwork attachments.
+
+Proceed only when exactly 12 separate, clearly visible artwork images are attached.
+
+If fewer than 12 or more than 12 usable artwork images are attached:
+
+• do not generate an image
+• do not invent, duplicate, replace, merge, extract, crop from, or omit any artwork
+• respond only with:
+
+ERROR: Exactly 12 artwork images must be attached.
+
+ARTWORK ORDER
+
+Use every attached image exactly once.
+
+Preserve the original attachment order from left to right and then from top to bottom.
+
+Use this exact three-row arrangement:
+
+[1] [2] [3] [4]
+
+[5] [6] [7] [8]
+
+[9] [10] [11] [12]
+
+An alternative two-row arrangement may be used only when necessary:
+
+[1] [2] [3] [4] [5] [6]
+
+[7] [8] [9] [10] [11] [12]
+
+Do not change, reverse, shuffle, or reinterpret the attachment order.
+
+Do not show filenames, file paths, attachment numbers, URLs, variable names, or image labels.
+
+TASK
+
+Create one square, photorealistic Etsy mockup showing all 12 attached artworks displayed together on one plain wall.
+
+The image must focus almost entirely on the framed artwork collection.
+
+Do not create a bedroom, nursery, playroom, living room, hallway, office, or other furnished interior.
+
+Do not include a bed, sofa, table, shelves, chair, cabinet, toys, plants, lamps, rugs, cushions, baskets, books, curtains, windows, doors, skirting boards, flooring, or decorative room accessories.
+
+The background must be one plain, uncluttered wall.
+
+Place all 12 attached artworks in matching frames on the wall.
+
+Do not omit, duplicate, replace, merge, swap, crop from, or invent any artwork.
+
+PLAIN WALL REQUIREMENTS
+
+Use a simple premium wall surface.
+
+The wall must:
+
+• be smooth and plain
+• use a warm neutral colour such as soft ivory, warm white, pale beige, light greige, or very light stone
+• contain no wallpaper
+• contain no wall panels
+• contain no brickwork
+• contain no wood panelling
+• contain no decorative mouldings
+• contain no shelves
+• contain no hooks or visible fixings
+• contain no wall decals
+• contain no additional artwork
+• contain no patterns or illustrations
+• remain visually quiet and secondary to the framed prints
+
+Use soft, even lighting with gentle realistic shadows behind the frames.
+
+The wall must not be pure featureless white if this causes the white areas of the artwork to disappear.
+
+Use enough subtle tonal contrast for the framed prints and white mounts to remain clearly visible.
+
+WALL ARRANGEMENT
+
+Use a neat, symmetrical gallery-wall arrangement.
+
+The preferred layout is three rows of four:
+
+[1] [2] [3] [4]
+
+[5] [6] [7] [8]
+
+[9] [10] [11] [12]
+
+Alternatively, use two rows of six only when:
+
+• every individual artwork remains clearly visible
+• the prints remain large enough to be recognisable
+• the complete gallery fits comfortably within the square image
+• the arrangement does not look cramped or excessively wide
+
+Strongly prefer the three-rows-of-four layout because it creates a balanced square composition and allows each artwork to remain prominent.
+
+Do not use:
+
+• one row of 12
+• uneven rows
+• staggered frames
+• overlapping frames
+• a salon-style arrangement
+• random positioning
+• diagonal positioning
+• frames placed on different walls
+• frames extending outside the visible image
+• frames resting on furniture or the floor
+
+Keep the complete gallery:
+
+• centred within the image
+• symmetrical
+• straight and level
+• evenly spaced
+• consistently aligned
+• fully visible
+• surrounded by safe margins
+• balanced horizontally and vertically
+
+Every artwork must be equally prominent.
+
+Do not make one artwork substantially larger or more visually dominant than the others.
+
+PRODUCT LABEL
+
+Add one compact, professionally integrated label containing exactly:
+
+SET OF 12 DIGITAL PRINTS
+
+The label must:
+
+• be small and understated
+• be clearly readable in an Etsy thumbnail
+• appear outside the supplied artworks
+• not overlap any frame
+• not cover any dinosaur
+• not dominate the composition
+• use clean, simple typography
+• coordinate with the premium neutral wall styling
+
+Place the label in an uncluttered area such as:
+
+• a small lower corner
+• a discreet area of empty wall
+• a compact neutral badge near the edge of the composition
+
+Do not place the label inside any supplied artwork.
+
+Do not add any other text, captions, promotional claims, logos, watermarks, prices, or labels.
+
+FRAMES AND ARTWORKS
+
+Every frame must:
+
+• use dark brown wood
+• have an identical style
+• have consistent visual weight
+• look premium and realistic
+• have minimal glare or reflection
+• be fully visible
+• be straight and level
+• be evenly spaced
+• sit naturally against the wall
+
+Preserve every attached artwork as accurately as possible.
+
+Do not:
+
+• redraw it
+• recolour it
+• reinterpret it
+• replace it
+• duplicate it
+• merge it
+• stretch it
+• distort it
+• rotate it
+• mirror it
+• heavily crop it
+• add elements inside it
+• remove elements from it
+• change its background
+• change or rewrite any typography contained within it
+
+Preserve each artwork’s:
+
+• original subject
+• colours
+• composition
+• orientation
+• aspect ratio
+• background
+• typography when present
+
+Use proportional white mounts or matting where necessary.
+
+Keep mount widths visually consistent across the complete collection.
+
+External frame dimensions may vary slightly only when required to preserve the original artwork aspect ratios while maintaining a balanced gallery.
+
+Do not create additional wall art.
+
+ARTWORK VISIBILITY
+
+All 12 artworks must remain recognisable in the final square Etsy image.
+
+The framed gallery must occupy most of the image.
+
+The complete artwork arrangement should fill approximately 75–90% of the usable image width and height while retaining safe outer margins.
+
+Do not show a large amount of empty wall around the gallery.
+
+Do not make the artworks small or distant.
+
+Do not place the camera so far away that individual dinosaur prints are difficult to distinguish.
+
+Ensure each frame has sufficient size and resolution to show its individual artwork clearly.
+
+The framed artworks are the only main product being advertised.
+
+The wall and product label are supporting mockup elements only.
+
+LIGHTING AND STYLE
+
+Create a premium minimalist Scandinavian-style product presentation.
+
+Use:
+
+• warm neutral wall tones
+• soft natural-looking daylight
+• even exposure
+• gentle realistic frame shadows
+• clean uncluttered styling
+• subtle depth
+• realistic dark brown wood grain
+• accurate straight lines
+• professional interior-product photography quality
+
+Do not add dinosaur-themed room decorations.
+
+The dinosaur theme must come only from the supplied artworks.
+
+Do not add unrelated animals, motifs, patterns, scenery, or themes.
+
+CAMERA AND COMPOSITION
+
+Use a straight-on front-facing photography angle.
+
+Keep the camera parallel to the wall.
+
+Keep the following centred and fully visible:
+
+• the complete 12-frame gallery
+• the plain wall surrounding it
+• the product label
+
+Use realistic product-mockup perspective.
+
+The outer edges of the wall may be cropped naturally, but:
+
+• no frame may be cropped
+• no artwork may be partly outside the image
+• the complete gallery must remain centred
+• the product label must remain fully visible
+• sufficient safe margins must remain around the complete arrangement
+
+Avoid:
+
+• fisheye distortion
+• wide-angle distortion
+• extreme perspective
+• angled side views
+• tilted walls
+• tilted frames
+• converging vertical lines
+• cropped frames
+• strong glare
+• reflections covering artworks
+• deep shadows covering artworks
+• visible ceiling
+• visible floor
+• visible corners of the room
+• furniture or decorative objects
+
+PRODUCT ACCURACY
+
+This is a digital-download product.
+
+The frames and printed pictures are mockup examples only.
+
+Do not show:
+
+• packaging
+• parcels
+• postage labels
+• shipping boxes
+• mailing tubes
+• wrapped prints
+• delivery materials
+• physical product bundles
+• hands holding prints
+• frames leaning against a wall
+• anything suggesting that framed prints will be posted to the buyer
+
+AVOID
+
+• fewer or more than 12 supplied artworks
+• missing, duplicated, invented, merged, or swapped artworks
+• incorrect artwork order
+• one row of 12 frames
+• artworks that are too small to recognise
+• bedroom furniture
+• beds
+• sofas
+• tables
+• shelves
+• toys
+• plants
+• lamps
+• rugs
+• cushions
+• baskets
+• books
+• windows
+• doors
+• flooring
+• ceilings
+• wall corners
+• wallpaper
+• wall patterns
+• decorative wall panels
+• brick walls
+• wooden walls
+• wall decals
+• extra dinosaur accessories
+• people, children, faces, hands, or pets
+• additional wall art
+• unrelated animals or themes
+• large promotional banners
+• excessive text
+• captions beneath individual frames
+• attachment numbers
+• filenames
+• logos or watermarks
+• altered or distorted artwork
+• mismatched frames
+• crooked or uneven frames
+• clutter
+• dark lighting
+• harsh shadows
+• strong glare
+• packaging or shipping materials
+
+FINAL VALIDATION
+
+Before returning the image, verify that:
+
+• exactly 12 supplied artworks are shown
+• every artwork is used exactly once
+• the artworks remain in the original attachment order
+• the gallery uses three rows of four or two rows of six
+• the preferred three-rows-of-four arrangement is used whenever possible
+• no artwork has been duplicated or invented
+• every frame is fully visible
+• every artwork remains clearly recognisable
+• all frames use matching dark brown wood
+• the gallery is centred on one plain neutral wall
+• no bed or furniture appears
+• no room accessories appear
+• no additional wall art appears
+• no wallpaper or wall decorations appear
+• the wall is clean and uncluttered
+• the label reads exactly “SET OF 12 DIGITAL PRINTS”
+• the label does not obscure any artwork
+• no additional promotional text appears
+• no physical-shipping materials appear
+
+OUTPUT
+
+Create one square Etsy listing image.
+
+Keep the complete 12-frame artwork arrangement centred with safe margins against one plain neutral wall.
+
+Ensure every attached artwork is:
+
+• used exactly once
+• fully visible
+• clearly recognisable
+• correctly ordered
+• accurately preserved
+• equally prominent
+• professionally presented
+
+Return only the generated image.

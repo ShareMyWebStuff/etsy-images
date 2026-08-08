@@ -1,0 +1,347 @@
+PROMPT — Six Large and Six Small Dinosaur Artworks in a Child’s Bedroom
+Generate one inline ChatGPT image only.
+Return only the generated image. Do not create files, links, filenames, download buttons, ZIP files, or additional text.
+DECLARED VARIABLES
+ANIMALS: t-rex, triceratops, stegosaurus, Therizinosaurus, Giganotosaurus, sdfgfsd, fs er, dsf sd, sdfsd, sdfdsf, sdf s, sdfdsfsd
+ROOM_THEME: dinosaurs
+FRAME_COLOUR: dark brown wood
+PRODUCT_LABEL: SET OF 12 DIGITAL PRINTS
+REQUIRED IMAGE INPUTS
+Exactly 12 separate artwork images must be attached to this prompt.
+Each attachment represents one individual digital print included in the Etsy set.
+Mandatory preflight validation
+Before generating the mockup, count the usable artwork attachments.
+Proceed only when exactly 12 separate, clearly visible artwork images are attached.
+If fewer than 12 or more than 12 usable artwork images are attached:
+•	do not generate an image
+•	do not invent, duplicate, replace, merge, extract, crop from, or omit any artwork
+•	respond only with:
+ERROR: Exactly 12 artwork images must be attached.
+ARTWORK SIZE GROUPS
+Use every attached artwork exactly once.
+The attachment order determines the size of each framed print.
+Six large featured artworks
+Use Images 1–6 as the six large framed artworks:
+[1] [2] [3]
+[4] [5] [6]
+These six artworks must be the main visual focus of the gallery wall.
+They must:
+•	be noticeably larger than Images 7–12
+•	use matching large frame dimensions
+•	remain equally prominent within the large group
+•	be easy to recognise in the final Etsy image
+Six small supporting artworks
+Use Images 7–12 as the six small framed artworks:
+[7] [8] [9] [10] [11] [12]
+These six artworks must:
+•	be noticeably smaller than Images 1–6
+•	use matching small frame dimensions
+•	remain clearly visible and recognisable
+•	have equal prominence within the small group
+•	support the larger featured artworks without becoming tiny thumbnails
+Do not change which images belong to the large or small groups.
+Do not enlarge Images 7–12 or reduce Images 1–6 so much that the difference becomes unclear.
+ARTWORK ORDER
+Preserve the original attachment order.
+Within the large group, display the artworks from left to right and then top to bottom:
+[1] [2] [3]
+[4] [5] [6]
+Within the small group, display the artworks from left to right:
+[7] [8] [9] [10] [11] [12]
+The small artworks may be arranged in:
+•	one row of six
+•	two rows of three
+•	two vertical groups of three
+•	three groups of two
+Choose the arrangement that keeps all 12 artworks clearly visible while creating a balanced bedroom gallery wall.
+Do not:
+•	reverse the attachment order
+•	shuffle artworks within either size group
+•	swap large and small artworks
+•	show attachment numbers
+•	show filenames
+•	show file paths
+•	show URLs
+•	show variable names
+•	add labels beneath individual artworks
+TASK
+Create one square, photorealistic Etsy mockup of a premium Scandinavian-style young child’s bedroom.
+The bedroom must feature all 12 attached artworks displayed together in one coordinated gallery wall.
+The gallery must contain:
+•	exactly six large framed artworks
+•	exactly six small framed artworks
+The size difference must be immediately visible.
+The six large artworks should dominate the gallery composition, while the six small artworks should provide supporting detail around, beside, above, or below them.
+Do not omit, duplicate, replace, merge, swap, crop from, or invent any artwork.
+BED
+The room must contain one clearly recognisable child-sized single bed.
+Use a:
+•	small single children’s bed
+•	toddler bed
+•	low Montessori bed
+•	compact child-sized wooden bed
+The bed must:
+•	be narrow and proportioned for one young child
+•	have one single pillow
+•	have a small single mattress
+•	look noticeably smaller than an adult bed
+•	leave visible floor space on both sides
+•	appear approximately 75–90 cm wide in the implied room scale
+Do not use:
+•	a double bed
+•	a queen-size bed
+•	a king-size bed
+•	a full-size adult bed
+•	a wide hotel-style bed
+•	two pillows side by side
+•	oversized adult bedding
+•	an adult bedroom layout
+WALL ARRANGEMENT
+Create a balanced, professionally designed mixed-size gallery wall above the child-sized bed.
+The six large framed artworks must form the main central display.
+A preferred arrangement is:
+[1 LARGE] [2 LARGE] [3 LARGE]
+[4 LARGE] [5 LARGE] [6 LARGE]
+The six smaller artworks may then be placed in a clean supporting arrangement such as:
+[7] [8] [9] [10] [11] [12]
+positioned beneath the large prints.
+An alternative acceptable layout is:
+[7 SMALL] [1 LARGE] [2 LARGE] [3 LARGE] [8 SMALL]
+[9 SMALL] [4 LARGE] [5 LARGE] [6 LARGE] [10 SMALL]
+[11 SMALL] [12 SMALL]
+Another acceptable layout is:
+[7 SMALL] [8 SMALL] [9 SMALL]
+[1 LARGE] [2 LARGE] [3 LARGE]
+[4 LARGE] [5 LARGE] [6 LARGE]
+[10 SMALL] [11 SMALL] [12 SMALL]
+The exact arrangement may adapt to the available wall space, but it must follow these rules:
+•	all six large artworks remain together as the main feature
+•	all six small artworks remain clearly visible
+•	the size difference is obvious
+•	the arrangement is centred above the bed
+•	the gallery looks intentional rather than random
+•	the composition remains suitable for a square Etsy image
+•	no frame is obscured or cropped
+Do not use:
+•	12 equal-sized frames
+•	one row of 12 artworks
+•	one artwork much larger than the other five large prints
+•	small artworks reduced to unreadable thumbnails
+•	overlapping frames
+•	severely staggered frames
+•	a chaotic salon-wall layout
+•	frames placed on separate walls
+•	frames extending outside the visible image
+•	artwork resting on the floor
+•	artwork leaning against furniture
+SIZE RELATIONSHIP
+The six large frames should appear approximately 1.5 to 2 times the visual size of the six small frames.
+The six large frames must:
+•	share consistent dimensions
+•	be equally prominent
+•	form the centre of the composition
+•	occupy most of the gallery-wall area
+The six small frames must:
+•	share consistent dimensions
+•	remain large enough for their artwork to be recognisable
+•	support the main grouping without overwhelming it
+•	have enough spacing to remain separate and easy to inspect
+Do not make the small artworks so small that their dinosaur subjects cannot be distinguished.
+PRODUCT LABEL
+Add one compact, professionally integrated label containing exactly:
+SET OF 12 DIGITAL PRINTS
+The label must:
+•	be small and understated
+•	be clearly readable in an Etsy thumbnail
+•	appear outside the supplied artworks
+•	not overlap any frame
+•	not cover the bed
+•	not cover any dinosaur
+•	not dominate the room
+•	use clean, simple typography
+•	coordinate with the premium Scandinavian room styling
+Place it in an uncluttered area such as:
+•	a small lower corner
+•	a discreet area of empty wall
+•	a compact neutral badge near the edge of the composition
+Do not add any other text, captions, promotional claims, logos, watermarks, prices, or labels.
+FRAMES
+All 12 frames must:
+•	use dark brown wood
+•	use the same frame style
+•	have matching frame depth and finish
+•	have consistent visual weight
+•	look premium and realistic
+•	have minimal glare or reflection
+•	be straight and level
+•	be evenly spaced
+•	be fully visible
+The large and small frames may use different external dimensions, but their materials, colour, design, and finish must match.
+Use six matching large frames for Images 1–6.
+Use six matching small frames for Images 7–12.
+ARTWORK PRESERVATION
+Preserve every attached artwork as accurately as possible.
+Do not:
+•	redraw it
+•	recolour it
+•	reinterpret it
+•	replace it
+•	duplicate it
+•	merge it
+•	stretch it
+•	distort it
+•	rotate it
+•	mirror it
+•	heavily crop it
+•	add elements inside it
+•	remove elements from it
+Preserve each artwork’s:
+•	original subject
+•	colours
+•	composition
+•	orientation
+•	aspect ratio
+•	background
+•	typography, when present in the supplied artwork
+Use proportional white mounts or matting where necessary.
+External frame dimensions may vary slightly within each size group only when required to preserve original artwork aspect ratios.
+Do not create additional wall art.
+ARTWORK VISIBILITY
+All 12 artworks must remain recognisable in the final square Etsy image.
+The six large artworks must be especially easy to inspect.
+The six small artworks must still be clearly visible and must not appear as indistinct miniature images.
+Compose the room so that the complete gallery occupies a substantial portion of the image.
+Do not make the room so wide that the artworks become tiny.
+Do not position the camera so far away that individual dinosaurs are difficult to distinguish.
+The framed artworks are the primary product being advertised.
+The bed and room styling are supporting mockup elements.
+ROOM STYLE
+Use dinosaurs as the main room theme.
+Create a premium Scandinavian-style child’s bedroom using:
+•	warm neutral walls
+•	pale natural wood furniture
+•	soft natural fabrics
+•	child-friendly single-bed bedding
+•	soft daylight
+•	gentle realistic shadows
+•	clean and uncluttered styling
+Add no more than two or three subtle dinosaur-themed room details, such as:
+•	a small dinosaur cushion
+•	a subtle dinosaur-patterned rug
+•	a wooden dinosaur toy
+•	a tasteful dinosaur wall decal positioned away from the frames
+•	a dinosaur-themed basket or nursery accessory
+Animal accents are optional.
+When animal accents are used, include only animals listed in ANIMALS.
+Keep all dinosaur-themed accessories subtle and secondary to the framed artworks.
+Do not add unrelated animals or themes.
+CAMERA AND COMPOSITION
+Use a straight-on interior-photography angle.
+Keep the following centred and fully visible:
+•	all six large framed artworks
+•	all six small framed artworks
+•	the child-sized single bed
+•	the main wall behind the bed
+The complete 12-frame arrangement must fit naturally within the square image.
+The bed proportions must clearly show that it is designed for one young child.
+Use realistic interior-photography perspective.
+The room may be slightly cropped at the outer edges when necessary, but:
+•	no frame may be cropped
+•	no artwork may be partly outside the image
+•	the bed must remain clearly identifiable
+•	the complete gallery must remain visible
+•	the product label must remain fully visible
+Avoid:
+•	fisheye distortion
+•	extreme wide-angle distortion
+•	extreme perspective
+•	tilted walls
+•	cropped frames
+•	strong glare
+•	reflections covering artworks
+•	furniture obscuring artworks
+•	decorative items placed in front of frames
+PRODUCT ACCURACY
+This is a digital-download product.
+The frames, printed pictures, child’s bed, furniture, bedding, and accessories are mockup examples only.
+Do not show:
+•	packaging
+•	parcels
+•	postage labels
+•	shipping boxes
+•	mailing tubes
+•	wrapped prints
+•	delivery materials
+•	physical product bundles
+•	anything suggesting that framed prints will be posted to the buyer
+AVOID
+•	fewer or more than 12 supplied artworks
+•	fewer or more than six large artworks
+•	fewer or more than six small artworks
+•	12 equal-sized frames
+•	incorrect artwork order
+•	Images 7–12 shown as large artworks
+•	Images 1–6 shown as small artworks
+•	missing, duplicated, invented, merged, or swapped artworks
+•	small artworks that are too tiny to recognise
+•	one row of 12 frames
+•	overlapping or cropped frames
+•	chaotic gallery layouts
+•	double, queen-size, king-size, or adult beds
+•	wide mattresses
+•	two pillows beside each other
+•	oversized adult bedding
+•	people, children, faces, or pets
+•	additional wall art
+•	unrelated animals or themes
+•	large promotional banners
+•	excessive text
+•	captions beneath individual frames
+•	attachment numbers
+•	filenames
+•	logos or watermarks
+•	altered or distorted artwork
+•	mismatched frame designs
+•	crooked frames
+•	clutter
+•	dark lighting
+•	harsh shadows
+•	excessive dinosaur decorations
+•	packaging or shipping materials
+FINAL VALIDATION
+Before returning the image, verify that:
+•	exactly 12 supplied artworks are shown
+•	every artwork is used exactly once
+•	Images 1–6 are displayed in six large frames
+•	Images 7–12 are displayed in six small frames
+•	the six large artworks are the main visual focus
+•	the six small artworks remain clearly recognisable
+•	the two frame-size groups are visibly different
+•	the artworks remain in the original attachment order within each size group
+•	no artwork has been duplicated or invented
+•	every frame is fully visible
+•	all frames use matching dark brown wood
+•	the gallery is centred above a child-sized single bed
+•	the bed has only one pillow
+•	the room looks like a premium young child’s bedroom
+•	the label reads exactly “SET OF 12 DIGITAL PRINTS”
+•	the label does not obscure any artwork
+•	no additional promotional text appears
+•	no physical-shipping materials appear
+OUTPUT
+Create one square Etsy listing image.
+Show exactly:
+•	six large framed artworks using Images 1–6
+•	six small framed artworks using Images 7–12
+•	one child-sized single bed
+•	one compact label reading “SET OF 12 DIGITAL PRINTS”
+Ensure every attached artwork is:
+•	used exactly once
+•	fully visible
+•	clearly recognisable
+•	correctly ordered
+•	assigned to the correct size group
+•	accurately preserved
+•	professionally presented
+Return only the generated image.
+

@@ -1,0 +1,17 @@
+
+> etsy-listings-app@1.0.0 dev
+> next dev
+
+   ▲ Next.js 15.3.4
+   - Local:        http://localhost:3000
+   - Network:      http://172.26.240.1:3000
+   - Environments: .env.local, .env
+   - Experiments (use with caution):
+     ✓ typedRoutes
+
+ ✓ Starting...
+ ✓ Ready in 13.6s
+ ○ Compiling / ...
+ ✓ Compiled / in 11.3s (839 modules)
+ GET / 200 in 12401ms
+[?25h

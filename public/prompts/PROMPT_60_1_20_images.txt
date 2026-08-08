@@ -1,0 +1,149 @@
+EXACT IMAGE COMPOSITING TASK — 16 DINOSAUR ARTWORKS
+
+Create one square PNG catalogue image by programmatically compositing the 16 attached image files.
+
+CRITICAL METHOD
+
+Do not use image generation, image synthesis, generative fill, redrawing, interpretation, or AI reconstruction.
+
+Use a deterministic image-processing or canvas tool to place the original uploaded image files onto a new square canvas.
+
+Each displayed artwork must consist of the actual pixels from its corresponding uploaded file.
+
+The uploaded artwork files may only be:
+
+• proportionally scaled
+• placed on the canvas
+• surrounded by a frame
+• optionally given proportional white matting
+
+Do not modify the image pixels inside any artwork.
+
+REQUIRED INPUT
+
+Exactly 16 separate artwork images must be attached.
+
+If the number is not exactly 16, respond only:
+
+ERROR: Exactly 16 artwork images must be attached.
+
+CANVAS
+
+Create one square image:
+
+• 3000 × 3000 pixels
+• PNG format
+• soft off-white background
+• straight-on catalogue layout
+
+HEADING
+
+Place this exact heading above the grid:
+
+Every dinosaur shown is included
+
+Do not add any other wording or decoration.
+
+GRID
+
+Create a fixed grid of:
+
+• 4 columns
+• 4 rows
+• 16 equal-sized occupied positions
+
+Fill the grid from left to right and then top to bottom.
+
+Use attachment order exactly:
+
+• attachment 1 = position 01
+• attachment 2 = position 02
+• attachment 3 = position 03
+• attachment 4 = position 04
+• attachment 5 = position 05
+• attachment 6 = position 06
+• attachment 7 = position 07
+• attachment 8 = position 08
+• attachment 9 = position 09
+• attachment 10 = position 10
+• attachment 11 = position 11
+• attachment 12 = position 12
+• attachment 13 = position 13
+• attachment 14 = position 14
+• attachment 15 = position 15
+• attachment 16 = position 16
+
+Do not reorder the images.
+
+ARTWORK PRESERVATION
+
+For every attached file:
+
+• load the original file directly
+• preserve its original aspect ratio
+• resize proportionally using high-quality resampling
+• show the complete image
+• do not crop it
+• do not stretch it
+• do not rotate it
+• do not mirror it
+• do not recolour it
+• do not enhance it
+• do not retouch it
+• do not remove anything
+• do not add anything
+• do not recreate any part of it
+• do not generate substitute artwork
+
+Use contain fitting rather than cover fitting.
+
+Any unused space caused by differing proportions must become white or off-white matting.
+
+FRAMES
+
+Place every artwork in an identical dark brown wooden frame.
+
+The frame must be drawn around the artwork area and must not overlap or alter the supplied image.
+
+All frames must:
+
+• have identical outer dimensions
+• have identical thickness
+• be straight and level
+• have minimal shadow
+• have no glare
+
+NUMBERS
+
+Place these exact numbers beneath the corresponding frames:
+
+01, 02, 03, 04
+05, 06, 07, 08
+09, 10, 11, 12
+13, 14, 15, 16
+
+Numbers must sit outside the frames.
+
+VALIDATION
+
+Before saving, verify programmatically that:
+
+• exactly 16 source files were loaded
+• exactly 16 artworks were placed
+• every source file was used once
+• no source file was duplicated
+• the images remain in attachment order
+• the source artwork pixels were not regenerated
+• all artwork aspect ratios were preserved
+• all 16 frames and numbers are visible
+• the heading is correct
+
+Return only the completed composited PNG.
+
+IMPORTANT
+
+Do not use the normal image-generation model for this task.
+
+Do not redraw or reinterpret the artworks.
+
+Create the final catalogue only by programmatically compositing the original uploaded image files.

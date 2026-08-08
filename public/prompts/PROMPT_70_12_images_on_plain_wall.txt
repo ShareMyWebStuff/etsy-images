@@ -1,0 +1,379 @@
+PROMPT — Complete 48 Dinosaur Collection in a Child’s Bedroom
+Generate one inline ChatGPT image only.
+Return only the generated image. Do not create files, links, filenames, download buttons, ZIP files, or additional text.
+DECLARED VARIABLES
+ANIMALS: t-rex, triceratops, stegosaurus, Therizinosaurus, Giganotosaurus, sdfgfsd, fs er, dsf sd, sdfsd, sdfdsf, sdf s, sdfdsfsd
+ROOM_THEME: dinosaurs
+FRAME_COLOUR: dark brown wood
+PRODUCT_TITLE: COMPLETE 48 DINOSAUR COLLECTION
+PRODUCT_SUBTITLE: 240 printable JPEG files
+PRODUCT_NOTE: Selected designs shown
+PRODUCT BEING ADVERTISED
+This Etsy listing advertises a complete digital collection containing:
+•	48 different dinosaur designs
+•	240 printable JPEG files in total
+The 12 artwork images attached to this prompt are selected examples from the complete 48-design collection.
+The room mockup must show only the 12 supplied designs.
+Do not imply that the 12 visible designs are the entire collection.
+The promotional text must clearly explain that the complete download includes 48 designs, while only selected designs are shown in the mockup.
+REQUIRED IMAGE INPUTS
+Exactly 12 separate artwork images must be attached to this prompt.
+Each attachment represents one selected dinosaur design from the complete 48-design digital collection.
+Mandatory preflight validation
+Before generating the mockup, count the usable artwork attachments.
+Proceed only when exactly 12 separate, clearly visible artwork images are attached.
+If fewer than 12 or more than 12 usable artwork images are attached:
+•	do not generate an image
+•	do not invent, duplicate, replace, merge, extract, crop from, or omit any artwork
+•	respond only with:
+ERROR: Exactly 12 artwork images must be attached.
+ARTWORK ORDER
+Use every attached image exactly once.
+Preserve the original attachment order from left to right and then from top to bottom.
+For the preferred four-column arrangement, use this exact order:
+[1] [2] [3] [4]
+[5] [6] [7] [8]
+[9] [10] [11] [12]
+For an alternative two-row arrangement, use this exact order:
+[1] [2] [3] [4] [5] [6]
+[7] [8] [9] [10] [11] [12]
+Do not change, reverse, shuffle, swap, or reinterpret the attachment order.
+Do not show:
+•	filenames
+•	file paths
+•	attachment numbers
+•	URLs
+•	variable names
+•	image labels
+•	numbering beneath individual frames
+TASK
+Create one square, photorealistic Etsy mockup of a premium Scandinavian-style young child’s bedroom.
+The image must advertise the complete 48-design dinosaur collection while showing the 12 attached artworks as selected examples.
+The room must contain:
+•	one clearly recognisable child-sized single bed
+•	all 12 attached artworks in matching frames
+•	one restrained promotional text area
+•	no other wall art
+The framed prints must remain the main visual feature.
+Do not omit, duplicate, replace, merge, swap, crop from, or invent any supplied artwork.
+PROMOTIONAL TEXT
+Place a clear but restrained promotional title within the scene.
+The text must appear exactly as follows:
+COMPLETE 48 DINOSAUR COLLECTION
+Below it, show:
+240 printable JPEG files
+Below that, show:
+Selected designs shown
+The wording must be exact.
+Do not rewrite, shorten, expand, punctuate, or paraphrase these three lines.
+TEXT HIERARCHY
+Use the following visual hierarchy:
+Main title
+COMPLETE 48 DINOSAUR COLLECTION
+This must be:
+•	the largest line of text
+•	clearly readable in an Etsy search thumbnail
+•	bold but refined
+•	professionally typeset
+•	prominent without dominating the artworks
+Supporting line
+240 printable JPEG files
+This must be:
+•	smaller than the main title
+•	clearly readable
+•	positioned directly below the main title
+•	visually connected to the title
+Clarifying line
+Selected designs shown
+This must be:
+•	smaller than the supporting line
+•	clearly readable
+•	positioned below “240 printable JPEG files”
+•	understated but not hidden
+•	legible enough to prevent buyers assuming that only the visible designs are included
+TEXT PLACEMENT
+Place the promotional text in a clean, uncluttered area within the scene.
+Suitable placements include:
+•	a clear section of wall above the gallery
+•	a clean section of wall beside the gallery
+•	a restrained integrated panel near the edge of the scene
+•	a compact text area below the gallery but above the bed
+The text must:
+•	appear outside the supplied artwork images
+•	not be placed inside a frame
+•	not overlap any artwork
+•	not cover any dinosaur
+•	not cover the bed
+•	not interfere with the frame arrangement
+•	not extend beyond the image edge
+•	remain fully visible
+•	have strong contrast against the background
+•	look professionally integrated into the mockup
+Do not use:
+•	a large advertising banner
+•	a bright sticker
+•	a starburst
+•	a sale badge
+•	a hanging sign
+•	a framed text print
+•	speech bubbles
+•	decorative handwritten text
+•	text on the bedding
+•	text on the floor
+•	text over the artwork images
+BED
+The room must contain one clearly recognisable child-sized single bed.
+Use a:
+•	small single children’s bed
+•	toddler bed
+•	low Montessori bed
+•	compact child-sized wooden bed
+The bed must:
+•	be narrow and proportioned for one young child
+•	have one single pillow
+•	have a small single mattress
+•	look noticeably smaller than an adult bed
+•	leave visible floor space on both sides
+•	appear approximately 75–90 cm wide in the implied room scale
+Do not use:
+•	a double bed
+•	a queen-size bed
+•	a king-size bed
+•	a full-size adult bed
+•	a wide hotel-style bed
+•	two pillows side by side
+•	oversized adult bedding
+•	an adult bedroom layout
+WALL ARRANGEMENT
+Place all 12 attached artworks in matching frames on the wall above the child-sized single bed.
+Use a neat, symmetrical gallery-wall arrangement.
+The preferred layout is three rows of four:
+[1] [2] [3] [4]
+[5] [6] [7] [8]
+[9] [10] [11] [12]
+Alternatively, use two rows of six only when:
+•	every individual artwork remains clearly visible
+•	the prints remain large enough to be recognisable
+•	the complete gallery fits naturally above the child-sized bed
+•	the arrangement does not look cramped or excessively wide
+•	adequate space remains for the promotional text
+Prefer the three-rows-of-four layout when it creates a stronger square composition.
+Do not use:
+•	one row of 12
+•	uneven rows
+•	staggered frames
+•	overlapping frames
+•	a salon-style arrangement
+•	randomly positioned frames
+•	frames placed on different walls
+•	frames extending outside the visible image
+Keep the complete gallery:
+•	centred above the bed
+•	symmetrical
+•	straight and level
+•	evenly spaced
+•	consistently aligned
+•	fully visible
+•	surrounded by safe margins
+Every visible artwork must be equally prominent.
+Do not make one visible artwork substantially larger or more visually dominant than the others.
+COLLECTION ACCURACY
+The mockup shows 12 selected designs, but the advertised product includes 48 dinosaur designs.
+The text must make this distinction clear.
+The image must not suggest that:
+•	only 12 dinosaur designs are included
+•	the buyer receives only the visible framed prints
+•	the buyer receives 12 physical prints
+•	all 48 designs are physically displayed in the room
+•	the 12 visible images are separate from the advertised collection
+Do not attempt to invent or display the remaining 36 dinosaur designs.
+Do not create miniature thumbnails representing the unseen designs.
+Do not duplicate the 12 supplied artworks to make the collection appear larger.
+The phrase “Selected designs shown” must remain visible.
+FRAMES AND ARTWORKS
+Every frame must:
+•	use dark brown wood
+•	have an identical style
+•	have consistent visual weight
+•	look premium and realistic
+•	have minimal glare or reflection
+•	be fully visible
+•	be straight and level
+•	be evenly spaced
+Preserve every attached artwork as accurately as possible.
+Do not:
+•	redraw it
+•	recolour it
+•	reinterpret it
+•	replace it
+•	duplicate it
+•	merge it
+•	stretch it
+•	distort it
+•	rotate it
+•	mirror it
+•	heavily crop it
+•	add elements inside it
+•	remove elements from it
+Preserve each artwork’s:
+•	original subject
+•	colours
+•	composition
+•	orientation
+•	aspect ratio
+•	background
+•	typography, when present in the supplied artwork
+Use proportional white mounts or matting where necessary.
+External frame dimensions may vary slightly only when required to preserve the original aspect ratios while maintaining a balanced gallery.
+Do not create additional wall art.
+ARTWORK VISIBILITY
+All 12 selected artworks must remain recognisable in the final square Etsy image.
+Compose the room so that the framed gallery occupies a substantial portion of the image.
+Do not make the room so wide that the artworks become tiny.
+Do not place the camera so far away that individual dinosaur prints are difficult to distinguish.
+Ensure each frame has sufficient size and resolution to show its individual artwork clearly.
+The framed artworks and the complete-collection message are the primary selling elements.
+The bed and room styling are supporting mockup elements.
+ROOM STYLE
+Use dinosaurs as the main room theme.
+Create a premium Scandinavian-style child’s bedroom using:
+•	warm neutral walls
+•	pale natural wood furniture
+•	soft natural fabrics
+•	child-friendly single-bed bedding
+•	soft daylight
+•	gentle realistic shadows
+•	clean and uncluttered styling
+Add no more than two or three subtle dinosaur-themed room details, such as:
+•	a small dinosaur cushion
+•	a subtle dinosaur-patterned rug
+•	a wooden dinosaur toy
+•	a tasteful dinosaur wall decal positioned away from the frames and text
+•	a dinosaur-themed basket or nursery accessory
+Animal accents are optional.
+When animal accents are used, include only animals listed in ANIMALS.
+Keep all dinosaur-themed accessories subtle and secondary to the framed artworks.
+Do not add unrelated animals or themes.
+CAMERA AND COMPOSITION
+Use a straight-on interior-photography angle.
+Keep the following centred and fully visible:
+•	the complete 12-frame gallery
+•	the child-sized single bed
+•	the promotional title
+•	the supporting file-count text
+•	the “Selected designs shown” clarification
+•	the main wall behind the bed
+The bed proportions must clearly show that it is designed for one young child.
+Use realistic interior-photography perspective.
+The room may be slightly cropped at the outer edges when necessary, but:
+•	no frame may be cropped
+•	no artwork may be partly outside the image
+•	the bed must remain clearly identifiable
+•	the complete gallery arrangement must remain visible
+•	all three promotional text lines must remain fully visible
+Avoid:
+•	fisheye distortion
+•	extreme wide-angle distortion
+•	extreme perspective
+•	tilted walls
+•	cropped frames
+•	cropped text
+•	strong glare
+•	reflections covering artworks
+•	furniture obscuring artworks
+•	decorative items placed in front of the frames
+•	decorative items interfering with the text
+PRODUCT ACCURACY
+This is a digital-download product.
+The buyer receives digital JPEG files, not physical framed prints.
+The frames, printed pictures, child’s bed, furniture, bedding, and accessories are mockup examples only.
+Do not show:
+•	packaging
+•	parcels
+•	postage labels
+•	shipping boxes
+•	mailing tubes
+•	wrapped prints
+•	delivery materials
+•	physical product bundles
+•	stacks of printed posters
+•	anything suggesting that framed prints will be posted to the buyer
+AVOID
+•	text stating “SET OF 12 DIGITAL PRINTS”
+•	wording that suggests only 12 designs are included
+•	omission of “Selected designs shown”
+•	altered wording
+•	misspelled promotional text
+•	invented additional designs
+•	duplicated artworks used to represent 48 designs
+•	fewer or more than 12 supplied artworks shown
+•	missing, duplicated, invented, merged, or swapped supplied artworks
+•	incorrect artwork order
+•	one row of 12 frames
+•	artworks that are too small to recognise
+•	double, queen-size, king-size, or adult beds
+•	wide mattresses
+•	two pillows beside each other
+•	oversized adult bedding
+•	people, children, faces, or pets
+•	additional wall art
+•	unrelated animals or themes
+•	oversized promotional banners
+•	excessive text
+•	captions beneath individual frames
+•	attachment numbers
+•	filenames
+•	prices
+•	discount messages
+•	logos or watermarks
+•	altered or distorted artwork
+•	mismatched frames
+•	crooked or uneven frames
+•	clutter
+•	dark lighting
+•	harsh shadows
+•	excessive dinosaur decorations
+•	packaging or shipping materials
+FINAL VALIDATION
+Before returning the image, verify that:
+•	exactly 12 supplied artworks are shown
+•	every supplied artwork is used exactly once
+•	the artworks remain in the original attachment order
+•	no artwork has been duplicated or invented
+•	every frame is fully visible
+•	every artwork remains clearly recognisable
+•	all frames use matching dark brown wood
+•	the gallery is centred above a child-sized single bed
+•	the bed has only one pillow
+•	the room looks like a premium young child’s bedroom
+•	the main title reads exactly “COMPLETE 48 DINOSAUR COLLECTION”
+•	the second line reads exactly “240 printable JPEG files”
+•	the third line reads exactly “Selected designs shown”
+•	all three lines are fully visible
+•	all three lines are correctly spelled
+•	the text does not obscure any artwork
+•	the image clearly communicates that 48 designs are included
+•	the image clearly communicates that only selected designs are shown
+•	no text stating “SET OF 12 DIGITAL PRINTS” appears
+•	no additional promotional text appears
+•	no physical-shipping materials appear
+OUTPUT
+Create one square Etsy listing image.
+Show:
+•	exactly 12 selected dinosaur artworks
+•	one premium Scandinavian-style child’s bedroom
+•	one child-sized single bed
+•	matching dark brown wooden frames
+•	the exact title “COMPLETE 48 DINOSAUR COLLECTION”
+•	the exact supporting line “240 printable JPEG files”
+•	the exact clarification “Selected designs shown”
+Ensure every attached artwork is:
+•	used exactly once
+•	fully visible
+•	clearly recognisable
+•	correctly ordered
+•	accurately preserved
+•	equally prominent
+•	professionally presented
+Return only the generated image.
+

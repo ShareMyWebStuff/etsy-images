@@ -1,0 +1,544 @@
+
+ETSY LISTING TEXT FILE CREATION TASK — MULTI-ANIMAL PRINT SET
+
+## DECLARED VARIABLES
+
+ANIMALS:
+Pachycephalosaurus – golden yellow, domed head, curious eyes, and a bouncy playful pose
+Oviraptor – warm cream, feathered look, curious pose, and sweet nest-themed design potential
+Euoplocephalus – stone grey, armoured back, rounded shape, and cute little tank-like charm
+ROOM_THEME: dinosaurs
+FRAME_COLOUR: dark brown wood
+ORIENTATION: portrait
+FILE_TYPE: JPEG
+FRAME_COLOURS: dark brown wood
+FILES_INCLUDED: 5 professional-quality JPEG files supplied through a secure download link inside a PDF
+RECOMMENDED_PAPER: heavyweight matte paper or smooth cardstock
+LICENCE_TYPE: personal use only
+
+## TASK
+
+Create Etsy listing copy for one digital nursery wall art printable set featuring every animal listed under ANIMALS.
+
+The animals form one coordinated product collection.
+
+Create only:
+
+One title.
+One description.
+One category.
+One set of 13 tags.
+One plain text file named etsy.txt.
+
+Do not create separate listings or separate files for individual animals.
+
+The shared file-download details must remain unchanged.
+
+SHOP LINK FOR CROSS-PROMOTION:
+https://www.etsy.com/shop/CosyHousePrints
+
+Do not generate images.
+Do not edit images.
+Do not ask for an image upload.
+Do not use REFERENCE_IMAGE for this task.
+Do not create folders.
+Do not create ZIP files.
+Only create one plain text file named:
+
+etsy.txt
+
+## INPUTS
+
+ANIMALS
+ROOM_THEME
+FRAME_COLOUR
+ORIENTATION
+FILE_TYPE
+FRAME_COLOURS
+FILES_INCLUDED
+RECOMMENDED_PAPER
+LICENCE_TYPE
+
+## REQUIRED VARIABLES
+
+ANIMALS
+ROOM_THEME
+FRAME_COLOUR
+ORIENTATION
+FILE_TYPE
+FRAME_COLOURS
+FILES_INCLUDED
+RECOMMENDED_PAPER
+LICENCE_TYPE
+
+## PREFLIGHT RULE
+
+Before creating etsy.txt, check that all required variables are present, usable, and do not contain unresolved placeholders.
+
+ANIMALS must contain at least one valid animal entry.
+
+Every entry under ANIMALS must follow this format:
+
+animal name – animal description
+
+The separator must be a spaced en dash:
+
+–
+
+If any required variable is missing, blank, inaccessible, unusable, or contains an unresolved placeholder such as {{ANIMALS}}, stop immediately and reply only:
+
+ERROR: Required Etsy listing variable missing or unresolved. Check the declared variables at the top of the prompt.
+
+If any animal entry does not contain the required spaced en dash separator, stop immediately and reply only:
+
+ERROR: Every ANIMALS entry must use the format: animal name – animal description
+
+## ANIMAL PROCESSING RULES
+
+Process every line listed under ANIMALS.
+
+For each animal entry:
+
+1. Use the first spaced en dash separator, “ – ”, to split the entry into two derived values.
+
+2. Derive ANIMAL_NAME from the text before the separator.
+
+3. Derive ANIMAL_DESCRIPTION from the text after the separator.
+
+4. Trim unnecessary spaces from both values.
+
+Create a combined list of all derived ANIMAL_NAME values.
+
+Use every animal as part of one coordinated nursery printable set.
+
+Use each ANIMAL_DESCRIPTION as the source for that animal’s colours, features, personality, and visual details.
+
+Mention all animals naturally within the listing description.
+
+Do not create an individual title, description, category, or tag set for each animal.
+
+Do not present the animals as separate purchases.
+
+Do not imply that the buyer must select one animal.
+
+Do not omit any declared animal.
+
+Do not invent additional animals.
+
+Do not transfer colours, features, or descriptions from one animal to another.
+
+Do not invent unsupported markings, accessories, poses, scenery, or design details.
+
+## PRODUCT INTERPRETATION RULES
+
+Treat the product as one coordinated digital wall art set featuring all declared animals.
+
+Use suitable collection wording where natural, such as:
+
+print set
+nursery print set
+wall art set
+coordinating print collection
+dinosaur print set
+set of nursery prints
+gallery wall set
+
+The listing must clearly communicate that all declared animals are included together in the digital product.
+
+Do not state a specific number of artworks unless that number is directly supported by the declared variables.
+
+The number of animal subjects does not automatically determine the number of downloadable files.
+
+Do not change, reinterpret, or invent the technical file inventory based on the number of animals.
+
+FILES_INCLUDED and the exact technical sizing section remain the source of truth for the downloadable files.
+
+## SHARED VARIABLE RULES
+
+Use ROOM_THEME when describing the nursery, bedroom, playroom, reading corner, toddler bedroom, gallery wall, or decor theme.
+
+Use FILE_TYPE as the download file type.
+
+Use the uppercase version of FILE_TYPE in buyer-facing text, for example JPEG.
+
+Use RECOMMENDED_PAPER in the printing advice.
+
+Use LICENCE_TYPE in the usage and licence section.
+
+Use FRAME_COLOUR and FRAME_COLOURS only as styling or display suggestions where natural.
+
+Do not suggest or imply that a frame is included.
+
+Do not invent a different room theme, file type, licence type, paper recommendation, orientation, frame colour, or included file set.
+
+Do not introduce unsupported claims about materials, shipping, processing, physical quality, sustainability, or handmade production.
+
+Do not mention REFERENCE_IMAGE.
+
+Do not mention that variables were used.
+
+## DERIVED COPYWRITING DETAILS
+
+Treat the combined animal names as the product subjects.
+
+Treat the individual animal descriptions as the only source for their colours, features, personalities, and visual details.
+
+When colour palettes are clearly present in the animal descriptions, use them naturally to describe the coordinated collection.
+
+When styles or aesthetics are clearly present, use them naturally.
+
+If no formal aesthetic trend is stated, use safe descriptive terms directly supported by the variables, such as:
+
+soft nursery
+whimsical nursery
+gentle kids room
+playful nursery
+prehistoric nursery
+dinosaur nursery
+coordinated nursery set
+
+Use relevant gifting angles where natural, such as:
+
+baby shower gift
+new baby gift
+toddler birthday gift
+dinosaur lover gift
+dino lover gift
+nursery gift
+
+Do not keyword-stuff.
+
+Do not repeat the same keyword phrase unnaturally.
+
+## ROLE
+
+Act as an expert Etsy SEO copywriter specialising in digital download wall art.
+
+Write highly scannable, conversion-optimised Etsy listing text for a premium nursery and kids room printable collection.
+
+## CREATE THE FOLLOWING ETSY LISTING CONTENT
+
+### 1. TITLE
+
+Create one streamlined, human-scannable Etsy product title for the complete multi-animal printable set.
+
+The title must:
+
+Be under 15 words.
+Be no more than 140 characters.
+Use vertical bars “|” to separate phrases.
+Contain no commas.
+Clearly describe the product as a set or collection.
+Include the most important animal names where they fit naturally.
+Include “nursery wall art” or “nursery print”.
+Include “printable” when it fits naturally.
+Use ROOM_THEME when it fits naturally.
+Use a phrase such as “print set” or “wall art set”.
+Avoid the generic phrase “Digital Download” unless needed for clarity.
+Avoid keyword stuffing.
+Not imply that only one animal is included.
+Not exceed the title limits.
+
+When listing every animal name would make the title difficult to scan or exceed the limits, prioritise:
+
+The strongest animal keywords.
+The overall ROOM_THEME.
+A clear set or collection keyword.
+
+### 2. DESCRIPTION
+
+Create one buyer-friendly Etsy description for the complete multi-animal printable set.
+
+The description must start immediately with this exact mobile warning disclosure:
+
+🚨 IMPORTANT: THIS IS A DIGITAL DOWNLOAD ONLY. NO PHYSICAL PRODUCT WILL BE SHIPPED. 🚨
+
+Immediately after the warning, briefly state that frames, mounts, props, and display items are not included.
+
+The description must include these sections in this exact order:
+
+✨ ABOUT THIS PRINT SET ✨
+
+Write a smooth, beautifully written three-sentence hook.
+
+The hook must:
+
+Clearly state that the product is a coordinated printable set.
+Include every ANIMAL_NAME naturally.
+Use relevant details from every ANIMAL_DESCRIPTION.
+Keep each animal’s colours and features accurate.
+Include ROOM_THEME naturally.
+Explain how the animals work together as a coordinated collection.
+Use relevant long-tail keywords.
+Use relevant gift terms where natural.
+Mention suitable placements such as a nursery gallery wall, reading corner, playroom focal point, toddler bedroom, or kids room.
+Feel premium and boutique.
+Avoid repetitive keyword stuffing.
+
+After the three-sentence hook, include a short scannable paragraph or sentence clearly stating that the purchase includes the complete animal collection shown in the listing.
+
+Do not imply that the buyer receives only one animal.
+
+Do not ask the buyer to select an animal.
+
+Do not state that the animals are sold separately.
+
+📦 WHAT YOU WILL RECEIVE 📦
+
+Paste this exact technical inventory and dual-sizing block into the description:
+
+📦 WHAT YOU WILL RECEIVE 📦
+After purchase, you will download a PDF containing a secure link to your high-resolution files. You will receive 5 professional-quality JPEG files (300 DPI, RGB profile) perfectly cropped for over 20 standard frame sizes:
+
+📐 SIZES INCLUDED (Print up to these maximum sizes):
+
+• ISO A-Series (7016 x 9933 px)
+Fits standard international sizes: A1, A2, A3, A4, A5, and 5x7"
+
+• 2:3 Ratio (7200 x 10800 px)
+Inches: 4x6 | 6x9 | 8x12 | 10x15 | 12x18 | 14x21 | 16x24 | 24x36
+Centimeters: 10x15 | 15x23 | 20x30 | 25x38 | 30x46 | 36x53 | 41x61 | 61x91 cm
+
+• 3:4 Ratio (5400 x 7200 px)
+Inches: 6x8 | 9x12 | 12x16 | 15x20 | 18x24
+Centimeters: 15x20 | 22x30 | 30x40 | 38x50 | 45x60 cm
+
+• 4:5 Ratio (4800 x 6000 px)
+Inches: 4x5 | 8x10 | 16x20
+Centimeters: 10x12 | 20x25 | 40x50 cm
+
+• 11:14 Ratio (6600 x 8400 px)
+Inches: 11x14 | 22x28
+Centimeters: 28x35 | 55x71 cm
+
+All files are 300 DPI JPEG files.
+
+Do not alter the file pixel sizes.
+
+Do not remove inches.
+
+Do not remove centimeters.
+
+Do not remove the 300 DPI JPEG confirmation.
+
+Do not multiply the technical inventory by the number of animals.
+
+Do not claim that five files are provided for each animal.
+
+📥 HOW IT WORKS & INSTANT DOWNLOAD
+
+Explain clearly that this is an instant digital download.
+
+Explain that after purchase, the buyer receives a PDF containing a secure link to the high-resolution files.
+
+Explain that the buyer can download, print, and frame the artwork themselves.
+
+Mention that no physical product will be posted or shipped.
+
+Keep this section simple and practical.
+
+🖨️ RECOMMENDED PAPER & PRINTING TIPS
+
+Recommend RECOMMENDED_PAPER.
+
+Also recommend 80–110 lb / 220–300 gsm heavyweight matte paper or smooth cardstock.
+
+Suggest printing:
+
+At home.
+Through a local print shop.
+Through a professional online print service.
+
+Suggest choosing the matching ratio file for the buyer’s preferred frame size.
+
+Do not guarantee exact colour matching.
+
+Do not suggest that specialist equipment is required.
+
+🎨 COLOR NOTE & ACCURACY
+
+Write a professional colour variation note.
+
+Explain that colours may vary slightly between screens, printers, inks, and papers.
+
+Keep the note reassuring and buyer-friendly.
+
+Do not blame the buyer.
+
+Do not guarantee exact colour accuracy.
+
+✨ EXPLORE MORE DESIGNS OR CREATE A GALLERY WALL
+
+Include a short cross-promotion block inviting buyers to browse matching nursery prints, kids room designs, coordinating animal collections, and gallery wall ideas.
+
+Include this shop link exactly:
+
+https://www.etsy.com/shop/CosyHousePrints?ref=dashboard-header
+
+⚖️ TERMS OF USE & LICENSE
+
+State that the files are for LICENCE_TYPE.
+
+State that the purchase is for personal home decor or one personal gift only.
+
+Explicitly prohibit:
+
+Commercial reproduction.
+Digital resale.
+File sharing.
+Redistribution.
+Uploading the files for resale.
+Editing the files for resale.
+Selling printed versions.
+
+Do not mention specific marketplace, social media, or print-on-demand platform names in the licence restrictions.
+
+Keep the tone professional, clear, and legally protective.
+
+### 3. CATEGORY
+
+Create one suitable Etsy-style category for the complete product.
+
+The product is a digital nursery wall art printable set.
+
+Use one clean category path suitable for a printable wall art download.
+
+The category must be present in the final file.
+
+Do not provide multiple category options.
+
+### 4. TAGS
+
+Create exactly 13 optimised Etsy tags for the complete multi-animal printable set unless fewer than 13 genuinely relevant tags are possible.
+
+Every tag must:
+
+Be strictly under 20 characters including spaces.
+Be comma-separated on one line.
+Be relevant to the complete product rather than a separate individual listing.
+Use individual animal names where useful.
+Include keywords relating to ROOM_THEME.
+Include nursery print, kids room decor, printable art, animal nursery decor, collection, set, or gifting angles where relevant.
+Mix high-traffic phrases with specific long-tail modifiers.
+Avoid duplicate tags.
+Avoid unnatural keyword variations.
+Avoid redundant broad category tags such as “digital prints” or “wall decor”.
+
+Use only one combined set of tags.
+
+Do not create 13 tags for each animal.
+
+Do not use bullet points for tags.
+
+Do not create more than 13 tags.
+
+## OUTPUT FILE REQUIREMENTS
+
+Create one plain text file named:
+
+etsy.txt
+
+The file must contain one complete Etsy listing for the full animal collection.
+
+Each listing field must appear on one separate physical line in the file.
+
+Use exactly four lines in this order:
+
+TITLE: [complete title]
+DESCRIPTION: [complete description]
+CATEGORY: [complete category]
+TAGS: [complete comma-separated tag line]
+
+Important formatting rules:
+
+The TITLE and its complete value must be on the first line.
+
+The DESCRIPTION heading and the entire description must be on the second line.
+
+The CATEGORY heading and its complete value must be on the third line.
+
+The TAGS heading and all 13 comma-separated tags must be on the fourth line.
+
+Do not insert line breaks, blank lines, paragraph breaks, or additional physical lines inside the description.
+
+Convert all description sections, sentences, headings, technical details, and size information into one continuous line.
+
+Separate description sections using spaces and the required emoji section headings.
+
+Where the supplied technical inventory contains bullet points or line breaks, preserve all wording and numerical details but convert the formatting into inline text separated by spaces and suitable dividers such as “ • ”.
+
+For example:
+
+📐 SIZES INCLUDED (Print up to these maximum sizes): • ISO A-Series (7016 x 9933 px) Fits standard international sizes: A1, A2, A3, A4, A5, and 5x7" • 2:3 Ratio...
+
+Do not remove or change any technical information while converting it to a single line.
+
+Do not repeat the headings for each animal.
+
+Do not create separate animal sections outside the single combined description.
+
+Do not include markdown formatting in etsy.txt.
+
+Do not include raw HTML in etsy.txt.
+
+Do not include code fences.
+
+Do not include explanatory notes outside the four required lines.
+
+The file must be plain text only.
+
+## FINAL CHECK
+
+Before finishing, open etsy.txt and verify:
+
+The file exists.
+Only one file was created.
+The file contains exactly four physical lines.
+There are no blank lines.
+The first line begins with TITLE:
+The second line begins with DESCRIPTION:
+The third line begins with CATEGORY:
+The fourth line begins with TAGS:
+The complete description is contained on one physical line.
+The technical sizing information remains complete and accurate.
+No required text was removed while converting the description to one line.
+The file contains one combined product listing.
+The title represents the complete animal set.
+The description represents the complete animal set.
+Every declared animal is included.
+Every animal’s description is used accurately.
+No undeclared animals appear.
+No animal’s colours or features are assigned to another animal.
+The listing does not ask the buyer to choose an animal.
+The listing does not describe the animals as separate purchases.
+The title is under 15 words.
+The title is 140 characters or fewer.
+The title uses vertical bars.
+The title contains no commas.
+The title clearly communicates that the product is a set or collection.
+The description starts immediately after “DESCRIPTION: ” with the exact digital download warning.
+The description says this is a digital download only.
+The description says no physical product will be shipped.
+The description says frames, mounts, props, and display items are not included.
+The description includes the complete file-size section.
+The description includes both inches and centimeters.
+The description says all files are 300 DPI JPEG files.
+The technical inventory has not been multiplied by the number of animals.
+The description includes HOW IT WORKS & INSTANT DOWNLOAD.
+The description includes RECOMMENDED PAPER & PRINTING TIPS.
+The description includes COLOR NOTE & ACCURACY.
+The description includes the exact shop cross-promotion link.
+The description includes TERMS OF USE & LICENSE.
+The licence section uses LICENCE_TYPE.
+The licence section contains all required restrictions.
+Only one category is present.
+Only one combined tag line is present.
+The tags are comma-separated.
+There are exactly 13 tags unless fewer are genuinely relevant.
+Every tag is under 20 characters including spaces.
+No unresolved placeholders remain.
+No raw HTML appears.
+No unintended markdown syntax appears.
+The file is plain text only.
+
+After creating and verifying the file, provide a download link to etsy.txt.
