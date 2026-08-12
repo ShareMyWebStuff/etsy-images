@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
 import type { MultiListingWizardData } from '@/lib/multi-listing';
-import { getMultiBedroomPrompt, getMultiPlayroomPrompt } from '@/lib/multi-listing-prompts';
+import { applyRoomThemeToPrompt, getMultiBedroomPrompt, getMultiPlayroomPrompt, getRoomThemeForSourceSection, type RoomTheme } from '@/lib/multi-listing-prompts';
 
 type Props = { data: MultiListingWizardData | null; shopId: string; sectionId: string; subSectionId: string };
 type Group = { groupNumber: number; sourceDirectoryName: string; fileCount: number };
@@ -44,6 +44,8 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
   const [dropbox, setDropbox] = useState<{ folderPath: string; sharedUrl: string | null } | null>(null);
   const [pdfCreated, setPdfCreated] = useState(false);
   const [infoCopied, setInfoCopied] = useState(false);
+  const [twelveStageToken, setTwelveStageToken] = useState<string | null>(null);
+  const [stagedTwelveBatches, setStagedTwelveBatches] = useState<Set<number>>(() => new Set());
 
   const downloadCount = data?.subSection.numberOfDownloads ?? 0;
   const isAll = data?.subSection.includeAllDownloads ?? false;
@@ -53,6 +55,7 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
   const isDropboxMulti = isSix || isTwelve || isAll;
   const isSupported = downloadCount === 3 || isDropboxMulti;
   const selectedSourceSection = data?.sourceSections.find((section) => section.id === sourceSectionId) ?? null;
+  const roomTheme = getRoomThemeForSourceSection(selectedSourceSection?.name ?? '');
   const sources = selectedSourceSection?.sources ?? [];
   const requiredCount = data?.subSection.includeAllDownloads ? sources.length : downloadCount;
   const selectedSources = useMemo(
@@ -221,9 +224,10 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
         ? ['image1', 'image2', 'image3', 'image4', 'image5', 'image6', 'image7', 'image8']
         : ['bedroomImage', 'playroomImage', 'bestThreeImage', 'otherThreeImage'];
       formData.set('flowType', isAll ? 'all' : isTwelve ? 'twelve' : isSix ? 'six' : 'three');
-      imageKeys.forEach((key, index) => {
-        if (uploadedImages[index]) formData.set(key, uploadedImages[index]!);
-      });
+      if (isTwelve && twelveStageToken) formData.set('stageToken', twelveStageToken);
+      else imageKeys.forEach((key, index) => {
+          if (uploadedImages[index]) formData.set(key, uploadedImages[index]!);
+        });
       const response = await fetch('/api/shops/listings/multi', { method: 'POST', body: formData });
       const payload = await response.json() as {
         listingId?: string;
@@ -249,6 +253,28 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
       setBusy(null);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to create listing.');
+      setBusy(null);
+    }
+  }
+
+  async function stageTwelveBatch(batchIndex: number) {
+    const startIndex = batchIndex * 2;
+    setError(null);
+    setBusy(`stage-${batchIndex}`);
+    try {
+      const formData = new FormData();
+      if (twelveStageToken) formData.set('token', twelveStageToken);
+      for (let index = startIndex; index < startIndex + 2; index += 1) {
+        if (uploadedImages[index]) formData.set(`image${index + 1}`, uploadedImages[index]!);
+      }
+      const response = await fetch('/api/shops/listings/multi/stage', { method: 'POST', body: formData });
+      const payload = await response.json() as { token?: string; error?: string };
+      if (!response.ok || !payload.token) throw new Error(payload.error ?? 'Unable to upload image batch.');
+      setTwelveStageToken(payload.token);
+      setStagedTwelveBatches((current) => new Set(current).add(batchIndex));
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to upload image batch.');
+    } finally {
       setBusy(null);
     }
   }
@@ -307,7 +333,10 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
       if (!response.ok) throw new Error('Unable to load the Etsy information prompt.');
       const template = await response.text();
       const animals = selectedSources.map((source) => `${source.name} – ${source.description}`).join('\n');
-      const prompt = template.replace(/^ANIMALS:.*?^ROOM_THEME:/ms, `ANIMALS:\n${animals}\nROOM_THEME:`);
+      const prompt = applyRoomThemeToPrompt(
+        template.replace(/^ANIMALS:.*?^ROOM_THEME:/ms, `ANIMALS:\n${animals}\nROOM_THEME:`),
+        roomTheme
+      );
       await navigator.clipboard.writeText(prompt);
       setInfoCopied(true);
       window.setTimeout(() => setInfoCopied(false), 2000);
@@ -317,8 +346,8 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
   }
 
   function promptCopyText(prompt: PromptStep) {
-    if (prompt.title === 'Run PROMPT_40_multi_bedroom') return getMultiBedroomPrompt(prompt.names);
-    if (prompt.title === 'Run PROMPT_40_multi_playroom') return getMultiPlayroomPrompt(prompt.names);
+    if (prompt.title === 'Run PROMPT_40_multi_bedroom') return getMultiBedroomPrompt(prompt.names, roomTheme);
+    if (prompt.title === 'Run PROMPT_40_multi_playroom') return getMultiPlayroomPrompt(prompt.names, roomTheme);
     return null;
   }
 
@@ -398,6 +427,7 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
               {prompts.map((prompt, promptIndex) => <div key={`${prompt.title}-${promptIndex}`} className="rounded-md border p-4">
                 <PromptUpload
                   {...prompt}
+                  title={`${promptIndex + 1}. ${prompt.title}`}
                   copyPrompt={promptCopyText(prompt)}
                   copyPromptUrl={promptCopyUrl(prompt)}
                   artworkNumbers={prompt.artworkNumbers ?? null}
@@ -405,10 +435,11 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
                   existingFileName={null}
                   setFile={() => undefined}
                   showUpload={false}
+                  roomTheme={roomTheme}
                 />
               </div>)}
               <div className="rounded-md border p-4">
-                <h2 className="font-semibold">Run {infoPromptTitle}</h2>
+                <h2 className="font-semibold">{prompts.length + 1}. Run {infoPromptTitle}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">Enter the following items into the prompt:</p>
                 <ul className="mt-3 grid gap-2 text-sm">{selectedSources.map((source) => <li key={source.id}><strong>{source.name}</strong> â€” {source.description}</li>)}</ul>
                 <Button type="button" variant="outline" className="mt-4" onClick={() => copyEtsyInfoPrompt(infoPromptUrl)}><Copy className="h-4 w-4" />{infoCopied ? 'Prompt copied' : 'Copy prompt'}</Button>
@@ -427,6 +458,7 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
               existingFileName={existingImageNames[step - promptUploadStartStep]}
               setFile={(file) => setUploadedImages((current) => current.map((value, index) => index === step - promptUploadStartStep ? file : value))}
               showPrompt={false}
+              roomTheme={roomTheme}
             />
             <Navigation back={() => setStep(step - 1)} next={() => {
               if (step === infoStep - 1) setPopularColours();
@@ -458,9 +490,22 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
               <div className="flex gap-2"><Input value={tagInput} onChange={(event) => setTagInput(event.target.value)} onKeyDown={tagKeyDown} placeholder="Enter a tag" /><Button variant="outline" onClick={addTag} disabled={!tagInput.trim()}>Add</Button></div>
               <div className="flex flex-wrap gap-2">{tags.map((tag) => <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-muted px-3 py-1 text-sm">{tag}<button onClick={() => setTags((current) => current.filter((value) => value !== tag))}><X className="h-3 w-3" /></button></span>)}</div>
             </div>
+            {isTwelve ? <div className="grid gap-3 rounded-md border p-4">
+              <div><h3 className="font-semibold">Upload generated images</h3><p className="text-sm text-muted-foreground">Upload the images in four smaller batches before creating the listing.</p></div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {Array.from({ length: 4 }, (_, batchIndex) => {
+                  const isStaged = stagedTwelveBatches.has(batchIndex);
+                  const start = batchIndex * 2 + 1;
+                  const canStage = [batchIndex * 2, batchIndex * 2 + 1].every((index) => uploadedImages[index] || existingImageNames[index]);
+                  return <Button key={batchIndex} type="button" variant={isStaged ? 'outline' : 'default'} onClick={() => stageTwelveBatch(batchIndex)} disabled={!canStage || busy !== null}>
+                    {busy === `stage-${batchIndex}` ? 'Uploading…' : isStaged ? `Images ${start}–${start + 1} uploaded` : `Upload images ${start}–${start + 1}`}
+                  </Button>;
+                })}
+              </div>
+            </div> : null}
             {busy === 'create' ? <Progress /> : null}
             {error ? <ErrorText text={error} /> : null}
-            <div className="flex justify-between"><Button variant="outline" onClick={() => setStep(infoStep - 1)} disabled={busy !== null}>Back</Button><Button onClick={createListing} disabled={busy !== null || !title.trim() || !description.trim() || !price || !quantity}>{busy === 'create' ? 'Creating…' : 'Create'}</Button></div>
+            <div className="flex justify-between"><Button variant="outline" onClick={() => setStep(infoStep - 1)} disabled={busy !== null}>Back</Button><Button onClick={createListing} disabled={busy !== null || !title.trim() || !description.trim() || !price || !quantity || (isTwelve && stagedTwelveBatches.size !== 4)}>{busy === 'create' ? 'Creating…' : 'Create'}</Button></div>
           </> : null}
 
           {isDropboxMulti && step === downloadsStep ? <>
@@ -492,7 +537,7 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
   );
 }
 
-function PromptUpload({ title, names, note, copyPrompt, copyPromptUrl, artworkNumbers, file, existingFileName, setFile, showPrompt = true, showUpload = true }: { title: string; names: string[]; note: string; copyPrompt: string | null; copyPromptUrl: string | null; artworkNumbers: number[] | null; file: File | null; existingFileName: string | null; setFile: (file: File | null) => void; showPrompt?: boolean; showUpload?: boolean }) {
+function PromptUpload({ title, names, note, copyPrompt, copyPromptUrl, artworkNumbers, file, existingFileName, setFile, roomTheme, showPrompt = true, showUpload = true }: { title: string; names: string[]; note: string; copyPrompt: string | null; copyPromptUrl: string | null; artworkNumbers: number[] | null; file: File | null; existingFileName: string | null; setFile: (file: File | null) => void; roomTheme: RoomTheme; showPrompt?: boolean; showUpload?: boolean }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     let prompt = copyPrompt;
@@ -521,6 +566,7 @@ function PromptUpload({ title, names, note, copyPrompt, copyPromptUrl, artworkNu
       }
     }
     if (!prompt) return;
+    prompt = applyRoomThemeToPrompt(prompt, roomTheme);
     await navigator.clipboard.writeText(prompt);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);

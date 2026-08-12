@@ -18,6 +18,7 @@ export type SubSectionListingsPageData = {
   listings: Array<{
     id: string;
     listingName: string;
+    sourceSectionName: string | null;
     status: string;
     price: string;
     hasPrice: boolean;
@@ -120,7 +121,7 @@ export async function getSubSectionListingsPageData(
         ...(sectionEtsyId === null ? [] : [{ subSectionId: null, shopSectionId: sectionEtsyId }]),
       ],
     },
-    orderBy: [{ title: 'asc' }],
+    orderBy: [{ sourceSection: { title: 'asc' } }, { title: 'asc' }],
     select: {
       id: true,
       etsyId: true,
@@ -131,6 +132,7 @@ export async function getSubSectionListingsPageData(
       priceDivisor: true,
       priceCurrencyCode: true,
       quantity: true,
+      sourceSection: { select: { title: true } },
     },
   });
 
@@ -152,6 +154,7 @@ export async function getSubSectionListingsPageData(
     listings: listings.map((listing) => ({
       id: String(listing.id),
       listingName: listing.localDirectoryName ?? listing.title,
+      sourceSectionName: listing.sourceSection?.title ?? null,
       status: listing.state ?? 'local',
       price: formatPrice(listing.priceAmount, listing.priceDivisor, listing.priceCurrencyCode),
       hasPrice: listing.priceAmount !== null && listing.priceDivisor !== null && listing.priceDivisor > 0,

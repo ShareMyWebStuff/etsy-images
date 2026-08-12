@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { Route } from 'next';
 import { useRouter } from 'next/navigation';
 import { FormEvent, useState } from 'react';
+import { Fragment } from 'react';
 import { Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -221,6 +222,7 @@ export function SubSectionListingsTable({
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Category</TableHead>
                 <TableHead>Listing Name</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Quantity</TableHead>
@@ -230,15 +232,24 @@ export function SubSectionListingsTable({
             </TableHeader>
             <TableBody>
               {data && data.listings.length > 0 ? (
-                data.listings.map((listing) => {
+                data.listings.map((listing, listingIndex) => {
                   const isPublished = listing.status === 'active' || listing.status === 'published';
                   const isBusy = actingListingId !== null;
                   const requiresExplicitCompletion = data.subSection.includeAllDownloads
                     || (data.subSection.numberOfDownloads !== null && data.subSection.numberOfDownloads >= 6);
                   const isComplete = listing.status === 'complete' || isPublished;
+                  const sourceSectionName = listing.sourceSectionName ?? 'Uncategorised';
+                  const previousSourceSectionName = listingIndex === 0
+                    ? null
+                    : data.listings[listingIndex - 1].sourceSectionName ?? 'Uncategorised';
 
                   return (
-                    <TableRow key={listing.id} className={(requiresExplicitCompletion ? isComplete : listing.hasPrice) ? 'bg-green-50 hover:bg-green-100' : undefined}>
+                    <Fragment key={listing.id}>
+                    {sourceSectionName !== previousSourceSectionName ? <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableCell colSpan={6} className="font-semibold">{sourceSectionName}</TableCell>
+                    </TableRow> : null}
+                    <TableRow className={(requiresExplicitCompletion ? isComplete : listing.hasPrice) ? 'bg-green-50 hover:bg-green-100' : undefined}>
+                      <TableCell className="text-muted-foreground">{sourceSectionName}</TableCell>
                       <TableCell className="font-medium">{listing.listingName}</TableCell>
                       <TableCell>{listing.status}</TableCell>
                       <TableCell className="text-right tabular-nums">{listing.quantity ?? 'None'}</TableCell>
@@ -267,11 +278,12 @@ export function SubSectionListingsTable({
                         </div>
                       </TableCell>
                     </TableRow>
+                    </Fragment>
                   );
                 })
               ) : (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">
                     No listings found.
                   </TableCell>
                 </TableRow>

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { completeMultiListing, createSixItemListing, createThreeItemListing, validateMultiListingName } from '@/lib/multi-listing';
+import { loadTwelveListingImages, removeStagedTwelveListingImages } from '@/lib/multi-listing-staging';
 
 function requiredString(formData: FormData, name: string) {
   const value = formData.get(name);
@@ -42,13 +43,20 @@ export async function POST(request: Request) {
         : flowType === 'twelve'
         ? ['image1', 'image2', 'image3', 'image4', 'image5', 'image6', 'image7', 'image8']
         : ['bedroomImage', 'playroomImage', 'bestThreeImage', 'otherThreeImage'];
-      result = await createSixItemListing(context, {
-          ...sharedInput,
-          uploadedImages: imageKeys.map((key) => {
+      const stageToken = flowType === 'twelve' ? formData.get('stageToken') : null;
+      const uploadedImages = flowType === 'twelve' && typeof stageToken === 'string' && stageToken
+        ? await loadTwelveListingImages(stageToken)
+        : imageKeys.map((key) => {
             const file = formData.get(key);
             return file instanceof File ? file : null;
-          }),
+          });
+      result = await createSixItemListing(context, {
+          ...sharedInput,
+          uploadedImages,
         });
+      if (flowType === 'twelve' && typeof stageToken === 'string' && stageToken) {
+        await removeStagedTwelveListingImages(stageToken);
+      }
     } else {
       if (!(bedroomImage instanceof File) || !(playroomImage instanceof File)) {
         return NextResponse.json({ error: 'Upload both generated images.' }, { status: 400 });

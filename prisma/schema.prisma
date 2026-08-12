@@ -63,6 +63,7 @@ model EtsyListing {
   endingTimestamp           Int?
   rawJson                   Json?
   subSectionId              Int?
+  sourceSectionId           Int?
   localDirectoryName        String?
   isLocal                   Boolean               @default(false)
   downloadedAt              DateTime              @default(now())
@@ -84,11 +85,13 @@ model EtsyListing {
   dropboxFiles              EtsyListingDropboxFile[]
   dropboxBundle             EtsyListingDropboxBundle?
   subSection                EtsyShopSubSection?   @relation(fields: [subSectionId], references: [id], onDelete: SetNull)
+  sourceSection             EtsyShopSection?      @relation("ListingSourceSection", fields: [sourceSectionId], references: [id], onDelete: SetNull)
 
   @@unique([subSectionId, localDirectoryName])
   @@index([shopId])
   @@index([state])
   @@index([subSectionId])
+  @@index([sourceSectionId])
   @@map("etsy_listings")
 }
 
@@ -166,6 +169,7 @@ model EtsyShopSection {
   sourceSectionId     Int?
   shop               EtsyShop?            @relation(fields: [shopId], references: [id], onDelete: Cascade)
   subSections        EtsyShopSubSection[]
+  sourceListings     EtsyListing[]         @relation("ListingSourceSection")
 
   @@unique([shopId, title])
   @@unique([shopId, etsyShopSectionId])

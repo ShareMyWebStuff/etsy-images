@@ -1,3 +1,33 @@
+export type RoomTheme = { name: string; adjective: string };
+
+const ROOM_THEMES: Record<string, RoomTheme> = {
+  'dinosaur wall art': { name: 'dinosaurs', adjective: 'dinosaur' },
+  'bugs wall art': { name: 'bugs', adjective: 'bug' },
+  'farm animal wall art': { name: 'farm animals', adjective: 'farm-animal' },
+  'jungle animals wall art': { name: 'jungle animals', adjective: 'jungle-animal' },
+  'see creatures wall art': { name: 'sea creatures', adjective: 'sea-creature' },
+  'sea creatures wall art': { name: 'sea creatures', adjective: 'sea-creature' },
+  'woodland wall art': { name: 'woodland animals', adjective: 'woodland-animal' },
+};
+
+export function getRoomThemeForSourceSection(sectionName: string): RoomTheme {
+  const normalized = sectionName.trim().toLocaleLowerCase();
+  const configured = ROOM_THEMES[normalized];
+  if (configured) return configured;
+  const name = normalized.replace(/\s+wall art$/, '').trim() || 'animals';
+  return { name, adjective: name.replace(/s$/, '').replace(/\s+/g, '-') };
+}
+
+export function applyRoomThemeToPrompt(prompt: string, theme: RoomTheme) {
+  const capitalizedName = theme.name.charAt(0).toUpperCase() + theme.name.slice(1);
+  const capitalizedAdjective = theme.adjective.charAt(0).toUpperCase() + theme.adjective.slice(1);
+  return prompt
+    .replace(/\bDinosaurs\b/g, capitalizedName)
+    .replace(/\bDinosaur\b/g, capitalizedAdjective)
+    .replace(/\bdinosaurs\b/g, theme.name)
+    .replace(/\bdinosaur\b/g, theme.adjective);
+}
+
 const MULTI_BEDROOM_PROMPT = `# PROMPT — All Attached Artworks in a Dinosaur-Themed Child’s Bedroom
 
 Generate one inline ChatGPT image only.
@@ -199,11 +229,11 @@ Ensure every attached artwork is:
 
 Return only the generated image.`;
 
-export function getMultiBedroomPrompt(names: string[]) {
-  return MULTI_BEDROOM_PROMPT.replace(
+export function getMultiBedroomPrompt(names: string[], theme: RoomTheme = ROOM_THEMES['dinosaur wall art']) {
+  return applyRoomThemeToPrompt(MULTI_BEDROOM_PROMPT.replace(
     /^ANIMALS:.*$/m,
     `ANIMALS: ${names.join(', ')}`
-  );
+  ), theme);
 }
 
 const MULTI_PLAYROOM_PROMPT = `# PROMPT — All Attached Artworks in a Dinosaur-Themed Child’s Playroom
@@ -410,9 +440,9 @@ Ensure every attached artwork is:
 
 Return only the generated image.`;
 
-export function getMultiPlayroomPrompt(names: string[]) {
-  return MULTI_PLAYROOM_PROMPT.replace(
+export function getMultiPlayroomPrompt(names: string[], theme: RoomTheme = ROOM_THEMES['dinosaur wall art']) {
+  return applyRoomThemeToPrompt(MULTI_PLAYROOM_PROMPT.replace(
     /^ANIMALS:.*$/m,
     `ANIMALS: ${names.join(', ')}`
-  );
+  ), theme);
 }
