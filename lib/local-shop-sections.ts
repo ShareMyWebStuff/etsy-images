@@ -265,6 +265,59 @@ export async function createOrLinkEtsyShopSection(shopId: string, sectionId: str
   });
 }
 
+export async function renameShopSection(shopId: string, sectionId: string, sectionName: string) {
+  const shop = await getShopByEtsyShopId(shopId);
+  const numericSectionId = Number(sectionId);
+  const trimmedSectionName = normalizeSectionName(sectionName);
+  if (!Number.isInteger(numericSectionId)) throw new Error('Invalid section id.');
+  if (!trimmedSectionName) throw new Error('Section name is required.');
+
+  const section = await prisma.etsyShopSection.findFirst({
+    where: { id: numericSectionId, OR: [{ shopId: shop.id }, { etsyShopId: shop.etsyShopId }] },
+    select: { id: true, title: true, etsyShopSectionId: true },
+  });
+  if (!section) throw new Error('Section not found.');
+
+  const duplicate = await prisma.etsyShopSection.findFirst({
+    where: { id: { not: section.id }, OR: [{ shopId: shop.id }, { etsyShopId: shop.etsyShopId }], title: trimmedSectionName },
+    select: { id: true },
+  });
+  if (duplicate) throw new Error(`A section named "${trimmedSectionName}" already exists.`);
+
+  if (section.etsyShopSectionId !== null) {
+    const accessToken = await getValidEtsyAccessToken();
+    const response = await fetch(
+      `https://openapi.etsy.com/v3/application/shops/${encodeURIComponent(shop.etsyShopId.toString())}/sections/${encodeURIComponent(section.etsyShopSectionId)}`,
+      {
+        method: 'PUT',
+        signal: AbortSignal.timeout(30_000),
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+          'x-api-key': getEtsyApiKeyHeader(),
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({ title: trimmedSectionName }),
+      }
+    );
+    const responseText = await response.text();
+    if (!response.ok) {
+      throw new Error(`Etsy API returned ${response.status} ${response.statusText}${responseText ? `: ${responseText}` : ''}`);
+    }
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await tx.etsyShopSubSection.updateMany({
+      where: { shopSectionId: section.id, name: section.title },
+      data: { name: trimmedSectionName },
+    });
+    return tx.etsyShopSection.update({
+      where: { id: section.id },
+      data: { title: trimmedSectionName, downloadedAt: new Date() },
+    });
+  });
+}
+
 export async function deleteEtsyShopSection(sectionId: string) {
   const numericSectionId = Number(sectionId);
   if (!Number.isInteger(numericSectionId)) throw new Error('Invalid section id.');

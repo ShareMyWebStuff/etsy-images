@@ -40,6 +40,20 @@ const navGroups = [
     ],
   },
   {
+    title: 'Pinterest',
+    items: [
+      { label: 'Overview', href: '/pinterest' },
+      { label: 'Connection', href: '/pinterest/connection' },
+      { label: 'Boards', href: '/pinterest/boards' },
+      { label: 'Pins', href: '/pinterest/pins' },
+      { label: 'Campaigns', href: '/pinterest/campaigns' },
+      { label: 'Queue', href: '/pinterest/queue' },
+      { label: 'Analytics', href: '/pinterest/analytics' },
+      { label: 'Trends', href: '/pinterest/trends' },
+      { label: 'AI Campaign', href: '/pinterest/ai-campaign' },
+    ],
+  },
+  {
     title: 'Admin',
     items: [
       { label: 'Backup', href: '/admin/backup' },

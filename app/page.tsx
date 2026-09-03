@@ -1,6 +1,8 @@
 import { Navbar } from '@/components/Navbar';
 import { AppContainer } from '@/components/AppContainer';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import Link from 'next/link';
 
 export default function HomePage() {
   return (
@@ -35,6 +37,13 @@ export default function HomePage() {
                   </ol>
                 </li>
               </ol>
+            </CardContent>
+          </Card>
+          <Card className="mt-5">
+            <CardHeader><CardTitle>Pinterest marketing</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <p>Create boards, draft or schedule Pins from your Etsy listings, and review analytics.</p>
+              <div className="flex gap-2"><Button asChild><Link href="/pinterest">Open Pinterest</Link></Button><Button variant="outline" asChild><Link href="/pinterest/connection">Test connection</Link></Button></div>
             </CardContent>
           </Card>
         </AppContainer>

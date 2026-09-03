@@ -1,0 +1,1 @@
+import { PinterestShell } from '@/components/pinterest/PinterestShell'; import { PinterestModule } from '@/components/pinterest/PinterestModule'; export default function Page(){return <PinterestShell><PinterestModule mode="trends"/></PinterestShell>}

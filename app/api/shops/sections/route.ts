@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getShopSectionsPageData } from '@/lib/etsy-sync';
-import { createLocalShopSection, createOrLinkEtsyShopSection, deleteLocalShopSection } from '@/lib/local-shop-sections';
+import { createLocalShopSection, createOrLinkEtsyShopSection, deleteLocalShopSection, renameShopSection } from '@/lib/local-shop-sections';
 
 type CreateSectionRequest = {
   shopId?: string;
@@ -18,6 +18,25 @@ type LinkEtsySectionRequest = {
   shopId?: string;
   sectionId?: string;
 };
+
+type RenameSectionRequest = LinkEtsySectionRequest & { sectionName?: string };
+
+export async function PUT(request: Request) {
+  try {
+    const body = (await request.json()) as RenameSectionRequest;
+    if (!body.shopId || !body.sectionId || !body.sectionName) {
+      return NextResponse.json({ error: 'Missing shopId, sectionId, or sectionName.' }, { status: 400 });
+    }
+    await renameShopSection(body.shopId, body.sectionId, body.sectionName);
+    return NextResponse.json({ data: await getShopSectionsPageData(body.shopId) });
+  } catch (error) {
+    console.error('Failed to rename shop section:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Unable to rename section.' },
+      { status: 500 }
+    );
+  }
+}
 
 export async function PATCH(request: Request) {
   try {

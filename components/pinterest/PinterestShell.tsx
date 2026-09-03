@@ -1,0 +1,3 @@
+import Link from 'next/link'; import { Navbar } from '@/components/Navbar'; import { AppContainer } from '@/components/AppContainer';
+const links = [['Overview','/pinterest'],['Connection','/pinterest/connection'],['Boards','/pinterest/boards'],['Pins','/pinterest/pins'],['Campaigns','/pinterest/campaigns']] as const;
+export function PinterestShell({ children }: { children: React.ReactNode }) { return <><Navbar/><main className="py-6"><AppContainer className="space-y-5"><nav className="flex flex-wrap gap-2">{links.map(([label,href]) => <Link key={href} href={href} className="rounded-lg border bg-card px-3 py-2 text-sm no-underline hover:bg-muted">{label}</Link>)}</nav>{children}</AppContainer></main></>; }

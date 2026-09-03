@@ -8,6 +8,9 @@ import { getSectionListingsPageData, getSubSectionListingsPageData } from '@/lib
 import { ListingsClient } from './ListingsClient';
 import { SubSectionListingsTable } from './SubSectionListingsTable';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 type ListingsPageProps = {
   searchParams?: Promise<{
     shopId?: string;

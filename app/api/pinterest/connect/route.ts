@@ -1,0 +1,3 @@
+import { NextResponse } from 'next/server';
+import { authorizationUrl, createOAuthState } from '@/lib/pinterest/auth';
+export async function GET() { try { const state = createOAuthState(); const response = NextResponse.redirect(authorizationUrl(state)); response.cookies.set('pinterest_oauth_state', state, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 600, path: '/' }); return response; } catch (error) { return NextResponse.redirect(new URL(`/pinterest/connection?error=${encodeURIComponent(error instanceof Error ? error.message : 'Unable to connect')}`, process.env.PINTEREST_REDIRECT_URI ?? 'http://localhost:3002')); } }

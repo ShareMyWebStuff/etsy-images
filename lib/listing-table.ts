@@ -20,6 +20,7 @@ export type SubSectionListingsPageData = {
     listingName: string;
     sourceSectionName: string | null;
     status: string;
+    isComplete: boolean;
     price: string;
     hasPrice: boolean;
     quantity: number | null;
@@ -128,10 +129,15 @@ export async function getSubSectionListingsPageData(
       title: true,
       localDirectoryName: true,
       state: true,
+      description: true,
+      primaryColour: true,
       priceAmount: true,
       priceDivisor: true,
       priceCurrencyCode: true,
       quantity: true,
+      tags: { select: { id: true } },
+      images: { select: { localFileName: true } },
+      zippedFiles: { select: { id: true } },
       sourceSection: { select: { title: true } },
     },
   });
@@ -151,16 +157,30 @@ export async function getSubSectionListingsPageData(
       numberOfDownloads: subSection.numberOfDownloads,
       includeAllDownloads: subSection.includeAllDownloads,
     },
-    listings: listings.map((listing) => ({
-      id: String(listing.id),
-      listingName: listing.localDirectoryName ?? listing.title,
-      sourceSectionName: listing.sourceSection?.title ?? null,
-      status: listing.state ?? 'local',
-      price: formatPrice(listing.priceAmount, listing.priceDivisor, listing.priceCurrencyCode),
-      hasPrice: listing.priceAmount !== null && listing.priceDivisor !== null && listing.priceDivisor > 0,
-      quantity: listing.quantity,
-      hasEtsyListingId: listing.etsyId !== null,
-    })),
+    listings: listings.map((listing) => {
+      const hasDetailsTitle = listing.title.trim().length > 0
+        && listing.title.trim() !== listing.localDirectoryName?.trim();
+      const uploadedImageCount = listing.images.filter((image) => (image.localFileName?.trim().length ?? 0) > 0).length;
+      const isComplete = uploadedImageCount === 10
+        && listing.zippedFiles.length > 0
+        && listing.tags.length > 0
+        && hasDetailsTitle
+        && (listing.description?.trim().length ?? 0) > 0
+        && (listing.primaryColour?.trim().length ?? 0) > 0;
+      const isPublished = listing.state === 'active' || listing.state === 'published';
+
+      return {
+        id: String(listing.id),
+        listingName: listing.localDirectoryName ?? listing.title,
+        sourceSectionName: listing.sourceSection?.title ?? null,
+        status: isPublished ? listing.state! : isComplete ? 'complete' : 'incomplete',
+        isComplete,
+        price: formatPrice(listing.priceAmount, listing.priceDivisor, listing.priceCurrencyCode),
+        hasPrice: listing.priceAmount !== null && listing.priceDivisor !== null && listing.priceDivisor > 0,
+        quantity: listing.quantity,
+        hasEtsyListingId: listing.etsyId !== null,
+      };
+    }),
   };
 }
 

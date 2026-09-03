@@ -10,9 +10,10 @@ export type SyncToEtsyData = {
     id: string;
     shopId: string;
     sectionName: string;
+    showSubject: boolean;
     hasEtsySection: boolean;
     hasSyncedListings: boolean;
-    listings: Array<{ id: string; listingName: string; localDirectoryName: string | null; subSectionId: string; subSectionName: string; hasEtsyListing: boolean; isSynced: boolean; isPublished: boolean; isInactive: boolean; canSync: boolean; syncDisabledReason: string | null }>;
+    listings: Array<{ id: string; listingName: string; subjectName: string; localDirectoryName: string | null; subSectionId: string; subSectionName: string; hasEtsyListing: boolean; isSynced: boolean; isPublished: boolean; isInactive: boolean; canSync: boolean; syncDisabledReason: string | null }>;
   }>;
 };
 
@@ -27,6 +28,7 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
           listings: {
             orderBy: [{ localDirectoryName: 'asc' }, { title: 'asc' }],
             include: {
+              sourceSection: { select: { title: true } },
               zippedFiles: { select: { sizeBytes: true } },
               files: { select: { localFileName: true, sizeBytes: true } },
             },
@@ -41,6 +43,7 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
       id: String(section.id),
       shopId: section.shop!.etsyShopId.toString(),
       sectionName: section.title,
+      showSubject: section.includeAllDownloads || [3, 6, 12].includes(section.numberOfDownloads),
       hasEtsySection: section.etsyShopSectionId !== null,
       hasSyncedListings: section.subSections.some((subSection) => subSection.listings.some((listing) => listing.etsyId !== null)),
       listings: section.subSections
@@ -62,6 +65,7 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
           return {
             id: String(listing.id),
             listingName: listing.localDirectoryName ?? listing.title,
+            subjectName: listing.sourceSection?.title ?? 'Uncategorised',
             localDirectoryName: listing.localDirectoryName,
             subSectionId: String(subSection.id),
             subSectionName: subSection.name,

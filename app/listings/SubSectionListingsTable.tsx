@@ -3,9 +3,9 @@
 import Link from 'next/link';
 import type { Route } from 'next';
 import { useRouter } from 'next/navigation';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { Fragment } from 'react';
-import { Pencil, Plus, Trash2, Upload } from 'lucide-react';
+import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -27,6 +27,8 @@ type ListingActionResponse = {
   error?: string;
 };
 
+const COLLAPSIBLE_SET_SIZES = new Set([3, 6, 12]);
+
 export function SubSectionListingsTable({
   data: initialData,
   shopId,
@@ -34,6 +36,7 @@ export function SubSectionListingsTable({
   subSectionId,
 }: SubSectionListingsTableProps) {
   const [data, setData] = useState(initialData);
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set());
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [listingName, setListingName] = useState('');
@@ -46,6 +49,26 @@ export function SubSectionListingsTable({
   const [importRows, setImportRows] = useState<ImportableListingRow[]>([]);
   const router = useRouter();
   const isSingleListings = data?.subSection.numberOfDownloads === 1 && !data.subSection.includeAllDownloads;
+  const hasCollapsibleGroups = data?.subSection.numberOfDownloads !== null
+    && data?.subSection.numberOfDownloads !== undefined
+    && COLLAPSIBLE_SET_SIZES.has(data.subSection.numberOfDownloads)
+    && !data.subSection.includeAllDownloads;
+
+  useEffect(() => {
+    setExpandedSections(new Set());
+  }, [sectionId, subSectionId]);
+
+  function toggleSection(sectionName: string) {
+    setExpandedSections((current) => {
+      const next = new Set(current);
+      if (next.has(sectionName)) {
+        next.delete(sectionName);
+      } else {
+        next.add(sectionName);
+      }
+      return next;
+    });
+  }
 
   function getEditHref(listingId: string) {
     if (!shopId || !sectionId || !subSectionId) {
@@ -235,20 +258,32 @@ export function SubSectionListingsTable({
                 data.listings.map((listing, listingIndex) => {
                   const isPublished = listing.status === 'active' || listing.status === 'published';
                   const isBusy = actingListingId !== null;
-                  const requiresExplicitCompletion = data.subSection.includeAllDownloads
-                    || (data.subSection.numberOfDownloads !== null && data.subSection.numberOfDownloads >= 6);
-                  const isComplete = listing.status === 'complete' || isPublished;
                   const sourceSectionName = listing.sourceSectionName ?? 'Uncategorised';
                   const previousSourceSectionName = listingIndex === 0
                     ? null
                     : data.listings[listingIndex - 1].sourceSectionName ?? 'Uncategorised';
+                  const isSectionExpanded = expandedSections.has(sourceSectionName);
 
                   return (
                     <Fragment key={listing.id}>
                     {sourceSectionName !== previousSourceSectionName ? <TableRow className="bg-muted/50 hover:bg-muted/50">
-                      <TableCell colSpan={6} className="font-semibold">{sourceSectionName}</TableCell>
+                      <TableCell colSpan={6} className="font-semibold">
+                        {hasCollapsibleGroups ? <button
+                          type="button"
+                          className="flex w-full items-center gap-2 text-left"
+                          aria-expanded={isSectionExpanded}
+                          onClick={() => toggleSection(sourceSectionName)}
+                        >
+                          {isSectionExpanded ? (
+                            <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                          )}
+                          {sourceSectionName}
+                        </button> : sourceSectionName}
+                      </TableCell>
                     </TableRow> : null}
-                    <TableRow className={(requiresExplicitCompletion ? isComplete : listing.hasPrice) ? 'bg-green-50 hover:bg-green-100' : undefined}>
+                    {!hasCollapsibleGroups || isSectionExpanded ? <TableRow className={listing.isComplete ? 'bg-green-50 hover:bg-green-100' : undefined}>
                       <TableCell className="text-muted-foreground">{sourceSectionName}</TableCell>
                       <TableCell className="font-medium">{listing.listingName}</TableCell>
                       <TableCell>{listing.status}</TableCell>
@@ -277,7 +312,7 @@ export function SubSectionListingsTable({
                           </Button>
                         </div>
                       </TableCell>
-                    </TableRow>
+                    </TableRow> : null}
                     </Fragment>
                   );
                 })

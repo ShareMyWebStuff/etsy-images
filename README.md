@@ -1,4 +1,19 @@
 I want to change the structure of the data me hold. Currently we have the following
+
+## Pinterest marketing module
+
+Pinterest is available from the main navigation at `/pinterest`. It uses the existing Etsy listings, categories, images, and real Etsy URLs; the migration is additive and does not alter existing Etsy records.
+
+1. Register the callback `http://localhost:3002/api/pinterest/callback` in the Pinterest developer application.
+2. Copy the `PINTEREST_*` entries from `.env.example` into `.env.local`. Start with `PINTEREST_ENVIRONMENT="sandbox"`. Use long, different random values for the encryption and cron secrets.
+3. Run `npm run db:pinterest` once. This creates only the six Pinterest tables using `CREATE TABLE IF NOT EXISTS`.
+4. Start the application and use **Pinterest → Connection → Connect Pinterest**. Tokens are AES-256-GCM encrypted in MySQL and never returned to the browser.
+5. Sync or create boards, then save drafts or schedule Pins. A Pin cannot be published until its listing contains a genuine Etsy URL.
+
+The queue worker accepts `GET` or `POST /api/pinterest/queue` with `Authorization: Bearer <PINTEREST_CRON_SECRET>`. Schedule it externally at the desired interval. The unique publication key and stored Pinterest Pin ID prevent a completed Pin from being published twice. Analytics snapshots are cached for six hours. The Trends screen maps an Ireland preference to Great Britain because Pinterest's keyword Trends endpoint currently supports Great Britain, not Ireland.
+
+Run `npm run test:pinterest` for deterministic scheduler, idempotency-key, and encryption checks, and `npm run build` for the full application verification.
+
 shop -> section -> sub sections -> listings
 
 I want to remove the sub sections but do not want to lose any of the listing. The section name will now directly link to the Etsy Shop section. When creating a section you should ask for the section name and the number of downloads like we do on the sub sections. Any existing sections should have the no of downloads set to 1.

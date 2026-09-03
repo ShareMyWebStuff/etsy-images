@@ -34,14 +34,14 @@ model MyCategory {
 }
 
 model EtsyListing {
-  id                        Int                   @id @default(autoincrement())
-  etsyId                    String?               @unique
+  id                        Int                          @id @default(autoincrement())
+  etsyId                    String?                      @unique
   shopId                    String
   userId                    String?
   title                     String
-  description               String?               @db.Text
+  description               String?                      @db.Text
   state                     String?
-  url                       String?               @db.Text
+  url                       String?                      @db.Text
   quantity                  Int?
   priceAmount               Int?
   priceDivisor              Int?
@@ -65,10 +65,10 @@ model EtsyListing {
   subSectionId              Int?
   sourceSectionId           Int?
   localDirectoryName        String?
-  isLocal                   Boolean               @default(false)
-  downloadedAt              DateTime              @default(now())
-  updatedAt                 DateTime              @updatedAt
-  lastLocalChangeAt         DateTime              @default(now())
+  isLocal                   Boolean                      @default(false)
+  downloadedAt              DateTime                     @default(now())
+  updatedAt                 DateTime                     @updatedAt
+  lastLocalChangeAt         DateTime                     @default(now())
   lastSyncedAt              DateTime?
   tags                      EtsyListingTag[]
   materials                 EtsyListingMaterial[]
@@ -84,8 +84,9 @@ model EtsyListing {
   localProfile              EtsyListingLocalProfile?
   dropboxFiles              EtsyListingDropboxFile[]
   dropboxBundle             EtsyListingDropboxBundle?
-  subSection                EtsyShopSubSection?   @relation(fields: [subSectionId], references: [id], onDelete: SetNull)
-  sourceSection             EtsyShopSection?      @relation("ListingSourceSection", fields: [sourceSectionId], references: [id], onDelete: SetNull)
+  pinterestPins             PinterestPin[]
+  subSection                EtsyShopSubSection?          @relation(fields: [subSectionId], references: [id], onDelete: SetNull)
+  sourceSection             EtsyShopSection?             @relation("ListingSourceSection", fields: [sourceSectionId], references: [id], onDelete: SetNull)
 
   @@unique([subSectionId, localDirectoryName])
   @@index([shopId])
@@ -154,22 +155,23 @@ model EtsyShop {
 }
 
 model EtsyShopSection {
-  id                 Int                  @id @default(autoincrement())
-  shopId             Int?
-  etsyShopId         BigInt?
-  etsyShopSectionId  String?
-  title              String
-  rank               Int?
-  activeListingCount Int?
-  rawJson            Json?
-  downloadedAt       DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  numberOfDownloads  Int                  @default(1)
-  includeAllDownloads Boolean             @default(false)
+  id                  Int                  @id @default(autoincrement())
+  shopId              Int?
+  etsyShopId          BigInt?
+  etsyShopSectionId   String?
+  title               String
+  rank                Int?
+  activeListingCount  Int?
+  rawJson             Json?
+  downloadedAt        DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  numberOfDownloads   Int                  @default(1)
+  includeAllDownloads Boolean              @default(false)
   sourceSectionId     Int?
-  shop               EtsyShop?            @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  subSections        EtsyShopSubSection[]
-  sourceListings     EtsyListing[]         @relation("ListingSourceSection")
+  shop                EtsyShop?            @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  subSections         EtsyShopSubSection[]
+  sourceListings      EtsyListing[]        @relation("ListingSourceSection")
+  pinterestCampaigns  PinterestCampaign[]
 
   @@unique([shopId, title])
   @@unique([shopId, etsyShopSectionId])
@@ -177,6 +179,103 @@ model EtsyShopSection {
   @@index([shopId])
   @@index([etsyShopId])
   @@map("etsy_shop_sections")
+}
+
+model PinterestConnection {
+  id                      Int       @id @default(1)
+  accountId               String?
+  username                String?
+  accessTokenEncrypted    String    @db.Text
+  refreshTokenEncrypted   String?   @db.Text
+  accessTokenExpiresAt    DateTime?
+  refreshTokenExpiresAt   DateTime?
+  scopes                  Json
+  environment             String    @default("production") @db.VarChar(20)
+  connectedAt             DateTime  @default(now())
+  lastSuccessfulApiTestAt DateTime?
+  lastError               String?   @db.Text
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@map("pinterest_connections")
+}
+
+model PinterestBoard {
+  id               Int            @id @default(autoincrement())
+  pinterestBoardId String         @unique
+  name             String
+  description      String?        @db.Text
+  privacy          String         @default("PUBLIC") @db.VarChar(30)
+  pinCount         Int?
+  lastSyncedAt     DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  pins             PinterestPin[]
+
+  @@map("pinterest_boards")
+}
+
+model PinterestCampaign {
+  id              Int              @id @default(autoincrement())
+  name            String
+  sourceSectionId Int?
+  status          String           @default("DRAFT") @db.VarChar(20)
+  startDate       DateTime
+  endDate         DateTime?
+  pinsPerDay      Int              @default(1)
+  configuration   Json
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  sourceSection   EtsyShopSection? @relation(fields: [sourceSectionId], references: [id], onDelete: SetNull)
+  pins            PinterestPin[]
+
+  @@index([sourceSectionId])
+  @@index([status])
+  @@map("pinterest_campaigns")
+}
+
+model PinterestPin {
+  id             Int                @id @default(autoincrement())
+  listingId      Int
+  imageId        Int?
+  boardId        Int
+  campaignId     Int?
+  pinterestPinId String?            @unique
+  creativeType   String             @default("STANDARD") @db.VarChar(20)
+  title          String             @db.VarChar(100)
+  description    String             @db.Text
+  destinationUrl String?            @db.Text
+  status         String             @default("DRAFT") @db.VarChar(20)
+  scheduledAt    DateTime?
+  publishedAt    DateTime?
+  error          String?            @db.Text
+  retryCount     Int                @default(0)
+  publicationKey String             @unique @db.VarChar(191)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  listing        EtsyListing        @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  image          EtsyListingImage?  @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  board          PinterestBoard     @relation(fields: [boardId], references: [id], onDelete: Restrict)
+  campaign       PinterestCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([listingId])
+  @@index([imageId])
+  @@index([boardId])
+  @@index([campaignId])
+  @@index([status, scheduledAt])
+  @@map("pinterest_pins")
+}
+
+model PinterestAnalyticsSnapshot {
+  id             Int      @id @default(autoincrement())
+  rangeStart     DateTime
+  rangeEnd       DateTime
+  accountMetrics Json
+  pinMetrics     Json
+  fetchedAt      DateTime @default(now())
+
+  @@index([rangeStart, rangeEnd])
+  @@map("pinterest_analytics_snapshots")
 }
 
 model EtsyShopSubSection {
@@ -218,19 +317,20 @@ model EtsyListingMaterial {
 }
 
 model EtsyListingImage {
-  id           Int         @id @default(autoincrement())
-  listingId    Int
-  etsyImageId  String?
-  localFileName String?
+  id               Int            @id @default(autoincrement())
+  listingId        Int
+  etsyImageId      String?
+  localFileName    String?
   originalFileName String?
-  rank         Int?
-  url75x75     String?     @db.Text
-  url170x135   String?     @db.Text
-  url570xN     String?     @db.Text
-  urlFullxFull String?     @db.Text
-  fullHeight   Int?
-  fullWidth    Int?
-  listing      EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  rank             Int?
+  url75x75         String?        @db.Text
+  url170x135       String?        @db.Text
+  url570xN         String?        @db.Text
+  urlFullxFull     String?        @db.Text
+  fullHeight       Int?
+  fullWidth        Int?
+  listing          EtsyListing    @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  pinterestPins    PinterestPin[]
 
   @@unique([listingId, etsyImageId])
   @@map("etsy_listing_images")
@@ -262,15 +362,15 @@ model EtsyListingFile {
 }
 
 model EtsyListingZip {
-  id        Int         @id @default(autoincrement())
-  listingId Int
-  zipNumber Int
-  fileName  String
-  sizeBytes Int
+  id                Int         @id @default(autoincrement())
+  listingId         Int
+  zipNumber         Int
+  fileName          String
+  sizeBytes         Int
   etsyListingFileId String?
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-  listing   EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  listing           EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
   @@unique([listingId, zipNumber])
   @@map("etsy_listing_zips")

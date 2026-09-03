@@ -72,6 +72,20 @@ function SortableListingImage({ image, index, disabled, imageUrl, onDelete, onPr
 const textAreaClassName =
   'min-h-36 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
+const singleDownloadImageGuide = [
+  'Listing image',
+  'Bedroom',
+  'Playroom',
+  'Perfect gift',
+  'Frames',
+  'Sizes',
+  'No Frames Included',
+  'Digital Download',
+  'How to print',
+  'Personal Use Only',
+  'Frames',
+];
+
 function toNumberOrNull(value: string) {
   if (!value.trim()) {
     return null;
@@ -688,6 +702,16 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           <div>
             <h3 className="text-lg font-semibold">Photo and video</h3>
             <p className="text-sm text-muted-foreground">Show off different angles, available options, or details of your listing.</p>
+            {data?.subSection.numberOfDownloads === 1 && !data.subSection.includeAllDownloads ? (
+              <div className="mt-3 grid w-fit grid-cols-[max-content_max-content] gap-x-6 text-sm">
+                <ol className="list-inside list-decimal">
+                  {singleDownloadImageGuide.slice(0, 6).map((item) => <li key={item}>{item}</li>)}
+                </ol>
+                <ol start={7} className="list-inside list-decimal">
+                  {singleDownloadImageGuide.slice(6).map((item) => <li key={item}>{item}</li>)}
+                </ol>
+              </div>
+            ) : null}
           </div>
           <div>
             <p className="mb-4 font-semibold">Add up to 20 photos.</p>

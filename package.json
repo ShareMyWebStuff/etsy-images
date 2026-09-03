@@ -8,6 +8,8 @@
     "start": "next start",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
+    "db:pinterest": "node scripts/add-pinterest-module.cjs",
+    "test:pinterest": "node scripts/test-pinterest.cjs",
     "db:reset": "prisma db push --force-reset"
   },
   "dependencies": {

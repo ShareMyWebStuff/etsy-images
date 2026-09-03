@@ -151,6 +151,13 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
       {error ? <p className="text-sm font-medium text-destructive">{error}</p> : null}
       {data.sections.map((section) => {
         const isExpanded = expandedSectionIds.has(section.id);
+        const showSubject = mode === 'publish' && section.showSubject;
+        const visibleListings = showSubject
+          ? [...section.listings].sort((first, second) =>
+              first.subjectName.localeCompare(second.subjectName, undefined, { sensitivity: 'base' })
+              || first.listingName.localeCompare(second.listingName, undefined, { sensitivity: 'base' })
+            )
+          : section.listings;
         return <Card key={section.id}>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
           <button
@@ -217,8 +224,9 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
           </div> : null}
         </CardHeader>
         {isExpanded ? <CardContent id={`section-listings-${section.id}`} className={!section.hasEtsySection ? 'opacity-55' : ''}>
-          <Table><TableHeader><TableRow><TableHead>Listing Name</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>
-            {section.listings.map((listing) => <TableRow key={listing.id}>
+          <Table><TableHeader><TableRow>{showSubject ? <TableHead>Subject</TableHead> : null}<TableHead>Listing Name</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>
+            {visibleListings.map((listing) => <TableRow key={listing.id}>
+              {showSubject ? <TableCell>{listing.subjectName}</TableCell> : null}
               <TableCell className="font-medium">{listing.listingName}</TableCell>
               <TableCell>{listing.isPublished ? <span className="inline-flex items-center gap-2 text-green-600"><CheckCircle2 className="h-4 w-4" /> Published</span> : listing.isInactive ? <span className="inline-flex items-center gap-2 text-amber-600"><XCircle className="h-4 w-4" /> Inactive</span> : listing.isSynced ? <span className="inline-flex items-center gap-2 text-green-600"><CheckCircle2 className="h-4 w-4" /> Synced</span> : <span className="inline-flex items-center gap-2 text-destructive"><XCircle className="h-4 w-4" /> Not synced</span>}</TableCell>
               <TableCell className="text-right"><div className="flex justify-end gap-2">
