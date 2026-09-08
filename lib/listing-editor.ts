@@ -1,5 +1,3 @@
-import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
-import { createWriteStream } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { Prisma } from '@prisma/client';
@@ -11,6 +9,7 @@ import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
 import { prisma } from '@/lib/prisma';
 import { getNextPrintSize } from '@/lib/print-sizes';
 import { ETSY_MAX_DOWNLOAD_FILES, ETSY_MAX_FILE_SIZE_BYTES } from '@/lib/etsy-download-limits';
+import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from '@/lib/s3-listing-storage';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm']);
@@ -61,6 +60,8 @@ export type ListingEditorData = {
     secondaryColour: string;
     listingType: string;
   };
+  thumbnail: { fileName: string; originalFileName: string | null } | null;
+  pendingChanges: Array<'Details' | 'Tags' | 'Images' | 'Downloads'>;
   readyToUpload: boolean;
   missingUploadFields: string[];
   tags: Array<{ id: string; value: string }>;
@@ -115,7 +116,7 @@ export type CollectionKind =
   | 'personalization'
   | 'buyerPrice';
 
-export type UploadKind = 'image' | 'file' | 'video';
+export type UploadKind = 'thumbnail' | 'image' | 'file' | 'video';
 
 type ImageOrderItem = { id: string };
 
@@ -163,6 +164,7 @@ function getMissingUploadFields(listing: {
   whoMade: string | null;
   whenMade: string | null;
   isSupply: boolean | null;
+  thumbnailFileName: string | null;
 }) {
   return [
     normalize(listing.title) ? null : 'Title',
@@ -173,6 +175,7 @@ function getMissingUploadFields(listing: {
     normalize(listing.whoMade) ? null : 'Who made it',
     normalize(listing.whenMade) ? null : 'When made',
     listing.isSupply !== null ? null : 'Supply type',
+    normalize(listing.thumbnailFileName) ? null : 'Thumbnail',
   ].filter((field): field is string => field !== null);
 }
 
@@ -333,6 +336,16 @@ function mapEditorData(context: ListingEditorContext, data: Awaited<ReturnType<t
       secondaryColour: data.listing.secondaryColour === 'grey' ? 'gray' : data.listing.secondaryColour ?? '',
       listingType: 'download',
     },
+    thumbnail: data.listing.thumbnailFileName ? {
+      fileName: data.listing.thumbnailFileName,
+      originalFileName: data.listing.thumbnailOriginalFileName,
+    } : null,
+    pendingChanges: [
+      data.listing.detailsChanged ? 'Details' as const : null,
+      data.listing.tagsChanged ? 'Tags' as const : null,
+      data.listing.imagesChanged ? 'Images' as const : null,
+      data.listing.downloadsChanged ? 'Downloads' as const : null,
+    ].filter((area): area is 'Details' | 'Tags' | 'Images' | 'Downloads' => area !== null),
     readyToUpload: missingUploadFields.length === 0,
     missingUploadFields,
     tags: data.listing.tags.map((tag) => ({ id: String(tag.id), value: tag.tag })),
@@ -475,10 +488,18 @@ export async function getAdminListingEditorData(listingId: string) {
   });
 }
 
-async function refresh(context: ListingEditorContext) {
+type ListingChangeArea = 'details' | 'tags' | 'images' | 'downloads';
+
+async function refresh(context: ListingEditorContext, areas: ListingChangeArea[]) {
   await prisma.etsyListing.update({
     where: { id: toInt(context.listingId, 'listing id') },
-    data: { lastLocalChangeAt: new Date() },
+    data: {
+      lastLocalChangeAt: new Date(),
+      ...(areas.includes('details') ? { detailsChanged: true } : {}),
+      ...(areas.includes('tags') ? { tagsChanged: true } : {}),
+      ...(areas.includes('images') ? { imagesChanged: true } : {}),
+      ...(areas.includes('downloads') ? { downloadsChanged: true } : {}),
+    },
   });
 
   const data = await getListingEditorData(context);
@@ -518,7 +539,7 @@ export async function saveListingDetails(input: SaveListingDetailsInput) {
     },
   });
 
-  return refresh(input);
+  return refresh(input, ['details']);
 }
 
 export async function addListingCollectionItem(context: ListingEditorContext, kind: CollectionKind, payload: Record<string, unknown>) {
@@ -584,7 +605,7 @@ export async function addListingCollectionItem(context: ListingEditorContext, ki
     });
   }
 
-  return refresh(context);
+  return refresh(context, [kind === 'tag' ? 'tags' : 'details']);
 }
 
 export async function deleteListingCollectionItem(context: ListingEditorContext, kind: CollectionKind, id: string) {
@@ -614,7 +635,7 @@ export async function deleteListingCollectionItem(context: ListingEditorContext,
     throw new Error('Item not found.');
   }
 
-  return refresh(context);
+  return refresh(context, [kind === 'tag' ? 'tags' : 'details']);
 }
 
 export async function saveListingTags(context: ListingEditorContext, tags: string[]) {
@@ -644,7 +665,7 @@ export async function saveListingTags(context: ListingEditorContext, tags: strin
     }
   });
 
-  return refresh(context);
+  return refresh(context, ['tags']);
 }
 
 async function getListingAssetDirectory(context: ListingEditorContext) {
@@ -675,9 +696,9 @@ async function fileExists(filePath: string) {
 }
 
 async function nextAssetName(kind: UploadKind, listingId: number, originalFileName: string, listingPath: string) {
-  const extension = path.extname(cleanFileName(originalFileName)).toLowerCase() || (kind === 'image' ? '.jpg' : '');
+  const extension = path.extname(cleanFileName(originalFileName)).toLowerCase() || (kind === 'image' || kind === 'thumbnail' ? '.jpg' : '');
 
-  if (kind === 'image' && !IMAGE_EXTENSIONS.has(extension)) {
+  if ((kind === 'image' || kind === 'thumbnail') && !IMAGE_EXTENSIONS.has(extension)) {
     throw new Error('Choose a JPG, PNG, or WEBP image.');
   }
 
@@ -707,19 +728,39 @@ async function nextAssetName(kind: UploadKind, listingId: number, originalFileNa
 export async function uploadListingAsset(context: ListingEditorContext, kind: UploadKind, file: File) {
   const { data, listingPath } = await getListingAssetDirectory(context);
 
+  if (kind === 'thumbnail' && data.listing.thumbnailFileName) {
+    throw new Error('Delete the current thumbnail before uploading another one.');
+  }
+  const thumbnailExtension = path.extname(cleanFileName(file.name)).toLowerCase();
+  if (kind === 'thumbnail' && !IMAGE_EXTENSIONS.has(thumbnailExtension)) {
+    throw new Error('Choose a JPG, PNG, or WEBP image.');
+  }
+
   if (kind === 'image' && data.listing.images.length >= 20) {
     throw new Error('A listing can have no more than 20 images.');
   }
 
-  const assetDirectory = kind === 'file' ? path.join(listingPath, 'downloads') : listingPath;
+  const assetDirectory = kind === 'file'
+    ? path.join(listingPath, 'downloads')
+    : kind === 'thumbnail'
+      ? path.join(listingPath, 'thumbnail')
+      : listingPath;
   await mkdir(assetDirectory, { recursive: true });
-  const fileName = await nextAssetName(kind, data.listing.id, file.name, assetDirectory);
+  const extension = path.extname(cleanFileName(file.name)).toLowerCase();
+  const fileName = kind === 'thumbnail'
+    ? `thumbnail${extension === '.jpeg' ? '.jpg' : extension}`
+    : await nextAssetName(kind, data.listing.id, file.name, assetDirectory);
   const targetPath = path.join(assetDirectory, fileName);
 
   const fileBuffer = Buffer.from(await file.arrayBuffer());
   await writeFile(targetPath, fileBuffer);
 
-  if (kind === 'image') {
+  if (kind === 'thumbnail') {
+    await prisma.etsyListing.update({
+      where: { id: data.listing.id },
+      data: { thumbnailFileName: fileName, thumbnailOriginalFileName: file.name },
+    });
+  } else if (kind === 'image') {
     await prisma.etsyListingImage.create({
       data: {
         listingId: data.listing.id,
@@ -769,7 +810,12 @@ export async function uploadListingAsset(context: ListingEditorContext, kind: Up
     });
   }
 
-  return refresh(context);
+  if (kind === 'file') {
+    await prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } });
+    await removeListingZipFiles(listingPath, data.listing.zippedFiles);
+  }
+
+  return refresh(context, kind === 'thumbnail' ? [] : [kind === 'file' ? 'downloads' : 'images']);
 }
 
 async function renameImageFilesSafely(
@@ -853,7 +899,7 @@ export async function reorderListingImages(context: ListingEditorContext, order:
       })),
       prisma.etsyListing.update({
         where: { id: data.listing.id },
-        data: { lastLocalChangeAt: new Date() },
+        data: { lastLocalChangeAt: new Date(), imagesChanged: true },
       }),
     ]);
   } catch (error) {
@@ -871,20 +917,24 @@ export async function reorderListingImages(context: ListingEditorContext, order:
 
 export async function getListingAssetFile(context: ListingEditorContext, kind: UploadKind, id: string) {
   const { data, listingPath } = await getListingAssetDirectory(context);
-  const numericId = toInt(id, 'asset id');
   let localFileName: string | null = null;
 
-  if (kind === 'image') {
+  if (kind === 'thumbnail') {
+    localFileName = data.listing.thumbnailFileName;
+  } else if (kind === 'image') {
+    const numericId = toInt(id, 'asset id');
     localFileName = (await prisma.etsyListingImage.findFirst({
       where: { id: numericId, listingId: data.listing.id },
       select: { localFileName: true },
     }))?.localFileName ?? null;
   } else if (kind === 'file') {
+    const numericId = toInt(id, 'asset id');
     localFileName = (await prisma.etsyListingFile.findFirst({
       where: { id: numericId, listingId: data.listing.id },
       select: { localFileName: true },
     }))?.localFileName ?? null;
   } else {
+    const numericId = toInt(id, 'asset id');
     localFileName = (await prisma.etsyListingVideo.findFirst({
       where: { id: numericId, listingId: data.listing.id },
       select: { localFileName: true },
@@ -902,7 +952,11 @@ export async function getListingAssetFile(context: ListingEditorContext, kind: U
   };
 
   return {
-    contents: await readFile(path.join(listingPath, ...(kind === 'file' ? ['downloads'] : []), localFileName)),
+    contents: await readFile(path.join(
+      listingPath,
+      ...(kind === 'file' ? ['downloads'] : kind === 'thumbnail' ? ['thumbnail'] : []),
+      localFileName
+    )),
     contentType: contentTypes[extension] ?? 'application/octet-stream',
   };
 }
@@ -910,17 +964,17 @@ export async function getListingAssetFile(context: ListingEditorContext, kind: U
 type DownloadZipAssignment = { fileId: string; zipNumber: number | null };
 
 async function writeZipFile(targetPath: string, files: Array<{ path: string; name: string }>) {
-  await new Promise<void>((resolve, reject) => {
-    const output = createWriteStream(targetPath);
-    const archive = new ZipArchive({ zlib: { level: 9 } });
-
-    output.on('close', resolve);
-    output.on('error', reject);
+  const archive = new ZipArchive({ zlib: { level: 9 } });
+  const chunks: Buffer[] = [];
+  const completed = new Promise<void>((resolve, reject) => {
+    archive.on('data', (chunk: Buffer) => chunks.push(chunk));
+    archive.on('end', resolve);
     archive.on('error', reject);
-    archive.pipe(output);
-    files.forEach((file) => archive.file(file.path, { name: file.name }));
-    void archive.finalize();
   });
+  for (const file of files) archive.append(await readFile(file.path), { name: file.name });
+  await archive.finalize();
+  await completed;
+  await writeFile(targetPath, Buffer.concat(chunks));
 }
 
 function listingZipBaseName(title: string) {
@@ -1024,7 +1078,7 @@ export async function createListingZipFiles(context: ListingEditorContext, assig
     throw error;
   }
 
-  return refresh(context);
+  return refresh(context, ['downloads']);
 }
 
 export async function reduceListingDownload(context: ListingEditorContext, fileId: string) {
@@ -1048,6 +1102,7 @@ export async function reduceListingDownload(context: ListingEditorContext, fileI
   await prisma.etsyListingFile.update({
       where: { id: file.id },
       data: {
+        etsyListingFileId: null,
         widthPixels: metadata.width ?? target.width,
         heightPixels: metadata.height ?? target.height,
         sizeBytes: resizedBuffer.length,
@@ -1066,7 +1121,7 @@ export async function reduceListingDownload(context: ListingEditorContext, fileI
   await prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } });
   await removeListingZipFiles(listingPath, data.listing.zippedFiles);
 
-  return refresh(context);
+  return refresh(context, ['downloads']);
 }
 
 export async function reduceListingDownloadQuality(context: ListingEditorContext, fileId: string) {
@@ -1093,8 +1148,9 @@ export async function reduceListingDownloadQuality(context: ListingEditorContext
   const metadata = await sharp(recompressedBuffer).metadata();
   await prisma.etsyListingFile.update({
     where: { id: file.id },
-    data: {
-      widthPixels: metadata.width ?? sourceMetadata.width ?? file.widthPixels,
+      data: {
+        etsyListingFileId: null,
+        widthPixels: metadata.width ?? sourceMetadata.width ?? file.widthPixels,
       heightPixels: metadata.height ?? sourceMetadata.height ?? file.heightPixels,
       jpegQuality: nextQuality,
       sizeBytes: recompressedBuffer.length,
@@ -1114,25 +1170,34 @@ export async function reduceListingDownloadQuality(context: ListingEditorContext
   await prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } });
   await removeListingZipFiles(listingPath, data.listing.zippedFiles);
 
-  return refresh(context);
+  return refresh(context, ['downloads']);
 }
 
 export async function deleteListingAsset(context: ListingEditorContext, kind: UploadKind, id: string) {
   const { data, listingPath } = await getListingAssetDirectory(context);
-  const numericId = toInt(id, 'asset id');
   let localFileName: string | null = null;
 
-  if (kind === 'image') {
+  if (kind === 'thumbnail') {
+    localFileName = data.listing.thumbnailFileName;
+    if (!localFileName) throw new Error('Thumbnail not found.');
+    await prisma.etsyListing.update({
+      where: { id: data.listing.id },
+      data: { thumbnailFileName: null, thumbnailOriginalFileName: null },
+    });
+  } else if (kind === 'image') {
+    const numericId = toInt(id, 'asset id');
     const image = await prisma.etsyListingImage.findFirst({ where: { id: numericId, listingId: data.listing.id } });
     if (!image) throw new Error('Asset not found.');
     await prisma.etsyListingImage.delete({ where: { id: numericId } });
     localFileName = image.localFileName;
   } else if (kind === 'file') {
+    const numericId = toInt(id, 'asset id');
     const file = await prisma.etsyListingFile.findFirst({ where: { id: numericId, listingId: data.listing.id } });
     if (!file) throw new Error('Asset not found.');
     await prisma.etsyListingFile.delete({ where: { id: numericId } });
     localFileName = file.localFileName;
   } else {
+    const numericId = toInt(id, 'asset id');
     const video = await prisma.etsyListingVideo.findFirst({ where: { id: numericId, listingId: data.listing.id } });
     if (!video) throw new Error('Asset not found.');
     await prisma.etsyListingVideo.delete({ where: { id: numericId } });
@@ -1141,7 +1206,11 @@ export async function deleteListingAsset(context: ListingEditorContext, kind: Up
 
   if (localFileName) {
     try {
-      await unlink(path.join(listingPath, ...(kind === 'file' ? ['downloads'] : []), localFileName));
+      await unlink(path.join(
+        listingPath,
+        ...(kind === 'file' ? ['downloads'] : kind === 'thumbnail' ? ['thumbnail'] : []),
+        localFileName
+      ));
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
         throw error;
@@ -1149,7 +1218,12 @@ export async function deleteListingAsset(context: ListingEditorContext, kind: Up
     }
   }
 
-  return refresh(context);
+  if (kind === 'file') {
+    await prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } });
+    await removeListingZipFiles(listingPath, data.listing.zippedFiles);
+  }
+
+  return refresh(context, kind === 'thumbnail' ? [] : [kind === 'file' ? 'downloads' : 'images']);
 }
 
 export async function deleteAllListingDownloads(context: ListingEditorContext) {
@@ -1165,5 +1239,5 @@ export async function deleteAllListingDownloads(context: ListingEditorContext) {
     rm(path.join(listingPath, 'zipped'), { recursive: true, force: true }),
   ]);
 
-  return refresh(context);
+  return refresh(context, ['downloads']);
 }

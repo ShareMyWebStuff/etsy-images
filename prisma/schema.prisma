@@ -65,11 +65,17 @@ model EtsyListing {
   subSectionId              Int?
   sourceSectionId           Int?
   localDirectoryName        String?
+  thumbnailFileName         String?
+  thumbnailOriginalFileName String?
   isLocal                   Boolean                      @default(false)
   downloadedAt              DateTime                     @default(now())
   updatedAt                 DateTime                     @updatedAt
   lastLocalChangeAt         DateTime                     @default(now())
   lastSyncedAt              DateTime?
+  detailsChanged            Boolean                      @default(false)
+  tagsChanged               Boolean                      @default(false)
+  imagesChanged             Boolean                      @default(false)
+  downloadsChanged          Boolean                      @default(false)
   tags                      EtsyListingTag[]
   materials                 EtsyListingMaterial[]
   images                    EtsyListingImage[]
@@ -85,6 +91,8 @@ model EtsyListing {
   dropboxFiles              EtsyListingDropboxFile[]
   dropboxBundle             EtsyListingDropboxBundle?
   pinterestPins             PinterestPin[]
+  priceMappings             EtsyListingPriceMapping[]
+  priceUpdateItems          EtsyPriceUpdateItem[]
   subSection                EtsyShopSubSection?          @relation(fields: [subSectionId], references: [id], onDelete: SetNull)
   sourceSection             EtsyShopSection?             @relation("ListingSourceSection", fields: [sourceSectionId], references: [id], onDelete: SetNull)
 
@@ -94,6 +102,78 @@ model EtsyListing {
   @@index([subSectionId])
   @@index([sourceSectionId])
   @@map("etsy_listings")
+}
+
+model AdminProductPrice {
+  id              Int      @id @default(autoincrement())
+  productKey      String   @unique @db.VarChar(64)
+  category        String   @db.VarChar(24)
+  amountPence     Int
+  currencyCode    String   @default("GBP") @db.VarChar(3)
+  etsySyncPending Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([category])
+  @@map("admin_product_prices")
+}
+
+model EtsyListingPriceMapping {
+  id                 Int         @id @default(autoincrement())
+  listingId          Int
+  productKey         String      @db.VarChar(64)
+  etsyProductId      String?     @db.VarChar(64)
+  etsyOfferingId     String?     @db.VarChar(64)
+  fulfilmentProvider String?     @db.VarChar(64)
+  isSupported        Boolean     @default(true)
+  shippingProfileId  String?     @db.VarChar(64)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  listing            EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([productKey])
+  @@index([listingId])
+  @@map("etsy_listing_price_mappings")
+}
+
+model EtsyPriceUpdateJob {
+  id             String                @id @db.VarChar(36)
+  status         String                @default("waiting") @db.VarChar(20)
+  changedPrices  Json
+  total          Int                   @default(0)
+  processed      Int                   @default(0)
+  succeeded      Int                   @default(0)
+  failed         Int                   @default(0)
+  skipped        Int                   @default(0)
+  currentListing String?               @db.VarChar(255)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  completedAt    DateTime?
+  items          EtsyPriceUpdateItem[]
+
+  @@index([status, createdAt])
+  @@map("etsy_price_update_jobs")
+}
+
+model EtsyPriceUpdateItem {
+  id            Int                @id @default(autoincrement())
+  jobId         String             @db.VarChar(36)
+  listingId     Int
+  listingName   String             @db.VarChar(255)
+  etsyListingId String             @db.VarChar(64)
+  priceKeys     Json
+  status        String             @default("waiting") @db.VarChar(20)
+  attempts      Int                @default(0)
+  message       String?            @db.Text
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  job           EtsyPriceUpdateJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  listing       EtsyListing        @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, listingId])
+  @@index([jobId, status])
+  @@index([listingId])
+  @@map("etsy_price_update_items")
 }
 
 model EtsyListingLocalProfile {

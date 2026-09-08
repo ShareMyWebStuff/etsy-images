@@ -68,7 +68,7 @@ export async function GET(request: Request) {
     const kind = (searchParams.get('kind') ?? '') as UploadKind;
     const assetId = searchParams.get('assetId') ?? '';
 
-    if (!context.shopId || !context.sectionId || !context.subSectionId || !context.listingId || !assetId || kind !== 'image') {
+    if (!context.shopId || !context.sectionId || !context.subSectionId || !context.listingId || !assetId || !['image', 'thumbnail'].includes(kind)) {
       return NextResponse.json({ error: 'Missing or invalid asset context.' }, { status: 400 });
     }
 
@@ -109,6 +109,10 @@ export async function POST(request: Request) {
     const formData = await request.formData();
     const kind = getRequiredFormValue(formData, 'kind') as UploadKind;
     const file = formData.get('file');
+
+    if (!['thumbnail', 'image', 'file', 'video'].includes(kind)) {
+      return NextResponse.json({ error: 'Choose a valid asset type.' }, { status: 400 });
+    }
 
     if (!(file instanceof File)) {
       return NextResponse.json({ error: 'Choose a file to upload.' }, { status: 400 });

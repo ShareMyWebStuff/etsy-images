@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { readFile } from 'node:fs/promises';
+import { readFile } from '@/lib/s3-listing-storage';
 import path from 'node:path';
 import {
   createListingDirectory,
@@ -202,24 +202,31 @@ function parseEtsyListingUrl(payload: unknown) {
 }
 
 async function fetchEtsyListingMutation<T>(path: string, init: RequestInit) {
-  const accessToken = await getValidEtsyAccessToken();
-  const response = await fetch(`https://openapi.etsy.com/v3/application${path}`, {
-    ...init,
-    signal: AbortSignal.timeout(30_000),
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      'x-api-key': getEtsyApiKeyHeader(),
-      ...init.headers,
-    },
-  });
-  const responseText = await response.text();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const accessToken = await getValidEtsyAccessToken();
+    const response = await fetch(`https://openapi.etsy.com/v3/application${path}`, {
+      ...init,
+      signal: AbortSignal.timeout(30_000),
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'x-api-key': getEtsyApiKeyHeader(),
+        ...init.headers,
+      },
+    });
+    const responseText = await response.text();
 
-  if (!response.ok) {
-    throw new Error(`Etsy API returned ${response.status} ${response.statusText}${responseText ? `: ${responseText}` : ''}`);
+    if (response.ok) return (responseText ? JSON.parse(responseText) : null) as T;
+    if (response.status !== 429 || attempt === 2) {
+      throw new Error(`Etsy API returned ${response.status} ${response.statusText}${responseText ? `: ${responseText}` : ''}`);
+    }
+    const retryAfter = Number(response.headers.get('retry-after'));
+    const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(retryAfter * 1000, 30_000)
+      : 1000 * (2 ** attempt);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
-
-  return (responseText ? JSON.parse(responseText) : null) as T;
+  throw new Error('Etsy API rate limit retry failed.');
 }
 
 export async function refreshEtsySectionListings(sectionId: string) {
@@ -307,44 +314,86 @@ export async function checkEtsySectionListingStatuses(sectionId: string) {
   return { updated: listings.length };
 }
 
+type EtsyInventoryOffering = Record<string, unknown> & {
+  offering_id?: number | string;
+  price?: { amount?: number; divisor?: number };
+};
+
+type EtsyInventoryProduct = Record<string, unknown> & {
+  product_id?: number | string;
+  offerings?: EtsyInventoryOffering[];
+};
+
+type EtsyInventory = {
+  products?: EtsyInventoryProduct[];
+  price_on_property?: number[];
+  quantity_on_property?: number[];
+  sku_on_property?: number[];
+  readiness_state_on_property?: number[];
+};
+
+export class EtsyVariationNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EtsyVariationNotFoundError';
+  }
+}
+
+function inventoryRequestBody(
+  inventory: EtsyInventory,
+  priceForOffering: (productId: string, offeringId: string, currentPrice: unknown) => number
+) {
+  return {
+    products: (inventory.products ?? []).map((product) => {
+      const { product_id: productId, is_deleted: _isDeleted, offerings = [], property_values: propertyValues = [], ...productFields } = product;
+      return {
+        ...productFields,
+        offerings: offerings.map((offering) => {
+          const { offering_id: offeringId, is_deleted: _offeringDeleted, price: oldPrice, ...offeringFields } = offering;
+          return {
+            ...offeringFields,
+            price: priceForOffering(String(productId ?? ''), String(offeringId ?? ''), oldPrice),
+          };
+        }),
+        property_values: Array.isArray(propertyValues)
+          ? propertyValues.map((propertyValue) => {
+              if (!propertyValue || typeof propertyValue !== 'object') return propertyValue;
+              const { scale_name: _scaleName, ...fields } = propertyValue as Record<string, unknown>;
+              return fields;
+            })
+          : [],
+      };
+    }),
+    price_on_property: inventory.price_on_property ?? [],
+    quantity_on_property: inventory.quantity_on_property ?? [],
+    sku_on_property: inventory.sku_on_property ?? [],
+    readiness_state_on_property: inventory.readiness_state_on_property ?? [],
+  };
+}
+
+function decimalInventoryPrice(value: unknown) {
+  if (typeof value === 'number') return value;
+  if (value && typeof value === 'object') {
+    const money = value as { amount?: unknown; divisor?: unknown };
+    if (typeof money.amount === 'number' && typeof money.divisor === 'number' && money.divisor > 0) {
+      return money.amount / money.divisor;
+    }
+  }
+  throw new Error('Etsy returned an invalid offering price.');
+}
+
 export async function updateEtsyListingPrice(_shopId: string, etsyListingId: string, priceAmount: number, priceDivisor = 100) {
   const listingPath = `/listings/${encodeURIComponent(etsyListingId)}`;
-  const inventory = await fetchEtsyListingMutation<{
-    products?: Array<Record<string, unknown> & { offerings?: Array<Record<string, unknown> & { price?: { amount?: number; divisor?: number } }> }>;
-    price_on_property?: number[];
-    quantity_on_property?: number[];
-    sku_on_property?: number[];
-  }>(`${listingPath}/inventory`, { method: 'GET' });
+  const inventory = await fetchEtsyListingMutation<EtsyInventory>(`${listingPath}/inventory`, { method: 'GET' });
 
   if (!inventory.products?.length) throw new Error('Etsy did not return listing inventory to update.');
   const price = priceAmount / priceDivisor;
-  const products = inventory.products.map((product) => {
-    const { product_id: _productId, is_deleted: _isDeleted, offerings = [], property_values: propertyValues = [], ...productFields } = product;
-    return {
-      ...productFields,
-      offerings: offerings.map((offering) => {
-        const { offering_id: _offeringId, is_deleted: _offeringDeleted, price: _oldPrice, ...offeringFields } = offering;
-        return { ...offeringFields, price };
-      }),
-      property_values: Array.isArray(propertyValues)
-        ? propertyValues.map((propertyValue) => {
-            if (!propertyValue || typeof propertyValue !== 'object') return propertyValue;
-            const { scale_name: _scaleName, ...fields } = propertyValue as Record<string, unknown>;
-            return fields;
-          })
-        : [],
-    };
-  });
+  const requestBody = inventoryRequestBody(inventory, () => price);
 
   await fetchEtsyListingMutation<unknown>(`${listingPath}/inventory`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      products,
-      price_on_property: inventory.price_on_property ?? [],
-      quantity_on_property: inventory.quantity_on_property ?? [],
-      sku_on_property: inventory.sku_on_property ?? [],
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   const savedListing = await fetchEtsyListingMutation<{ price?: { amount?: number; divisor?: number } }>(listingPath, { method: 'GET' });
@@ -352,6 +401,47 @@ export async function updateEtsyListingPrice(_shopId: string, etsyListingId: str
     throw new Error(`Etsy did not save the requested price of ${price.toFixed(2)}.`);
   }
   return savedListing;
+}
+
+export async function updateEtsyListingVariationPrices(
+  etsyListingId: string,
+  changes: Array<{ etsyProductId: string; etsyOfferingId: string; amountPence: number }>
+) {
+  if (changes.length === 0) throw new Error('No mapped Etsy variations were supplied.');
+  const listingPath = `/listings/${encodeURIComponent(etsyListingId)}`;
+  const inventory = await fetchEtsyListingMutation<EtsyInventory>(`${listingPath}/inventory`, { method: 'GET' });
+  if (!inventory.products?.length) throw new Error('Etsy did not return listing inventory to update.');
+  const changedPrices = new Map(changes.map((change) => [
+    `${change.etsyProductId}:${change.etsyOfferingId}`,
+    change.amountPence / 100,
+  ]));
+  const matched = new Set<string>();
+  const requestBody = inventoryRequestBody(inventory, (productId, offeringId, currentPrice) => {
+    const key = `${productId}:${offeringId}`;
+    const price = changedPrices.get(key);
+    if (price === undefined) return decimalInventoryPrice(currentPrice);
+    matched.add(key);
+    return price;
+  });
+  if (matched.size !== changedPrices.size) throw new EtsyVariationNotFoundError('One or more mapped Etsy variations no longer exist on this listing.');
+
+  await fetchEtsyListingMutation<unknown>(`${listingPath}/inventory`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
+
+  const saved = await fetchEtsyListingMutation<EtsyInventory>(`${listingPath}/inventory`, { method: 'GET' });
+  const confirmed = new Set<string>();
+  for (const product of saved.products ?? []) {
+    for (const offering of product.offerings ?? []) {
+      const key = `${String(product.product_id ?? '')}:${String(offering.offering_id ?? '')}`;
+      const expected = changedPrices.get(key);
+      if (expected !== undefined && decimalInventoryPrice(offering.price) === expected) confirmed.add(key);
+    }
+  }
+  if (confirmed.size !== changedPrices.size) throw new EtsyVariationNotFoundError('Etsy no longer returned every mapped variation after the update.');
+  return saved;
 }
 
 type PushableListing = {
@@ -374,6 +464,8 @@ type PushableListing = {
   tags: Array<{ tag: string }>;
 };
 
+type MetadataSyncAreas = { details: boolean; tags: boolean };
+
 function appendIfPresent(body: URLSearchParams, key: string, value: boolean | number | string | null) {
   if (value === null) {
     return;
@@ -385,7 +477,8 @@ function appendIfPresent(body: URLSearchParams, key: string, value: boolean | nu
 function buildPushListingBody(
   listing: PushableListing & { rawJson: Prisma.JsonValue | null },
   section: Awaited<ReturnType<typeof getListingContext>>['section'],
-  changedOnly = false
+  changedOnly = false,
+  areas: MetadataSyncAreas = { details: true, tags: true }
 ) {
   const missingFields = [
     listing.title.trim() ? null : 'title',
@@ -417,7 +510,11 @@ function buildPushListingBody(
   appendIfPresent(body, 'should_auto_renew', listing.shouldAutoRenew);
   appendIfPresent(body, 'is_personalizable', listing.isPersonalizable);
   const tags = listing.tags.slice(0, 13).map(({ tag }) => tag.trim()).filter(Boolean);
-  if (tags.length > 0) body.set('tags', tags.join(','));
+  if (tags.length > 0 || (changedOnly && areas.tags)) body.set('tags', tags.join(','));
+  if (!areas.details) {
+    for (const key of [...body.keys()]) if (key !== 'tags') body.delete(key);
+  }
+  if (!areas.tags) body.delete('tags');
 
   if (changedOnly && listing.rawJson && typeof listing.rawJson === 'object' && !Array.isArray(listing.rawJson)) {
     const raw = listing.rawJson as Record<string, unknown>;
@@ -482,6 +579,10 @@ async function loadListingForAction(subSectionId: number, listingId: string) {
       secondaryColour: true,
       tags: { select: { tag: true }, orderBy: [{ position: 'asc' }] },
       dropboxBundle: { select: { folderPath: true } },
+      detailsChanged: true,
+      tagsChanged: true,
+      imagesChanged: true,
+      downloadsChanged: true,
     },
   });
 
@@ -657,10 +758,17 @@ export async function makeListingInactive(shopId: string, sectionId: string, sub
   });
 }
 
-export async function pushListing(shopId: string, sectionId: string, subSectionId: string, listingId: string) {
+export async function pushListing(
+  shopId: string,
+  sectionId: string,
+  subSectionId: string,
+  listingId: string,
+  requestedAreas?: MetadataSyncAreas
+) {
   const context = await getListingContext(shopId, sectionId, subSectionId);
   const listing = await loadListingForAction(context.subSection.id, listingId);
-  const body = buildPushListingBody(listing, context.section, listing.etsyId !== null);
+  const areas = listing.etsyId === null ? { details: true, tags: true } : requestedAreas ?? { details: true, tags: true };
+  const body = buildPushListingBody(listing, context.section, listing.etsyId !== null, areas);
   const shopPath = `/shops/${encodeURIComponent(context.shop.etsyShopId.toString())}/listings`;
   const payload =
     listing.etsyId === null
@@ -794,6 +902,115 @@ async function uploadEtsyAsset(pathname: string, field: 'image' | 'file', filePa
   return fetchEtsyListingMutation<unknown>(pathname, { method: 'POST', body: formData });
 }
 
+async function associateEtsyAsset(
+  pathname: string,
+  field: 'listing_image_id' | 'listing_file_id',
+  assetId: string,
+  rank: number,
+  name?: string
+) {
+  const formData = new FormData();
+  formData.set(field, assetId);
+  formData.set('rank', String(rank));
+  if (name) formData.set('name', name);
+  return fetchEtsyListingMutation<unknown>(pathname, { method: 'POST', body: formData });
+}
+
+function remoteAssetIds(payload: unknown, idField: 'listing_image_id' | 'listing_file_id') {
+  if (!payload || typeof payload !== 'object' || !('results' in payload) || !Array.isArray(payload.results)) return [];
+  return payload.results.flatMap((item) => {
+    if (!item || typeof item !== 'object' || !(idField in item)) return [];
+    const id = (item as Record<string, unknown>)[idField];
+    return id === null || id === undefined ? [] : [String(id)];
+  });
+}
+
+async function syncChangedImages(
+  shopId: string,
+  etsyListingId: string,
+  listingDirectory: string,
+  images: Array<{ id: number; localFileName: string | null; originalFileName: string | null; etsyImageId: string | null }>
+) {
+  const assetPath = `/shops/${encodeURIComponent(shopId)}/listings/${encodeURIComponent(etsyListingId)}`;
+  const remotePayload = await fetchEtsyListingMutation<unknown>(
+    `/listings/${encodeURIComponent(etsyListingId)}/images`,
+    { method: 'GET' }
+  );
+  const remoteIds = new Set(remoteAssetIds(remotePayload, 'listing_image_id'));
+  const retainedIds = new Set(images.flatMap((image) => image.etsyImageId ? [image.etsyImageId] : []));
+
+  for (const remoteId of remoteIds) {
+    if (!retainedIds.has(remoteId)) {
+      await fetchEtsyListingMutation<null>(`${assetPath}/images/${encodeURIComponent(remoteId)}`, { method: 'DELETE' });
+    }
+  }
+
+  for (let index = 0; index < images.length; index += 1) {
+    const image = images[index];
+    if (!image.localFileName) continue;
+    const rank = index + 1;
+    const payload = image.etsyImageId && remoteIds.has(image.etsyImageId)
+      ? await associateEtsyAsset(`${assetPath}/images`, 'listing_image_id', image.etsyImageId, rank)
+      : await uploadEtsyAsset(
+          `${assetPath}/images`,
+          'image',
+          path.join(listingDirectory, image.localFileName),
+          image.originalFileName ?? image.localFileName,
+          rank
+        );
+    const etsyImageId = parseAssetId(payload, 'listing_image_id') ?? image.etsyImageId;
+    await prisma.etsyListingImage.update({ where: { id: image.id }, data: { etsyImageId, rank } });
+  }
+}
+
+async function syncChangedDownloads(
+  shopId: string,
+  etsyListingId: string,
+  listingDirectory: string,
+  files: Array<{ id: number; localFileName: string | null; originalFileName: string | null; etsyListingFileId: string | null }>,
+  zippedFiles: Array<{ id: number; fileName: string; etsyListingFileId: string | null }>
+) {
+  const assetPath = `/shops/${encodeURIComponent(shopId)}/listings/${encodeURIComponent(etsyListingId)}`;
+  const remotePayload = await fetchEtsyListingMutation<unknown>(`${assetPath}/files`, { method: 'GET' });
+  const remoteIds = new Set(remoteAssetIds(remotePayload, 'listing_file_id'));
+  const usingZips = zippedFiles.length > 0;
+  const retainedIds = new Set((usingZips ? zippedFiles : files).flatMap((file) =>
+    file.etsyListingFileId ? [file.etsyListingFileId] : []
+  ));
+
+  for (const remoteId of remoteIds) {
+    if (!retainedIds.has(remoteId)) {
+      await fetchEtsyListingMutation<null>(`${assetPath}/files/${encodeURIComponent(remoteId)}`, { method: 'DELETE' });
+    }
+  }
+
+  if (usingZips) {
+    for (let index = 0; index < zippedFiles.length; index += 1) {
+      const zip = zippedFiles[index];
+      const rank = index + 1;
+      const payload = zip.etsyListingFileId && remoteIds.has(zip.etsyListingFileId)
+        ? await associateEtsyAsset(`${assetPath}/files`, 'listing_file_id', zip.etsyListingFileId, rank, zip.fileName)
+        : await uploadEtsyAsset(`${assetPath}/files`, 'file', path.join(listingDirectory, 'zipped', zip.fileName), zip.fileName, rank);
+      const etsyListingFileId = parseAssetId(payload, 'listing_file_id') ?? zip.etsyListingFileId;
+      await prisma.etsyListingZip.update({ where: { id: zip.id }, data: { etsyListingFileId } });
+    }
+    return;
+  }
+
+  if (files.length > 5) throw new Error('Create up to five ZIP files before syncing more than five downloads.');
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    if (!file.localFileName) continue;
+    const rank = index + 1;
+    const name = file.originalFileName ?? file.localFileName;
+    const payload = file.etsyListingFileId && remoteIds.has(file.etsyListingFileId)
+      ? await associateEtsyAsset(`${assetPath}/files`, 'listing_file_id', file.etsyListingFileId, rank, name)
+      : await uploadEtsyAsset(`${assetPath}/files`, 'file', path.join(listingDirectory, 'downloads', file.localFileName), name, rank);
+    const etsyListingFileId = parseAssetId(payload, 'listing_file_id') ?? file.etsyListingFileId;
+    await prisma.etsyListingFile.update({ where: { id: file.id }, data: { etsyListingFileId, rank } });
+  }
+}
+
 export async function syncListingToEtsy(shopId: string, sectionId: string, subSectionId: string, listingId: string) {
   const context = await getListingContext(shopId, sectionId, subSectionId);
 
@@ -821,53 +1038,57 @@ export async function syncListingToEtsy(shopId: string, sectionId: string, subSe
     },
   });
 
-  await pushListing(shopId, sectionId, subSectionId, listingId);
+  const isNewListing = current.etsyId === null;
+  const syncDetails = isNewListing || current.detailsChanged;
+  const syncTags = isNewListing || current.tagsChanged;
+  const syncImages = isNewListing || current.imagesChanged;
+  const syncDownloads = isNewListing || current.downloadsChanged;
+
+  if (syncDetails || syncTags || isNewListing) {
+    await pushListing(shopId, sectionId, subSectionId, listingId, { details: syncDetails, tags: syncTags });
+  }
   const listing = await prisma.etsyListing.findUnique({
     where: { id: current.id },
     include: { images: { orderBy: [{ rank: 'asc' }, { id: 'asc' }] }, files: { orderBy: [{ rank: 'asc' }, { id: 'asc' }] }, zippedFiles: { orderBy: [{ zipNumber: 'asc' }] } },
   });
   if (!listing?.etsyId) throw new Error('Etsy listing was not created.');
 
-  await syncListingColours(
-    {
-      etsyId: listing.etsyId,
-      taxonomyId: listing.taxonomyId,
-      primaryColour: listing.primaryColour,
-      secondaryColour: listing.secondaryColour,
-    },
-    context.shop.etsyShopId.toString()
-  );
-
-  const listingDirectory = getListingDirectoryPath(context.shop.displayName, context.section.title, context.subSection.name, listing.localDirectoryName ?? `Listing-${listing.id}`);
-  const assetPath = `/shops/${encodeURIComponent(context.shop.etsyShopId.toString())}/listings/${encodeURIComponent(listing.etsyId)}`;
-
-  for (let index = 0; index < listing.images.length; index += 1) {
-    const image = listing.images[index];
-    if (!image.localFileName || image.etsyImageId) continue;
-    const payload = await uploadEtsyAsset(`${assetPath}/images`, 'image', path.join(listingDirectory, image.localFileName), image.originalFileName ?? image.localFileName, index + 1);
-    await prisma.etsyListingImage.update({ where: { id: image.id }, data: { etsyImageId: parseAssetId(payload, 'listing_image_id') } });
+  if (syncDetails) {
+    await syncListingColours(
+      {
+        etsyId: listing.etsyId,
+        taxonomyId: listing.taxonomyId,
+        primaryColour: listing.primaryColour,
+        secondaryColour: listing.secondaryColour,
+      },
+      context.shop.etsyShopId.toString()
+    );
   }
 
-  if (listing.zippedFiles.length > 0) {
-    for (let index = 0; index < listing.zippedFiles.length; index += 1) {
-      const zip = listing.zippedFiles[index];
-      if (zip.etsyListingFileId) continue;
-      const payload = await uploadEtsyAsset(`${assetPath}/files`, 'file', path.join(listingDirectory, 'zipped', zip.fileName), zip.fileName, index + 1);
-      await prisma.etsyListingZip.update({ where: { id: zip.id }, data: { etsyListingFileId: parseAssetId(payload, 'listing_file_id') } });
-    }
-  } else {
-    if (listing.files.length > 5) throw new Error('Create up to five ZIP files before syncing more than five downloads.');
-    for (let index = 0; index < listing.files.length; index += 1) {
-      const file = listing.files[index];
-      if (!file.localFileName || file.etsyListingFileId) continue;
-      const payload = await uploadEtsyAsset(`${assetPath}/files`, 'file', path.join(listingDirectory, 'downloads', file.localFileName), file.originalFileName ?? file.localFileName, index + 1);
-      await prisma.etsyListingFile.update({ where: { id: file.id }, data: { etsyListingFileId: parseAssetId(payload, 'listing_file_id') } });
-    }
+  const listingDirectory = getListingDirectoryPath(context.shop.displayName, context.section.title, context.subSection.name, listing.localDirectoryName ?? `Listing-${listing.id}`);
+  if (syncImages) {
+    await syncChangedImages(context.shop.etsyShopId.toString(), listing.etsyId, listingDirectory, listing.images);
+  }
+  if (syncDownloads) {
+    await syncChangedDownloads(
+      context.shop.etsyShopId.toString(),
+      listing.etsyId,
+      listingDirectory,
+      listing.files,
+      listing.zippedFiles
+    );
   }
 
   const syncedAt = new Date();
   await prisma.etsyListing.update({
     where: { id: listing.id },
-    data: { state: 'draft', lastSyncedAt: syncedAt, updatedAt: syncedAt },
+    data: {
+      lastSyncedAt: syncedAt,
+      updatedAt: syncedAt,
+      ...(syncDetails ? { detailsChanged: false } : {}),
+      ...(syncTags ? { tagsChanged: false } : {}),
+      ...(syncImages ? { imagesChanged: false } : {}),
+      ...(syncDownloads ? { downloadsChanged: false } : {}),
+    },
   });
 }

@@ -1,6 +1,6 @@
-import { mkdir, readdir, rename, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { ETSY_LISTINGS_DIRECTORY } from '@/lib/config';
+import { mkdir, readdir, rename, stat } from '@/lib/s3-listing-storage';
 
 const INVALID_WINDOWS_PATH_CHARS = /[<>:"/\\|?*\x00-\x1F]/;
 

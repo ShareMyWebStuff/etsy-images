@@ -135,6 +135,7 @@ export async function getSubSectionListingsPageData(
       priceDivisor: true,
       priceCurrencyCode: true,
       quantity: true,
+      thumbnailFileName: true,
       tags: { select: { id: true } },
       images: { select: { localFileName: true } },
       zippedFiles: { select: { id: true } },
@@ -161,7 +162,9 @@ export async function getSubSectionListingsPageData(
       const hasDetailsTitle = listing.title.trim().length > 0
         && listing.title.trim() !== listing.localDirectoryName?.trim();
       const uploadedImageCount = listing.images.filter((image) => (image.localFileName?.trim().length ?? 0) > 0).length;
-      const isComplete = uploadedImageCount === 10
+      const hasThumbnail = (listing.thumbnailFileName?.trim().length ?? 0) > 0;
+      const isComplete = hasThumbnail
+        && uploadedImageCount === 10
         && listing.zippedFiles.length > 0
         && listing.tags.length > 0
         && hasDetailsTitle
@@ -173,7 +176,7 @@ export async function getSubSectionListingsPageData(
         id: String(listing.id),
         listingName: listing.localDirectoryName ?? listing.title,
         sourceSectionName: listing.sourceSection?.title ?? null,
-        status: isPublished ? listing.state! : isComplete ? 'complete' : 'incomplete',
+        status: !hasThumbnail ? 'incomplete' : isPublished ? listing.state! : isComplete ? 'complete' : 'incomplete',
         isComplete,
         price: formatPrice(listing.priceAmount, listing.priceDivisor, listing.priceCurrencyCode),
         hasPrice: listing.priceAmount !== null && listing.priceDivisor !== null && listing.priceDivisor > 0,

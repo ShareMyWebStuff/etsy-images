@@ -13,7 +13,7 @@ export type SyncToEtsyData = {
     showSubject: boolean;
     hasEtsySection: boolean;
     hasSyncedListings: boolean;
-    listings: Array<{ id: string; listingName: string; subjectName: string; localDirectoryName: string | null; subSectionId: string; subSectionName: string; hasEtsyListing: boolean; isSynced: boolean; isPublished: boolean; isInactive: boolean; canSync: boolean; syncDisabledReason: string | null }>;
+    listings: Array<{ id: string; listingName: string; subjectName: string; localDirectoryName: string | null; subSectionId: string; subSectionName: string; hasEtsyListing: boolean; isSynced: boolean; isPublished: boolean; isInactive: boolean; canSync: boolean; pendingChanges: string[]; syncDisabledReason: string | null }>;
   }>;
 };
 
@@ -59,7 +59,13 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
             && (listing.files[0].sizeBytes ?? 0) <= MAX_ETSY_ZIP_SIZE_BYTES;
           const hasEtsyDownloads = hasZippedFiles || hasDropboxPdf;
           const hasOversizedZip = listing.zippedFiles.some((zip) => zip.sizeBytes > MAX_ETSY_ZIP_SIZE_BYTES);
-          const needsSync = listing.etsyId === null || listing.lastSyncedAt === null || listing.lastLocalChangeAt > listing.lastSyncedAt;
+          const pendingChanges = [
+            listing.detailsChanged ? 'Details' : null,
+            listing.tagsChanged ? 'Tags' : null,
+            listing.imagesChanged ? 'Images' : null,
+            listing.downloadsChanged ? 'Downloads' : null,
+          ].filter((area): area is string => area !== null);
+          const needsSync = listing.etsyId === null || pendingChanges.length > 0;
           const sectionEtsyId = section.etsyShopSectionId === null ? null : Number(section.etsyShopSectionId);
           const hasCurrentSection = sectionEtsyId !== null && listing.shopSectionId === sectionEtsyId;
           return {
@@ -74,6 +80,7 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
             isPublished: listing.etsyId !== null && (listing.state === 'active' || listing.state === 'published'),
             isInactive: listing.etsyId !== null && listing.state === 'inactive',
             canSync: hasEtsyDownloads && !hasOversizedZip && needsSync,
+            pendingChanges: listing.etsyId === null ? ['New listing'] : pendingChanges,
             syncDisabledReason: !hasEtsyDownloads
               ? 'Create the ZIP files or Dropbox PDF before syncing.'
               : hasOversizedZip
@@ -99,7 +106,11 @@ export async function syncOneListing(listingId: string) {
   const section = listing?.subSection?.shopSection;
   const shop = section?.shop;
   if (!listing || !listing.subSection || !section || !shop) throw new Error('Listing context not found.');
-  if (listing.etsyId !== null && listing.lastSyncedAt !== null && listing.lastLocalChangeAt <= listing.lastSyncedAt) {
+  if (listing.etsyId !== null
+    && !listing.detailsChanged
+    && !listing.tagsChanged
+    && !listing.imagesChanged
+    && !listing.downloadsChanged) {
     throw new Error('No local changes have been made since the last Etsy sync.');
   }
   const hasDropboxPdf = listing.files.length === 1

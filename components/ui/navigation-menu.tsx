@@ -9,15 +9,16 @@ import { cn } from '@/lib/utils';
 function NavigationMenu({
   className,
   children,
+  viewport = true,
   ...props
-}: React.ComponentProps<typeof NavigationMenuPrimitive.Root>) {
+}: React.ComponentProps<typeof NavigationMenuPrimitive.Root> & { viewport?: boolean }) {
   return (
     <NavigationMenuPrimitive.Root
       className={cn('relative z-10 flex max-w-max flex-1 items-center justify-center', className)}
       {...props}
     >
       {children}
-      <NavigationMenuViewport />
+      {viewport ? <NavigationMenuViewport /> : null}
     </NavigationMenuPrimitive.Root>
   );
 }

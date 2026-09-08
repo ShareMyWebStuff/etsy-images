@@ -23,6 +23,14 @@ export default async function EditListingPage({ searchParams }: EditListingPageP
   const sectionId = resolvedSearchParams?.sectionId ?? '';
   const subSectionId = resolvedSearchParams?.subSectionId ?? '';
   const listingId = resolvedSearchParams?.listingId ?? '';
+  const requestedTab = resolvedSearchParams?.tab;
+  const initialTab = requestedTab === 'images'
+    || requestedTab === 'details'
+    || requestedTab === 'tags'
+    || requestedTab === 'downloads'
+    || requestedTab === 'thumbnail'
+    ? requestedTab
+    : 'thumbnail';
   const data =
     shopId && sectionId && subSectionId && listingId
       ? await getListingEditorData({
@@ -53,7 +61,7 @@ export default async function EditListingPage({ searchParams }: EditListingPageP
             </Button>
           </div>
 
-          <ListingEditorClient initialData={data} initialTab={resolvedSearchParams?.tab === 'downloads' ? 'downloads' : 'images'} />
+          <ListingEditorClient initialData={data} initialTab={initialTab} />
         </AppContainer>
       </main>
     </div>

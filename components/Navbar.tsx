@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import type { Route } from 'next';
+import { usePathname } from 'next/navigation';
 
 import { AppContainer } from '@/components/AppContainer';
 import {
@@ -56,6 +57,7 @@ const navGroups = [
   {
     title: 'Admin',
     items: [
+      { label: 'Set Prices', href: '/admin/set-prices' },
       { label: 'Backup', href: '/admin/backup' },
       { label: 'Edit Listing', href: '/admin/edit-listing' },
       { label: 'Connect Etsy', href: '/connect-etsy' },
@@ -65,6 +67,8 @@ const navGroups = [
 ] satisfies NavGroup[];
 
 export function Navbar() {
+  const pathname = usePathname();
+
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border bg-card/90 backdrop-blur">
       <AppContainer className="flex min-h-14 items-center justify-between gap-4 py-2">
@@ -72,17 +76,29 @@ export function Navbar() {
           Etsy
         </Link>
 
-        <NavigationMenu>
+        <NavigationMenu viewport={false}>
           <NavigationMenuList>
-            {navGroups.map((group) => (
+            {navGroups.map((group, index) => (
               <NavigationMenuItem key={group.title}>
-                <NavigationMenuTrigger>{group.title}</NavigationMenuTrigger>
-                <NavigationMenuContent>
+                <NavigationMenuTrigger className={group.items.some((item) => pathname === item.href || pathname.startsWith(`${item.href}/`)) ? 'bg-accent text-accent-foreground' : undefined}>
+                  {group.title}
+                </NavigationMenuTrigger>
+                <NavigationMenuContent
+                  className={`absolute top-full mt-2 w-auto overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md ${
+                    index === 0 ? 'left-0' : index === navGroups.length - 1 ? 'left-auto right-0' : 'left-1/2 -translate-x-1/2'
+                  }`}
+                >
                   <ul className="grid w-56 gap-1 p-2">
                     {group.items.map((item) => (
                       <li key={item.href}>
                         <NavigationMenuLink asChild>
-                          <Link href={item.href}>{item.label}</Link>
+                          <Link
+                            href={item.href}
+                            aria-current={pathname === item.href || pathname.startsWith(`${item.href}/`) ? 'page' : undefined}
+                            className={pathname === item.href || pathname.startsWith(`${item.href}/`) ? 'bg-accent text-accent-foreground' : undefined}
+                          >
+                            {item.label}
+                          </Link>
                         </NavigationMenuLink>
                       </li>
                     ))}

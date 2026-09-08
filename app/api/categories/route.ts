@@ -1,9 +1,8 @@
-import { mkdir, stat } from 'fs/promises';
 import path from 'path';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-
-const categoriesDirectory = 'D:\\Etsy\\EtsyListings';
+import { ETSY_LISTINGS_DIRECTORY } from '@/lib/config';
+import { mkdir, stat } from '@/lib/s3-listing-storage';
 
 type CreateCategoryRequest = {
   name?: unknown;
@@ -45,14 +44,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Category name contains characters that cannot be used in a folder name.' }, { status: 400 });
     }
 
-    const categoryPath = path.join(categoriesDirectory, name);
+    const categoryPath = path.join(ETSY_LISTINGS_DIRECTORY, name);
 
-    if (!categoryPath.startsWith(categoriesDirectory)) {
+    if (!categoryPath.startsWith(ETSY_LISTINGS_DIRECTORY)) {
       return NextResponse.json({ error: 'Invalid category name.' }, { status: 400 });
     }
 
     if (await directoryExists(categoryPath)) {
-      return NextResponse.json({ error: 'Category already exists locally.' }, { status: 409 });
+      return NextResponse.json({ error: 'Category already exists in storage.' }, { status: 409 });
     }
 
     const existingCategory = await prisma.myCategory.findUnique({

@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile } from '@/lib/s3-listing-storage';
 import path from 'node:path';
 import { prisma } from '@/lib/prisma';
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';

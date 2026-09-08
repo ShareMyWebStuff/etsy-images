@@ -14,6 +14,14 @@ The queue worker accepts `GET` or `POST /api/pinterest/queue` with `Authorizatio
 
 Run `npm run test:pinterest` for deterministic scheduler, idempotency-key, and encryption checks, and `npm run build` for the full application verification.
 
+## Admin Set Prices
+
+The Set Prices screen is available at `/admin/set-prices`. It stores the 23 stable digital, unframed and framed product keys as integer pence in MySQL. Run `npm run db:set-prices` after deployment; the migration is additive and idempotent, and inserts only missing defaults.
+
+Saving prices never changes Etsy automatically. The administrator must select **Apply to Etsy**. Digital listings are mapped by their section's stable download setting (1, 3, 6, 12 or Complete Set). Physical variations require rows in `etsy_listing_price_mappings` containing the stable product key and exact Etsy product/offering IDs. Unsupported provider sizes and missing Etsy variations are skipped. Delivery profiles are inspected only for warnings and are never changed.
+
+Etsy updates use durable database jobs processed one listing at a time from the admin screen. Failed listings remain identifiable and can be retried without repeating successful listings. Run `npm run test:set-prices` for the feature test suite.
+
 shop -> section -> sub sections -> listings
 
 I want to remove the sub sections but do not want to lose any of the listing. The section name will now directly link to the Etsy Shop section. When creating a section you should ask for the section name and the number of downloads like we do on the sub sections. Any existing sections should have the no of downloads set to 1.

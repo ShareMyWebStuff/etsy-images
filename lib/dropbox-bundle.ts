@@ -1,11 +1,10 @@
-import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { ZipArchive } from 'archiver';
 import PDFDocument from 'pdfkit';
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';
 import { prisma } from '@/lib/prisma';
+import { mkdir, readFile, rename, stat, unlink, writeFile } from '@/lib/s3-listing-storage';
 
 type ListingContext = { shopId: string; sectionId: string; subSectionId: string; listingId: string };
 
@@ -77,16 +76,17 @@ function safeName(value: string) {
 }
 
 async function writeZip(targetPath: string, files: Array<{ path: string; name: string }>) {
-  await new Promise<void>((resolve, reject) => {
-    const output = createWriteStream(targetPath);
-    const archive = new ZipArchive({ zlib: { level: 9 } });
-    output.on('close', resolve);
-    output.on('error', reject);
+  const archive = new ZipArchive({ zlib: { level: 9 } });
+  const chunks: Buffer[] = [];
+  const completed = new Promise<void>((resolve, reject) => {
+    archive.on('data', (chunk: Buffer) => chunks.push(chunk));
+    archive.on('end', resolve);
     archive.on('error', reject);
-    archive.pipe(output);
-    files.forEach((file) => archive.file(file.path, { name: file.name }));
-    void archive.finalize();
   });
+  for (const file of files) archive.append(await readFile(file.path), { name: file.name });
+  await archive.finalize();
+  await completed;
+  await writeFile(targetPath, Buffer.concat(chunks));
 }
 
 export async function createDropboxZips(context: ListingContext) {
@@ -331,6 +331,10 @@ export async function createDropboxInstructionPdf(context: ListingContext) {
         rank: 1,
         rawJson: { dropboxSharedUrl: sharedUrl },
       },
+    });
+    await tx.etsyListing.update({
+      where: { id: listing.id },
+      data: { downloadsChanged: true, lastLocalChangeAt: new Date() },
     });
   });
   return { fileName, sizeBytes: pdf.length };

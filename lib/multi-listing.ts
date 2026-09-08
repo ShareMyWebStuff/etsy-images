@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Prisma } from '@prisma/client';
 import sharp from 'sharp';
 import { getListingDirectoryPath, getSubSectionDirectoryPath } from '@/lib/local-shop-directory';
 import { prisma } from '@/lib/prisma';
+import { copyFile, mkdir, rename, rm, stat, writeFile } from '@/lib/s3-listing-storage';
 
 export type MultiListingWizardData = {
   subSection: { id: string; name: string; numberOfDownloads: number | null; includeAllDownloads: boolean };
@@ -424,6 +424,10 @@ export async function createThreeItemListing(
         isLocal: true,
         rawJson: preserved?.rawJson === null || preserved?.rawJson === undefined ? Prisma.JsonNull : preserved.rawJson,
         lastSyncedAt: preserved?.lastSyncedAt ?? null,
+        detailsChanged: preserved?.etsyId !== null && preserved?.etsyId !== undefined,
+        tagsChanged: preserved?.etsyId !== null && preserved?.etsyId !== undefined,
+        imagesChanged: preserved?.etsyId !== null && preserved?.etsyId !== undefined,
+        downloadsChanged: preserved?.etsyId !== null && preserved?.etsyId !== undefined,
         downloadedAt: preserved?.downloadedAt ?? new Date(),
         tags: { create: input.tags.map((tag, position) => ({ tag, position: position + 1 })) },
         images: { create: imageRows.map((image) => ({
@@ -697,6 +701,10 @@ export async function createSixItemListing(
         subSectionId: context.subSection.id, sourceSectionId: sourceSection.id, localDirectoryName: listingName, isLocal: true,
         rawJson: preserved?.rawJson === null || preserved?.rawJson === undefined ? Prisma.JsonNull : preserved.rawJson,
         lastSyncedAt: preserved?.lastSyncedAt ?? null,
+        detailsChanged: preserved?.etsyId !== null && preserved?.etsyId !== undefined,
+        tagsChanged: preserved?.etsyId !== null && preserved?.etsyId !== undefined,
+        imagesChanged: preserved?.etsyId !== null && preserved?.etsyId !== undefined,
+        downloadsChanged: preserved?.etsyId !== null && preserved?.etsyId !== undefined,
         downloadedAt: preserved?.downloadedAt ?? new Date(),
         tags: { create: input.tags.map((tag, position) => ({ tag, position: position + 1 })) },
         images: { create: imageRows.map((image) => ({

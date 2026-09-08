@@ -1,17 +1,86 @@
 
 > etsy-listings-app@1.0.0 dev
-> next dev
+> next dev -p 3002
 
    ▲ Next.js 15.3.4
-   - Local:        http://localhost:3000
-   - Network:      http://172.26.240.1:3000
+   - Local:        http://localhost:3002
+   - Network:      http://172.25.96.1:3002
    - Environments: .env.local, .env
    - Experiments (use with caution):
      ✓ typedRoutes
 
  ✓ Starting...
- ✓ Ready in 13.6s
+ ✓ Ready in 2.5s
+ ○ Compiling /admin/set-prices ...
+ ✓ Compiled /admin/set-prices in 2.9s (1077 modules)
+ GET /admin/set-prices 200 in 3794ms
+ ○ Compiling /api/admin/set-prices ...
+ ✓ Compiled /api/admin/set-prices in 1066ms (1096 modules)
+ GET /api/admin/set-prices 200 in 1371ms
+ GET /api/admin/set-prices 200 in 106ms
+ ✓ Compiled in 412ms (426 modules)
+ ✓ Compiled in 245ms (426 modules)
+ ✓ Compiled in 152ms (426 modules)
+ ✓ Compiled /api/admin/set-prices in 162ms (207 modules)
+ GET /api/admin/set-prices 200 in 505ms
+ ✓ Compiled in 196ms (426 modules)
+ ✓ Compiled /admin/set-prices in 219ms (670 modules)
+ GET /admin/set-prices 200 in 888ms
+ ✓ Compiled /icon.svg in 231ms (672 modules)
+ GET /icon.svg?ec45074720b08852 200 in 320ms
+ ✓ Compiled in 244ms (426 modules)
+ GET /admin/set-prices 200 in 426ms
+ ○ Compiling /shops ...
+ ✓ Compiled /shops in 1008ms (1105 modules)
+ GET /shops 200 in 1356ms
+ GET /shops 200 in 114ms
+ GET /shops?shopId=66615491 200 in 28ms
+ ○ Compiling /listings ...
+ ✓ Compiled /listings in 868ms (1124 modules)
+ GET /listings?shopId=66615491&sectionId=10 200 in 1066ms
+ ✓ Compiled /api/shops/listings in 405ms (1156 modules)
+ GET /listings?shopId=66615491&sectionId=10 200 in 308ms
+ POST /api/shops/listings 200 in 850ms
+ ✓ Compiled in 774ms (1156 modules)
+ GET /listings?shopId=66615491&sectionId=10 200 in 199ms
+ ✓ Compiled in 452ms (1156 modules)
+ GET /listings?shopId=66615491&sectionId=10 200 in 93ms
+ ○ Compiling /listings/edit ...
+ ✓ Compiled /listings/edit in 658ms (1172 modules)
+ GET /listings/edit?shopId=66615491&sectionId=10&subSectionId=15&listingId=495 200 in 925ms
+ ✓ Compiled in 677ms (1186 modules)
+ GET /listings/edit?shopId=66615491&sectionId=10&subSectionId=15&listingId=495 200 in 163ms
  ○ Compiling / ...
- ✓ Compiled / in 11.3s (839 modules)
- GET / 200 in 12401ms
-[?25h
+ ✓ Compiled / in 556ms (1178 modules)
+ GET / 200 in 924ms
+ ✓ Compiled in 245ms (454 modules)
+ GET /listings/edit?shopId=66615491&sectionId=10&subSectionId=15&listingId=495 200 in 84ms
+ ○ Compiling /api/shops/listings/editor/assets ...
+ ✓ Compiled /api/shops/listings/editor/assets in 860ms (1187 modules)
+ GET /listings/edit?shopId=66615491&sectionId=10&subSectionId=15&listingId=495 200 in 288ms
+ POST /api/shops/listings/editor/assets 200 in 1541ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=10&subSectionId=15&listingId=495&kind=thumbnail&assetId=thumbnail 200 in 256ms
+ GET /listings?shopId=66615491&sectionId=10&subSectionId=15 200 in 35ms
+ ✓ Compiled /api/shops/listings in 287ms (735 modules)
+ DELETE /api/shops/listings 200 in 424ms
+ POST /api/shops/listings 200 in 164ms
+ GET /listings/edit?shopId=66615491&sectionId=10&subSectionId=15&listingId=496 200 in 86ms
+ GET /admin/set-prices 200 in 127ms
+ GET /shops 200 in 100ms
+ GET /shops?shopId=66615491 200 in 25ms
+ GET /listings?shopId=66615491&sectionId=2 200 in 40ms
+ GET /listings/edit?shopId=66615491&sectionId=2&subSectionId=3&listingId=79 200 in 29ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=2&subSectionId=3&listingId=79&kind=thumbnail&assetId=thumbnail 200 in 314ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=2&subSectionId=3&listingId=79&kind=image&assetId=765 200 in 420ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=2&subSectionId=3&listingId=79&kind=image&assetId=774 200 in 570ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=2&subSectionId=3&listingId=79&kind=image&assetId=768 200 in 1118ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=2&subSectionId=3&listingId=79&kind=image&assetId=767 200 in 1157ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=2&subSectionId=3&listingId=79&kind=image&assetId=769 200 in 1324ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=2&subSectionId=3&listingId=79&kind=image&assetId=766 200 in 1495ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=2&subSectionId=3&listingId=79&kind=image&assetId=773 200 in 555ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=2&subSectionId=3&listingId=79&kind=image&assetId=772 200 in 685ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=2&subSectionId=3&listingId=79&kind=image&assetId=771 200 in 710ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=2&subSectionId=3&listingId=79&kind=image&assetId=770 200 in 1938ms
+ GET /listings?shopId=66615491&sectionId=2&subSectionId=3 200 in 43ms
+ GET /listings/edit?shopId=66615491&sectionId=2&subSectionId=3&listingId=79 200 in 27ms
+ GET /listings?shopId=66615491&sectionId=2&subSectionId=3 200 in 45ms

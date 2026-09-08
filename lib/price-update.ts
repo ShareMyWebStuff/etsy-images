@@ -63,6 +63,7 @@ export async function updateSectionPrices(sectionId: string, priceAmount: number
       priceDivisor: 100,
       priceCurrencyCode: 'GBP',
       lastLocalChangeAt: changedAt,
+      detailsChanged: true,
     },
   });
 
@@ -72,7 +73,7 @@ export async function updateSectionPrices(sectionId: string, priceAmount: number
     if (!listing.etsyId) continue;
     try {
       await updateEtsyListingPrice(section.shop.etsyShopId.toString(), listing.etsyId, priceAmount);
-      await prisma.etsyListing.update({ where: { id: listing.id }, data: { lastSyncedAt: new Date() } });
+      await prisma.etsyListing.update({ where: { id: listing.id }, data: { lastSyncedAt: new Date(), detailsChanged: false } });
       etsyUpdated += 1;
     } catch (error) {
       failures.push(`${listing.localDirectoryName ?? listing.title}: ${error instanceof Error ? error.message : 'Etsy update failed.'}`);

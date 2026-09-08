@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import type { Route } from 'next';
 import { useRouter } from 'next/navigation';
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Fragment } from 'react';
 import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,10 @@ type ListingActionResponse = {
 
 const COLLAPSIBLE_SET_SIZES = new Set([3, 6, 12]);
 
+function listingScrollStorageKey(shopId: string | null, sectionId: string | null, subSectionId: string | null) {
+  return `listing-scroll:${shopId ?? ''}:${sectionId ?? ''}:${subSectionId ?? ''}`;
+}
+
 export function SubSectionListingsTable({
   data: initialData,
   shopId,
@@ -47,6 +51,8 @@ export function SubSectionListingsTable({
   const [actingListingId, setActingListingId] = useState<string | null>(null);
   const [listingToDelete, setListingToDelete] = useState<{ id: string; name: string } | null>(null);
   const [importRows, setImportRows] = useState<ImportableListingRow[]>([]);
+  const [listingToRestore, setListingToRestore] = useState<string | null>(null);
+  const listingsScrollRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const isSingleListings = data?.subSection.numberOfDownloads === 1 && !data.subSection.includeAllDownloads;
   const hasCollapsibleGroups = data?.subSection.numberOfDownloads !== null
@@ -56,7 +62,33 @@ export function SubSectionListingsTable({
 
   useEffect(() => {
     setExpandedSections(new Set());
-  }, [sectionId, subSectionId]);
+    setListingToRestore(null);
+
+    const storedListingId = sessionStorage.getItem(listingScrollStorageKey(shopId, sectionId, subSectionId));
+    const storedListing = data?.listings.find((listing) => listing.id === storedListingId);
+    if (!storedListing) return;
+
+    setListingToRestore(storedListing.id);
+    if (hasCollapsibleGroups) {
+      setExpandedSections(new Set([storedListing.sourceSectionName ?? 'Uncategorised']));
+    }
+  }, [shopId, sectionId, subSectionId, data, hasCollapsibleGroups]);
+
+  useEffect(() => {
+    if (!listingToRestore || !listingsScrollRef.current) return;
+
+    const frame = requestAnimationFrame(() => {
+      const scrollArea = listingsScrollRef.current;
+      const row = scrollArea?.querySelector<HTMLElement>(`[data-listing-id="${listingToRestore}"]`);
+      if (!scrollArea || !row) return;
+
+      scrollArea.scrollTop += row.getBoundingClientRect().top - scrollArea.getBoundingClientRect().top;
+      sessionStorage.removeItem(listingScrollStorageKey(shopId, sectionId, subSectionId));
+      setListingToRestore(null);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [listingToRestore, expandedSections, shopId, sectionId, subSectionId]);
 
   function toggleSection(sectionName: string) {
     setExpandedSections((current) => {
@@ -242,10 +274,11 @@ export function SubSectionListingsTable({
         </CardHeader>
         <CardContent>
           {error ? <p className="mb-4 text-sm font-medium text-destructive">{error}</p> : null}
+          <div ref={listingsScrollRef} className="max-h-[70vh] overflow-y-auto rounded-md border">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Category</TableHead>
+                {!isSingleListings ? <TableHead>Category</TableHead> : null}
                 <TableHead>Listing Name</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Quantity</TableHead>
@@ -266,8 +299,8 @@ export function SubSectionListingsTable({
 
                   return (
                     <Fragment key={listing.id}>
-                    {sourceSectionName !== previousSourceSectionName ? <TableRow className="bg-muted/50 hover:bg-muted/50">
-                      <TableCell colSpan={6} className="font-semibold">
+                    {!isSingleListings && sourceSectionName !== previousSourceSectionName ? <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableCell colSpan={isSingleListings ? 5 : 6} className="font-semibold">
                         {hasCollapsibleGroups ? <button
                           type="button"
                           className="flex w-full items-center gap-2 text-left"
@@ -283,8 +316,8 @@ export function SubSectionListingsTable({
                         </button> : sourceSectionName}
                       </TableCell>
                     </TableRow> : null}
-                    {!hasCollapsibleGroups || isSectionExpanded ? <TableRow className={listing.isComplete ? 'bg-green-50 hover:bg-green-100' : undefined}>
-                      <TableCell className="text-muted-foreground">{sourceSectionName}</TableCell>
+                    {!hasCollapsibleGroups || isSectionExpanded ? <TableRow data-listing-id={listing.id} className={listing.isComplete ? 'bg-green-50 hover:bg-green-100' : undefined}>
+                      {!isSingleListings ? <TableCell className="text-muted-foreground">{sourceSectionName}</TableCell> : null}
                       <TableCell className="font-medium">{listing.listingName}</TableCell>
                       <TableCell>{listing.status}</TableCell>
                       <TableCell className="text-right tabular-nums">{listing.quantity ?? 'None'}</TableCell>
@@ -306,7 +339,13 @@ export function SubSectionListingsTable({
                             <Trash2 className="h-4 w-4" aria-hidden="true" />
                           </Button>
                           <Button asChild size="icon" variant="outline" aria-label={`Edit ${listing.listingName}`} title="Edit listing">
-                            <Link href={getEditHref(listing.id) as Route}>
+                            <Link
+                              href={getEditHref(listing.id) as Route}
+                              onClick={() => sessionStorage.setItem(
+                                listingScrollStorageKey(shopId, sectionId, subSectionId),
+                                listing.id
+                              )}
+                            >
                               <Pencil className="h-4 w-4" aria-hidden="true" />
                             </Link>
                           </Button>
@@ -318,13 +357,14 @@ export function SubSectionListingsTable({
                 })
               ) : (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground">
+                  <TableCell colSpan={isSingleListings ? 5 : 6} className="text-center text-muted-foreground">
                     No listings found.
                   </TableCell>
                 </TableRow>
               )}
             </TableBody>
           </Table>
+          </div>
         </CardContent>
       </Card>
 

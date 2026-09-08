@@ -18,7 +18,7 @@ import { ETSY_MAX_DOWNLOAD_FILES, ETSY_MAX_FILE_SIZE_BYTES } from '@/lib/etsy-do
 type ListingEditorClientProps = {
   initialData: ListingEditorData | null;
   showAdminEditSection?: boolean;
-  initialTab?: 'images' | 'details' | 'tags' | 'downloads';
+  initialTab?: 'thumbnail' | 'images' | 'details' | 'tags' | 'downloads';
 };
 
 type EditorResponse = {
@@ -83,7 +83,6 @@ const singleDownloadImageGuide = [
   'Digital Download',
   'How to print',
   'Personal Use Only',
-  'Frames',
 ];
 
 function toNumberOrNull(value: string) {
@@ -147,10 +146,11 @@ function haveSameTags(first: string[], second: string[]) {
   return JSON.stringify(normalizeTags(first)) === JSON.stringify(normalizeTags(second));
 }
 
-export function ListingEditorClient({ initialData, showAdminEditSection = false, initialTab = 'images' }: ListingEditorClientProps) {
+export function ListingEditorClient({ initialData, showAdminEditSection = false, initialTab = 'thumbnail' }: ListingEditorClientProps) {
   const [data, setData] = useState(initialData);
-  const [activeTab, setActiveTab] = useState<'images' | 'details' | 'tags' | 'downloads'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'thumbnail' | 'images' | 'details' | 'tags' | 'downloads'>(initialTab);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
+  const [deleteThumbnailOpen, setDeleteThumbnailOpen] = useState(false);
   const [deleteAllDownloadsOpen, setDeleteAllDownloadsOpen] = useState(false);
   const [activeImageId, setActiveImageId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -192,6 +192,10 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
 
   function getImageUrl(assetId: string) {
     return `/api/shops/listings/editor/assets?${new URLSearchParams({ ...context, kind: 'image', assetId })}`;
+  }
+
+  function getThumbnailUrl() {
+    return `/api/shops/listings/editor/assets?${new URLSearchParams({ ...context, kind: 'thumbnail', assetId: 'thumbnail' })}`;
   }
 
   function updateForm(key: keyof typeof form, value: string | boolean) {
@@ -494,8 +498,10 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       });
 
       await parseResponse(response, 'Unable to delete asset.');
+      return true;
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to delete asset.');
+      return false;
     } finally {
       setBusyKey(null);
     }
@@ -968,6 +974,69 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     );
   }
 
+  function renderThumbnail() {
+    return (
+      <div className="grid gap-6">
+        <div>
+          <h3 className="text-lg font-semibold">Thumbnail</h3>
+          <p className="text-sm text-muted-foreground">
+            This thumbnail is used to generate the artwork and the downloadable items. It is not uploaded to Etsy.
+          </p>
+        </div>
+        {data?.thumbnail ? (
+          <div
+            className="group relative h-48 w-48 overflow-hidden rounded-lg border border-border bg-muted"
+            onDoubleClick={() => setPreviewImage({
+              src: getThumbnailUrl(),
+              alt: data.thumbnail?.originalFileName ?? data.thumbnail?.fileName ?? 'Thumbnail',
+            })}
+            title="Double-click to enlarge"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={getThumbnailUrl()}
+              alt={data.thumbnail.originalFileName ?? data.thumbnail.fileName}
+              className="h-full w-full object-cover"
+            />
+            <Button
+              type="button"
+              variant="destructive"
+              size="icon"
+              className="absolute bottom-2 right-2 h-8 w-8 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
+              aria-label="Delete thumbnail"
+              onClick={() => setDeleteThumbnailOpen(true)}
+              disabled={busyKey !== null}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </div>
+        ) : (
+          <div
+            className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-border p-5"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              if (busyKey !== null) return;
+              const image = Array.from(event.dataTransfer.files).find((file) => file.type.startsWith('image/'));
+              if (image) void uploadFiles('thumbnail', [image]);
+            }}
+          >
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-muted px-5 py-3 text-sm font-semibold hover:bg-accent">
+              <Plus className="h-5 w-5" aria-hidden="true" /> Add photo
+              <input
+                type="file"
+                className="sr-only"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(event) => uploadAsset('thumbnail', event)}
+                disabled={busyKey !== null}
+              />
+            </label>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="grid gap-4">
       {error ? <p className="text-sm font-medium text-destructive">{error}</p> : null}
@@ -975,8 +1044,18 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       <Card>
         <CardHeader className="pb-0">
           <CardTitle className="mb-4">{data.listing.localDirectoryName ?? data.listing.title}</CardTitle>
+          {data.pendingChanges.length > 0 ? (
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-amber-700">
+              <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+              <span className="font-medium">Pending Etsy sync:</span>
+              {data.pendingChanges.map((area) => (
+                <span key={area} className="rounded-full bg-amber-100 px-2.5 py-1 font-medium">{area}</span>
+              ))}
+            </div>
+          ) : null}
           <div className="flex gap-1 border-b border-border" role="tablist" aria-label="Listing editor sections">
             {([
+              ['thumbnail', 'Thumbnail'],
               ['images', 'Images'],
               ['details', 'Details'],
               ['tags', 'Tags'],
@@ -993,11 +1072,15 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 }`}
               >
                 {label}
+                {label !== 'Thumbnail' && data.pendingChanges.includes(label) ? (
+                  <span className="ml-1 text-amber-600" aria-label="Changed">●</span>
+                ) : null}
               </button>
             ))}
           </div>
         </CardHeader>
         <CardContent className="pt-6">
+          {activeTab === 'thumbnail' ? renderThumbnail() : null}
           {activeTab === 'images' ? renderWorkflowAssetTable('image', 'Images', data.images) : null}
           {activeTab === 'downloads' ? renderWorkflowAssetTable('file', 'Downloads', data.files) : null}
           {activeTab === 'details' ? (
@@ -1114,6 +1197,35 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
             // eslint-disable-next-line @next/next/no-img-element
             <img src={previewImage.src} alt={previewImage.alt} className="max-h-[80vh] w-full object-contain" />
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteThumbnailOpen}
+        onOpenChange={(open) => { if (busyKey === null) setDeleteThumbnailOpen(open); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete thumbnail?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Are you sure you want to delete this thumbnail? This action cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => setDeleteThumbnailOpen(false)} disabled={busyKey !== null}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={async () => {
+                if (await deleteAsset('thumbnail', 'thumbnail')) setDeleteThumbnailOpen(false);
+              }}
+              disabled={busyKey !== null}
+            >
+              {busyKey === 'thumbnail-thumbnail' ? 'Deleting...' : 'Delete'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 

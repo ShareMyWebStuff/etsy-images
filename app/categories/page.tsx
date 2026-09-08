@@ -1,14 +1,13 @@
 import { Navbar } from '@/components/Navbar';
 import { AppContainer } from '@/components/AppContainer';
-import { readdir } from 'fs/promises';
 import { CategoriesClient } from './CategoriesClient';
+import { ETSY_LISTINGS_DIRECTORY } from '@/lib/config';
+import { readdir } from '@/lib/s3-listing-storage';
 
 export const dynamic = 'force-dynamic';
 
-const categoriesDirectory = 'D:\\Etsy\\EtsyListings';
-
 async function getCategories() {
-  const entries = await readdir(categoriesDirectory, { withFileTypes: true });
+  const entries = await readdir(ETSY_LISTINGS_DIRECTORY, { withFileTypes: true });
 
   return entries
     .filter((entry) => !entry.name.startsWith('.'))
