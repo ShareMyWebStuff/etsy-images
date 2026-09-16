@@ -84,3 +84,89 @@
  GET /listings?shopId=66615491&sectionId=2&subSectionId=3 200 in 43ms
  GET /listings/edit?shopId=66615491&sectionId=2&subSectionId=3&listingId=79 200 in 27ms
  GET /listings?shopId=66615491&sectionId=2&subSectionId=3 200 in 45ms
+ GET /shops?shopId=66615491 200 in 25ms
+ GET /listings?shopId=66615491&sectionId=10 200 in 78ms
+ GET /listings/edit?shopId=66615491&sectionId=10&subSectionId=15&listingId=496 200 in 38ms
+ GET /listings?shopId=66615491&sectionId=10&subSectionId=15 200 in 53ms
+ GET /listings/edit?shopId=66615491&sectionId=10&subSectionId=15&listingId=496 200 in 28ms
+ GET /listings?shopId=66615491&sectionId=10&subSectionId=15 200 in 41ms
+ GET /listings/edit?shopId=66615491&sectionId=10&subSectionId=15&listingId=496 200 in 43ms
+ GET /admin/set-prices 200 in 187ms
+ ✓ Compiled in 1099ms (1169 modules)
+ ✓ Compiled in 220ms (454 modules)
+ ✓ Compiled in 252ms (454 modules)
+ ✓ Compiled in 166ms (454 modules)
+ ✓ Compiled in 171ms (454 modules)
+ ✓ Compiled in 894ms (1169 modules)
+ ✓ Compiled in 552ms (1169 modules)
+ ✓ Compiled in 495ms (1169 modules)
+ ✓ Compiled in 655ms (1169 modules)
+ ✓ Compiled in 214ms (454 modules)
+ ✓ Compiled in 191ms (454 modules)
+ ✓ Compiled in 231ms (454 modules)
+ ○ Compiling /api/admin/set-prices ...
+ ✓ Compiled /api/admin/set-prices in 577ms (733 modules)
+ GET /api/admin/set-prices 200 in 891ms
+ GET /shops 200 in 214ms
+ GET /shops?shopId=66615491 200 in 28ms
+ GET /listings?shopId=66615491&sectionId=2 200 in 90ms
+ GET /shops?shopId=66615491 200 in 26ms
+ GET /listings?shopId=66615491&sectionId=10 200 in 28ms
+ GET /listings/edit?shopId=66615491&sectionId=10&subSectionId=15&listingId=496 200 in 46ms
+ GET /admin/set-prices 200 in 198ms
+ GET /shops 200 in 89ms
+ GET /shops?shopId=66615491 200 in 24ms
+ GET /listings?shopId=66615491&sectionId=10 200 in 45ms
+ GET /listings/edit?shopId=66615491&sectionId=10&subSectionId=15&listingId=496 200 in 28ms
+ GET /listings?shopId=66615491&sectionId=10&subSectionId=15 200 in 32ms
+ GET /shops?shopId=66615491 200 in 24ms
+ GET /listings?shopId=66615491&sectionId=5 200 in 39ms
+ GET /listings/edit?shopId=66615491&sectionId=5&subSectionId=10&listingId=433 200 in 36ms
+ ✓ Compiled /api/shops/listings/editor/assets in 380ms (733 modules)
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=5&subSectionId=10&listingId=433&kind=image&assetId=3368 200 in 1384ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=5&subSectionId=10&listingId=433&kind=image&assetId=3365 200 in 1394ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=5&subSectionId=10&listingId=433&kind=image&assetId=3364 200 in 1721ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=5&subSectionId=10&listingId=433&kind=image&assetId=3374 200 in 715ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=5&subSectionId=10&listingId=433&kind=image&assetId=3367 200 in 2194ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=5&subSectionId=10&listingId=433&kind=image&assetId=3370 200 in 844ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=5&subSectionId=10&listingId=433&kind=image&assetId=3366 200 in 2269ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=5&subSectionId=10&listingId=433&kind=image&assetId=3369 200 in 2447ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=5&subSectionId=10&listingId=433&kind=image&assetId=3373 200 in 455ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=5&subSectionId=10&listingId=433&kind=image&assetId=3372 200 in 858ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=5&subSectionId=10&listingId=433&kind=image&assetId=3375 200 in 588ms
+ GET /api/shops/listings/editor/assets?shopId=66615491&sectionId=5&subSectionId=10&listingId=433&kind=image&assetId=3371 200 in 550ms
+ GET /listings?shopId=66615491&sectionId=5&subSectionId=10 200 in 80ms
+ ○ Compiling /listings/create-multi ...
+ ✓ Compiled /listings/create-multi in 971ms (1190 modules)
+ GET /listings/create-multi?shopId=66615491&sectionId=5&subSectionId=10 200 in 1070ms
+ ○ Compiling /api/shops/listings/multi ...
+ ✓ Compiled /api/shops/listings/multi in 515ms (1194 modules)
+ GET /api/shops/listings/multi?shopId=66615491&sectionId=5&subSectionId=10&sourceSectionId=1&listingName=dafdasfdasfdas 200 in 671ms
+ ✓ Compiled /api/shops/listings/multi/stage in 316ms (1184 modules)
+ POST /api/shops/listings/multi/stage 200 in 403ms
+ POST /api/shops/listings/multi/stage 200 in 83ms
+ POST /api/shops/listings/multi/stage 200 in 27ms
+ POST /api/shops/listings/multi/stage 200 in 26ms
+ POST /api/shops/listings/multi 200 in 24468ms
+ ✓ Compiled /api/shops/listings/dropbox in 296ms (1186 modules)
+ POST /api/shops/listings/dropbox 200 in 87720ms
+ GET /listings?shopId=66615491&sectionId=5&subSectionId=10 200 in 97ms
+ ✓ Compiled /api/shops/listings in 289ms (733 modules)
+ DELETE /api/shops/listings 200 in 455ms
+ GET /shops?shopId=66615491 200 in 72ms
+ GET /listings?shopId=66615491&sectionId=10 200 in 35ms
+ GET /shops?shopId=66615491 200 in 50ms
+ GET /listings?shopId=66615491&sectionId=2 200 in 44ms
+ GET /shops?shopId=66615491 200 in 26ms
+ GET /listings?shopId=66615491&sectionId=10 200 in 36ms
+ ○ Compiling /sync-to-etsy ...
+ ✓ Compiled /sync-to-etsy in 1043ms (1187 modules)
+ GET /sync-to-etsy 200 in 1416ms
+ ✓ Compiled in 453ms (463 modules)
+ GET /sync-to-etsy 200 in 128ms
+ ✓ Compiled in 251ms (463 modules)
+ ✓ Compiled in 677ms (1178 modules)
+ ✓ Compiled in 169ms (463 modules)
+ ✓ Compiled in 211ms (463 modules)
+ ✓ Compiled in 228ms (463 modules)
+ ✓ Compiled in 154ms (463 modules)

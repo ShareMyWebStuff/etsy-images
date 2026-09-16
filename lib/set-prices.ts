@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { EtsyVariationNotFoundError, updateEtsyListingPrice, updateEtsyListingVariationPrices } from '@/lib/local-listings';
 import { prisma } from '@/lib/prisma';
 import {
+  ETSY_SYNCABLE_KEYS,
   PHYSICAL_KEYS,
   PRICE_OPTION_BY_KEY,
   PRICE_OPTIONS,
@@ -114,7 +115,14 @@ async function loadListingsForImpact() {
       localDirectoryName: true,
       rawJson: true,
       shopId: true,
-      files: { select: { id: true }, take: 1 },
+      etsyProductType: true,
+      numberOfItems: true,
+      includeAllItems: true,
+      productConfig: { select: { digitalDownload: true } },
+      products: {
+        select: { productType: true, priceKey: true },
+        orderBy: [{ position: 'asc' }, { id: 'asc' }],
+      },
       subSection: {
         select: {
           shopSection: { select: { numberOfDownloads: true, includeAllDownloads: true } },
@@ -136,12 +144,14 @@ async function loadListingsForImpact() {
 }
 
 function listingDigitalKey(listing: ListingForImpact) {
-  const section = listing.subSection?.shopSection;
-  if (!section) return null;
-  const raw = rawRecord(listing.rawJson);
-  const listingType = typeof raw?.listing_type === 'string' ? raw.listing_type : null;
-  if (listingType !== 'download' && listing.files.length === 0) return null;
-  return digitalPriceKeyForSection(section.numberOfDownloads, section.includeAllDownloads);
+  // Keep this tolerant of older rows/test fixtures while the additive product
+  // migration is being rolled out; a missing relation falls back to listing data.
+  const productKey = (listing.products ?? []).find((product) => product.productType === 'digital')?.priceKey;
+  if (productKey && PRICE_OPTION_BY_KEY.get(productKey)?.category === 'digital') {
+    return productKey as ProductPriceKey;
+  }
+  if (listing.etsyProductType !== 'digital' && !listing.productConfig?.digitalDownload) return null;
+  return digitalPriceKeyForSection(listing.numberOfItems ?? 1, listing.includeAllItems);
 }
 
 export function getPhysicalDeliveryWarnings(listing: ListingForImpact, keys: ProductPriceKey[]) {
@@ -187,21 +197,24 @@ export function buildImpactPlans(listings: ListingForImpact[], changedKeys: Prod
     const digitalKey = listingDigitalKey(listing);
     if (digitalKey && changed.has(digitalKey)) keys.add(digitalKey);
     for (const mapping of listing.priceMappings) {
-      if (PRICE_OPTION_BY_KEY.has(mapping.productKey) && changed.has(mapping.productKey as ProductPriceKey)) {
+      if (PHYSICAL_KEYS.has(mapping.productKey as ProductPriceKey) && changed.has(mapping.productKey as ProductPriceKey)) {
         keys.add(mapping.productKey as ProductPriceKey);
       }
     }
     if (keys.size === 0) continue;
 
     const priceKeys = [...keys];
-    const physicalKeys = priceKeys.filter((key) => PHYSICAL_KEYS.has(key));
-    const physicalMappings = listing.priceMappings.filter((mapping) => physicalKeys.includes(mapping.productKey as ProductPriceKey));
-    const unsupported = physicalMappings.find((mapping) => !mapping.isSupported);
-    const incomplete = physicalMappings.find((mapping) => !mapping.etsyProductId || !mapping.etsyOfferingId);
+    const mappedKeys = priceKeys.filter((key) => PHYSICAL_KEYS.has(key)
+      || (PRICE_OPTION_BY_KEY.get(key)?.category === 'digital' && listing.etsyProductType !== 'digital'));
+    const requiredMappings = listing.priceMappings.filter((mapping) => mappedKeys.includes(mapping.productKey as ProductPriceKey));
+    const unsupported = requiredMappings.find((mapping) => !mapping.isSupported);
+    const incomplete = mappedKeys.find((key) => !requiredMappings.some((mapping) =>
+      mapping.productKey === key && mapping.etsyProductId && mapping.etsyOfferingId
+    ));
     const skipReason = unsupported
       ? `${unsupported.fulfilmentProvider ?? 'The configured fulfilment provider'} does not support ${PRICE_OPTION_BY_KEY.get(unsupported.productKey)?.label ?? unsupported.productKey}.`
       : incomplete
-        ? 'The Etsy product and offering IDs have not been mapped for this physical option.'
+        ? `The Etsy product and offering IDs have not been mapped for ${PRICE_OPTION_BY_KEY.get(incomplete)?.label ?? incomplete}.`
         : null;
     plans.push({ listing, keys: priceKeys, canUpdate: skipReason === null, skipReason });
   }
@@ -239,7 +252,9 @@ async function getAllOptionImpact() {
 
 function jsonPriceKeys(value: Prisma.JsonValue): ProductPriceKey[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((key): key is ProductPriceKey => typeof key === 'string' && PRICE_OPTION_BY_KEY.has(key));
+  return value.filter((key): key is ProductPriceKey =>
+    typeof key === 'string' && ETSY_SYNCABLE_KEYS.has(key as ProductPriceKey)
+  );
 }
 
 function mapJob(job: Awaited<ReturnType<typeof loadJobRecord>>): PriceUpdateJobView | null {
@@ -289,7 +304,7 @@ export async function getSetPricesData(): Promise<SetPricesData> {
   });
   const saved = await prisma.adminProductPrice.findMany({ orderBy: { id: 'asc' } });
   const pendingKeys = saved
-    .filter((price) => price.etsySyncPending && PRICE_OPTION_BY_KEY.has(price.productKey))
+    .filter((price) => price.etsySyncPending && ETSY_SYNCABLE_KEYS.has(price.productKey as ProductPriceKey))
     .map((price) => price.productKey as ProductPriceKey);
   const [impact, pendingImpact, latestJob] = await Promise.all([
     getAllOptionImpact(),
@@ -335,20 +350,37 @@ export async function saveProductPrices(input: unknown): Promise<SavePricesResul
   const changed = entries.filter((entry) => existingByKey.get(entry.key) !== entry.amountPence);
 
   if (changed.length > 0) {
-    await prisma.$transaction(changed.map((entry) => prisma.adminProductPrice.upsert({
-      where: { productKey: entry.key },
-      update: { amountPence: entry.amountPence, currencyCode: 'GBP', etsySyncPending: true },
-      create: {
-        productKey: entry.key,
-        category: PRICE_OPTION_BY_KEY.get(entry.key)!.category,
-        amountPence: entry.amountPence,
-        currencyCode: 'GBP',
-        etsySyncPending: true,
-      },
-    })));
+    await prisma.$transaction(async (tx) => {
+      for (const entry of changed) {
+        await tx.adminProductPrice.upsert({
+          where: { productKey: entry.key },
+          update: {
+            amountPence: entry.amountPence,
+            currencyCode: 'GBP',
+            etsySyncPending: ETSY_SYNCABLE_KEYS.has(entry.key),
+          },
+          create: {
+            productKey: entry.key,
+            category: PRICE_OPTION_BY_KEY.get(entry.key)!.category,
+            amountPence: entry.amountPence,
+            currencyCode: 'GBP',
+            etsySyncPending: ETSY_SYNCABLE_KEYS.has(entry.key),
+          },
+        });
+      }
+      if (changed.some((entry) => entry.key === 'customisation_fee')) {
+        await tx.etsyListing.updateMany({
+          where: {
+            etsyId: { not: null },
+            productConfig: { is: { OR: [{ customTop: true }, { customBottom: true }] } },
+          },
+          data: { productsChanged: true, lastLocalChangeAt: new Date() },
+        });
+      }
+    });
   }
 
-  const changedKeys = changed.map((entry) => entry.key);
+  const changedKeys = changed.filter((entry) => ETSY_SYNCABLE_KEYS.has(entry.key)).map((entry) => entry.key);
   const impact = await getPriceImpact(changedKeys);
   return {
     data: await getSetPricesData(),
@@ -366,7 +398,9 @@ function changedPriceSnapshot(rows: Array<{ productKey: string; amountPence: num
 
 export async function startPriceUpdateJob(input: unknown) {
   if (!Array.isArray(input)) throw new Error('Choose the changed prices to apply.');
-  const changedKeys = [...new Set(input.filter((key): key is ProductPriceKey => typeof key === 'string' && PRICE_OPTION_BY_KEY.has(key)))];
+  const changedKeys = [...new Set(input.filter((key): key is ProductPriceKey =>
+    typeof key === 'string' && ETSY_SYNCABLE_KEYS.has(key as ProductPriceKey)
+  ))];
   if (changedKeys.length === 0) throw new Error('There are no changed prices to apply.');
   const prices = await prisma.adminProductPrice.findMany({ where: { productKey: { in: changedKeys } }, select: { productKey: true, amountPence: true } });
   if (prices.length !== changedKeys.length) throw new Error('One or more saved prices could not be found.');
@@ -416,7 +450,7 @@ function parseChangedPrices(value: Prisma.JsonValue) {
   const parsed = new Map<ProductPriceKey, number>();
   if (!record) return parsed;
   for (const [key, amount] of Object.entries(record)) {
-    if (PRICE_OPTION_BY_KEY.has(key) && typeof amount === 'number' && Number.isInteger(amount)) {
+    if (ETSY_SYNCABLE_KEYS.has(key as ProductPriceKey) && typeof amount === 'number' && Number.isInteger(amount)) {
       parsed.set(key as ProductPriceKey, amount);
     }
   }
@@ -477,7 +511,8 @@ export async function processNextPriceUpdateItem(jobId: string) {
     const listing = await prisma.etsyListing.findUnique({
       where: { id: item.listingId },
       include: {
-        files: { select: { id: true }, take: 1 },
+        productConfig: { select: { digitalDownload: true } },
+        products: { select: { productType: true, priceKey: true } },
         subSection: { include: { shopSection: true } },
         priceMappings: true,
       },
@@ -485,19 +520,34 @@ export async function processNextPriceUpdateItem(jobId: string) {
     if (!listing?.etsyId || !listing.subSection?.shopSection) throw new Error('The Etsy listing mapping is no longer available.');
     const keys = jsonPriceKeys(item.priceKeys);
     const changedPrices = parseChangedPrices(job.changedPrices);
-    const section = listing.subSection.shopSection;
-    const raw = rawRecord(listing.rawJson);
-    const isDownload = raw?.listing_type === 'download' || listing.files.length > 0;
-    const digitalKey = isDownload ? digitalPriceKeyForSection(section.numberOfDownloads, section.includeAllDownloads) : null;
+    const digitalProductKey = listing.products.find((product) => product.productType === 'digital')?.priceKey;
+    const digitalKey = digitalProductKey && PRICE_OPTION_BY_KEY.get(digitalProductKey)?.category === 'digital'
+      ? digitalProductKey as ProductPriceKey
+      : listing.etsyProductType === 'digital' || listing.productConfig?.digitalDownload
+        ? digitalPriceKeyForSection(listing.numberOfItems ?? 1, listing.includeAllItems)
+        : null;
 
     if (digitalKey && keys.includes(digitalKey)) {
       const amountPence = changedPrices.get(digitalKey);
       if (!amountPence) throw new Error('The saved digital price is missing from this update job.');
-      await updateEtsyListingPrice(listing.shopId, listing.etsyId, amountPence);
-      await prisma.etsyListing.update({
-        where: { id: listing.id },
-        data: { priceAmount: amountPence, priceDivisor: 100, priceCurrencyCode: 'GBP', lastSyncedAt: new Date() },
-      });
+      if (listing.etsyProductType === 'digital') {
+        await updateEtsyListingPrice(listing.shopId, listing.etsyId, amountPence);
+        await prisma.etsyListing.update({
+          where: { id: listing.id },
+          data: { priceAmount: amountPence, priceDivisor: 100, priceCurrencyCode: 'GBP', lastSyncedAt: new Date() },
+        });
+      } else {
+        const mappings = listing.priceMappings.filter((mapping) => mapping.productKey === digitalKey);
+        if (mappings.length === 0 || mappings.some((mapping) => !mapping.etsyProductId || !mapping.etsyOfferingId)) {
+          throw new Error('The Etsy product and offering IDs for Digital Download are not mapped.');
+        }
+        await updateEtsyListingVariationPrices(listing.etsyId, mappings.map((mapping) => ({
+          etsyProductId: mapping.etsyProductId!,
+          etsyOfferingId: mapping.etsyOfferingId!,
+          amountPence,
+        })));
+        await prisma.etsyListing.update({ where: { id: listing.id }, data: { lastSyncedAt: new Date() } });
+      }
     }
 
     const physicalKeys = keys.filter((key) => PHYSICAL_KEYS.has(key));

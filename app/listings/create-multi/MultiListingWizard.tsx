@@ -12,17 +12,35 @@ import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
 import type { MultiListingWizardData } from '@/lib/multi-listing';
 import { applyRoomThemeToPrompt, getMultiBedroomPrompt, getMultiPlayroomPrompt, getRoomThemeForSourceSection, type RoomTheme } from '@/lib/multi-listing-prompts';
 
-type Props = { data: MultiListingWizardData | null; shopId: string; sectionId: string; subSectionId: string };
+type Props = {
+  data: MultiListingWizardData | null;
+  shopId: string;
+  sectionId: string;
+  subSectionId: string;
+  initialListingName: string;
+  numberOfItems: number | null;
+  includeAllItems: boolean;
+  etsyProductType: 'physical' | 'digital';
+};
 type Group = { groupNumber: number; sourceDirectoryName: string; fileCount: number };
 type Zip = { groupNumber: number; sourceDirectoryName: string; fileName: string; sizeBytes: number };
 type PromptStep = { title: string; names: string[]; note: string; artworkNumbers?: number[] };
 const MAX_PROMPT_UPLOADS = 64;
 const CATALOGUE_BATCH_SIZE = 16;
 
-export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Props) {
+export function MultiListingWizard({
+  data,
+  shopId,
+  sectionId,
+  subSectionId,
+  initialListingName,
+  numberOfItems,
+  includeAllItems,
+  etsyProductType,
+}: Props) {
   const router = useRouter();
   const [step, setStep] = useState(0);
-  const [listingName, setListingName] = useState('');
+  const [listingName, setListingName] = useState(initialListingName);
   const [sourceSectionId, setSourceSectionId] = useState(data?.defaultSourceSectionId ?? '');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [uploadedImages, setUploadedImages] = useState<Array<File | null>>(Array(MAX_PROMPT_UPLOADS).fill(null));
@@ -46,18 +64,19 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
   const [infoCopied, setInfoCopied] = useState(false);
   const [twelveStageToken, setTwelveStageToken] = useState<string | null>(null);
   const [stagedTwelveBatches, setStagedTwelveBatches] = useState<Set<number>>(() => new Set());
+  const [replacementConfirmationRequired, setReplacementConfirmationRequired] = useState(false);
 
-  const downloadCount = data?.subSection.numberOfDownloads ?? 0;
-  const isAll = data?.subSection.includeAllDownloads ?? false;
+  const downloadCount = numberOfItems ?? 0;
+  const isAll = includeAllItems;
   const isThree = downloadCount === 3;
   const isSix = downloadCount === 6;
   const isTwelve = downloadCount === 12;
-  const isDropboxMulti = isSix || isTwelve || isAll;
+  const isDropboxMulti = isThree || isSix || isTwelve || isAll;
   const isSupported = downloadCount === 3 || isDropboxMulti;
   const selectedSourceSection = data?.sourceSections.find((section) => section.id === sourceSectionId) ?? null;
   const roomTheme = getRoomThemeForSourceSection(selectedSourceSection?.name ?? '');
   const sources = selectedSourceSection?.sources ?? [];
-  const requiredCount = data?.subSection.includeAllDownloads ? sources.length : downloadCount;
+  const requiredCount = includeAllItems ? sources.length : downloadCount;
   const selectedSources = useMemo(
     () => selectedIds.map((id) => sources.find((source) => source.id === id)).filter(Boolean) as NonNullable<typeof data>['sourceSections'][number]['sources'],
     [sources, selectedIds]
@@ -84,7 +103,7 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
         { title: 'Run PROMPT_40_multi_bedroom', names: names.slice(6, 9), note: 'Upload another group of 3 images.' },
         { title: 'Run PROMPT_40_multi_playroom', names: names.slice(9, 15), note: 'Upload a group of 6 images.' },
         { title: 'Run PROMPT_40_multi_playroom', names: names.slice(15, 21), note: 'Upload the following 6 images.' },
-      ]
+      ].slice(0, 10)
     : isTwelve
     ? [
         { title: 'Run PROMPT_50_12_images_bedroom', names, note: '' },
@@ -124,14 +143,24 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
 
   if (!data) return <p className="text-destructive">Unable to load this section.</p>;
 
-  async function validateListingName() {
+  async function validateListingName(replacementConfirmed = false) {
     setError(null);
     setBusy('validate-name');
     try {
-      const query = new URLSearchParams({ shopId, sectionId, subSectionId, sourceSectionId, listingName: listingName.trim() });
+      const query = new URLSearchParams({
+        shopId,
+        sectionId,
+        subSectionId,
+        sourceSectionId,
+        listingName: listingName.trim(),
+        numberOfItems: includeAllItems ? 'all' : String(numberOfItems),
+        includeAllItems: String(includeAllItems),
+        etsyProductType,
+      });
       const response = await fetch(`/api/shops/listings/multi?${query}`);
       const payload = await response.json() as {
         error?: string;
+        willReplace?: boolean;
         existing?: {
           sourceIds: string[];
           title: string;
@@ -145,9 +174,14 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
         } | null;
       };
       if (!response.ok) throw new Error(payload.error ?? 'Unable to validate listing name.');
+      if (payload.willReplace && !replacementConfirmed) {
+        setReplacementConfirmationRequired(true);
+        return;
+      }
+      setReplacementConfirmationRequired(false);
       if (payload.existing) {
         const availableSourceIds = new Set(sources.map((source) => source.id));
-        setSelectedIds(data?.subSection.includeAllDownloads
+        setSelectedIds(includeAllItems
           ? sources.map((source) => source.id)
           : payload.existing.sourceIds.filter((id) => availableSourceIds.has(id)));
         setTitle(payload.existing.title);
@@ -160,7 +194,7 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
         setExistingImageNames([...payload.existing.imageNames, ...Array(MAX_PROMPT_UPLOADS).fill(null)].slice(0, MAX_PROMPT_UPLOADS));
         setUploadedImages(Array(MAX_PROMPT_UPLOADS).fill(null));
       } else {
-        setSelectedIds(data?.subSection.includeAllDownloads ? sources.map((source) => source.id) : []);
+        setSelectedIds(includeAllItems ? sources.map((source) => source.id) : []);
         setTitle('');
         setDescription('');
         setPrice('8.33');
@@ -180,7 +214,7 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
   }
 
   function toggleSource(id: string) {
-    if (data?.subSection.includeAllDownloads) return;
+    if (includeAllItems) return;
     setSelectedIds((current) => current.includes(id)
       ? current.filter((value) => value !== id)
       : current.length < requiredCount ? [...current, id] : current);
@@ -218,6 +252,9 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
         .forEach(([key, value]) => formData.set(key, value));
       formData.set('sourceIds', JSON.stringify(selectedIds));
       formData.set('tags', JSON.stringify(tags));
+      formData.set('numberOfItems', includeAllItems ? 'all' : String(numberOfItems));
+      formData.set('includeAllItems', String(includeAllItems));
+      formData.set('etsyProductType', etsyProductType);
       const imageKeys = isAll
         ? prompts.map((_, index) => `image${index + 1}`)
         : isTwelve
@@ -290,14 +327,17 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
         body: JSON.stringify({ shopId, sectionId, subSectionId, listingId: createdListingId, action }),
       });
       const payload = await response.json() as {
-        zips?: Zip[]; folderPath?: string; sharedUrl?: string | null; fileName?: string; error?: string;
+        zips?: Zip[]; folderPath?: string; sharedUrl?: string | null; fileName?: string; pdfCreated?: boolean; error?: string;
       };
       if (!response.ok) throw new Error(payload.error ?? 'Unable to complete the action.');
       if (action === 'zip') {
         setZips(payload.zips ?? []);
         setGroupedFilesChanged(false);
       }
-      if (action === 'dropbox') setDropbox({ folderPath: payload.folderPath ?? '', sharedUrl: payload.sharedUrl ?? null });
+      if (action === 'dropbox') {
+        setDropbox({ folderPath: payload.folderPath ?? '', sharedUrl: payload.sharedUrl ?? null });
+        if (payload.pdfCreated) setPdfCreated(true);
+      }
       if (action === 'pdf') setPdfCreated(true);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to complete the action.');
@@ -374,7 +414,10 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
             </div>
             <label className="grid gap-2 text-sm font-medium">
               Listing name
-              <Input value={listingName} onChange={(event) => setListingName(event.target.value)} autoFocus />
+              <Input value={listingName} onChange={(event) => {
+                setListingName(event.target.value);
+                setReplacementConfirmationRequired(false);
+              }} autoFocus />
             </label>
             <label className="grid gap-2 text-sm font-medium">
               Source section
@@ -385,6 +428,7 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
                   setSourceSectionId(event.target.value);
                   setSelectedIds([]);
                   setError(null);
+                  setReplacementConfirmationRequired(false);
                 }}
               >
                 <option value="">Select a one-download section</option>
@@ -394,11 +438,22 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
               </select>
             </label>
             {error ? <ErrorText text={error} /> : null}
-            <div className="flex justify-end">
-              <Button onClick={validateListingName} disabled={!listingName.trim() || !sourceSectionId || busy !== null}>
+            {replacementConfirmationRequired ? <div role="alert" className="grid gap-3 rounded-md border border-destructive bg-destructive/5 p-4">
+              <div>
+                <h3 className="font-semibold text-destructive">Replace the existing listing?</h3>
+                <p className="mt-1 text-sm">A listing or stored directory already uses the name “{listingName.trim()}”. Continuing will update that listing and replace its generated files.</p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setReplacementConfirmationRequired(false)} disabled={busy !== null}>Cancel</Button>
+                <Button type="button" variant="destructive" onClick={() => validateListingName(true)} disabled={busy !== null}>
+                  {busy === 'validate-name' ? 'Checking…' : 'Replace existing listing'}
+                </Button>
+              </div>
+            </div> : <div className="flex justify-end">
+              <Button onClick={() => validateListingName()} disabled={!listingName.trim() || !sourceSectionId || busy !== null}>
                 {busy === 'validate-name' ? 'Checking…' : 'Next'}
               </Button>
-            </div>
+            </div>}
           </> : null}
 
           {step === 1 ? <>
@@ -406,7 +461,7 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
             <div className="grid max-h-[50vh] gap-2 overflow-y-auto pr-2 sm:grid-cols-2 lg:grid-cols-3">
               {sources.map((source) => {
                 const selected = selectedIds.includes(source.id);
-                return <button key={source.id} type="button" onClick={() => toggleSource(source.id)} disabled={data.subSection.includeAllDownloads} className={`flex items-center justify-between rounded-md border p-3 text-left text-sm ${selected ? 'border-primary bg-primary/10' : 'border-input'}`}><span>{source.name}</span>{selected ? <Check className="h-4 w-4" /> : null}</button>;
+                return <button key={source.id} type="button" onClick={() => toggleSource(source.id)} disabled={includeAllItems} className={`flex items-center justify-between rounded-md border p-3 text-left text-sm ${selected ? 'border-primary bg-primary/10' : 'border-input'}`}><span>{source.name}</span>{selected ? <Check className="h-4 w-4" /> : null}</button>;
               })}
             </div>
             {selectedIds.length !== requiredCount ? <p className="text-sm font-medium text-destructive">Select {requiredCount} items</p> : null}
@@ -441,7 +496,7 @@ export function MultiListingWizard({ data, shopId, sectionId, subSectionId }: Pr
               <div className="rounded-md border p-4">
                 <h2 className="font-semibold">{prompts.length + 1}. Run {infoPromptTitle}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">Enter the following items into the prompt:</p>
-                <ul className="mt-3 grid gap-2 text-sm">{selectedSources.map((source) => <li key={source.id}><strong>{source.name}</strong> â€” {source.description}</li>)}</ul>
+                <ul className="mt-3 grid gap-2 text-sm">{selectedSources.map((source) => <li key={source.id}><strong>{source.name}</strong> — {source.description}</li>)}</ul>
                 <Button type="button" variant="outline" className="mt-4" onClick={() => copyEtsyInfoPrompt(infoPromptUrl)}><Copy className="h-4 w-4" />{infoCopied ? 'Prompt copied' : 'Copy prompt'}</Button>
               </div>
             </div>

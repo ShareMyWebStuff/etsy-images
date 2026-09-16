@@ -4,22 +4,30 @@ import { Prisma } from '@prisma/client';
 import { ZipArchive } from 'archiver';
 import { imageSize } from 'image-size';
 import sharp from 'sharp';
+import { inspectListingZipStorage, isDropboxInstructionPdfFile } from '@/lib/dropbox-bundle';
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';
+import { getListingTodoItems, type ListingTodoItem } from '@/lib/listing-completeness';
 import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
+import { ETSY_PRODUCT_FRAMES, ETSY_PRODUCT_SIZES, saveListingSku } from '@/lib/listing-products';
 import { prisma } from '@/lib/prisma';
 import { getNextPrintSize } from '@/lib/print-sizes';
 import { ETSY_MAX_DOWNLOAD_FILES, ETSY_MAX_FILE_SIZE_BYTES } from '@/lib/etsy-download-limits';
-import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from '@/lib/s3-listing-storage';
+import { ETSY_MAX_LISTING_IMAGES, LISTING_EDITOR_MAX_IMAGES } from '@/lib/listing-image-limits';
+import { DEFAULT_PERSONALISATION_FONT_ID, getPersonalisationFont } from '@/lib/personalisation-fonts';
+import { copyFile, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from '@/lib/s3-listing-storage';
+import { PRICE_OPTIONS } from '@/lib/set-prices-core';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm']);
 
-type ListingEditorContext = {
+export type ListingEditorContext = {
   shopId: string;
   sectionId: string;
   subSectionId: string;
   listingId: string;
 };
+
+type PendingListingChange = 'Thumbnail' | 'Etsy Products' | 'Images' | 'Details' | 'Tags' | 'Digital Downloads' | 'Dropbox';
 
 export type ListingEditorData = {
   context: ListingEditorContext;
@@ -30,6 +38,7 @@ export type ListingEditorData = {
   section: {
     id: string;
     sectionName: string;
+    roomTheme: string;
   };
   subSection: {
     id: string;
@@ -43,6 +52,14 @@ export type ListingEditorData = {
     title: string;
     localDirectoryName: string | null;
     description: string;
+    listingDescription: string;
+    listingItem: string;
+    listingItemInherited: boolean;
+    roomTheme: string;
+    roomThemeInherited: boolean;
+    personalisationHeaderText: string;
+    personalisationFooterText: string;
+    personalisationFontId: string;
     status: string;
     quantity: number | null;
     priceAmount: number | null;
@@ -59,11 +76,15 @@ export type ListingEditorData = {
     primaryColour: string;
     secondaryColour: string;
     listingType: string;
+    etsySku: string;
+    numberOfItems: number | null;
+    includeAllItems: boolean;
   };
   thumbnail: { fileName: string; originalFileName: string | null } | null;
-  pendingChanges: Array<'Details' | 'Tags' | 'Images' | 'Downloads'>;
+  pendingChanges: PendingListingChange[];
   readyToUpload: boolean;
   missingUploadFields: string[];
+  todoItems: ListingTodoItem[];
   tags: Array<{ id: string; value: string }>;
   materials: Array<{ id: string; value: string }>;
   styles: Array<{ id: string; value: string }>;
@@ -85,26 +106,69 @@ export type ListingEditorData = {
   inventory: Array<{ id: string; name: string; value: string; sku: string; price: number | null; quantity: number | null }>;
   personalization: Array<{ id: string; instructions: string; isRequired: boolean; charCountMax: number | null }>;
   buyerPrices: Array<{ id: string; amount: number; divisor: number; currencyCode: string; note: string }>;
+  etsyProducts: {
+    config: {
+      listOnEtsy: boolean;
+      digitalDownload: boolean;
+      customTop: boolean;
+      customBottom: boolean;
+      returnPolicyId: string | null;
+    };
+    sizes: Array<{ key: string; label: string; enabled: boolean }>;
+    frames: Array<{ key: string; label: string; enabled: boolean }>;
+    products: Array<{
+      id: string;
+      key: string;
+      type: string;
+      sizeKey: string | null;
+      sizeLabel: string | null;
+      frame: string | null;
+      sku: string;
+      priceKey: string;
+      priceAmountPence: number;
+      currencyCode: string;
+      etsyListingId: string | null;
+      etsyProductId: string | null;
+      etsyOfferingId: string | null;
+    }>;
+    prices: Array<{
+      key: string;
+      label: string;
+      category: string;
+      amountPence: number;
+      currencyCode: string;
+    }>;
+  };
+  dropbox: {
+    bundle: { folderPath: string; sharedUrl: string | null; updatedAt: string } | null;
+    current: boolean;
+    canCreateZips: boolean;
+    zipsCurrent: boolean;
+    message: string | null;
+    action: 'create' | 'update' | null;
+  };
 };
 
 export type SaveListingDetailsInput = ListingEditorContext & {
-  title: string;
-  description: string;
-  status: string;
-  quantity: number | null;
-  priceAmount: number | null;
-  priceDivisor: number | null;
-  priceCurrencyCode: string;
-  taxonomyId: number | null;
-  shopSectionId: number | null;
-  whoMade: string;
-  whenMade: string;
-  isSupply: boolean;
-  shouldAutoRenew: boolean;
-  isPersonalizable: boolean;
-  language: string;
-  primaryColour: string;
-  secondaryColour: string;
+  title?: string;
+  description?: string;
+  listingDescription?: string;
+  status?: string;
+  quantity?: number | null;
+  priceAmount?: number | null;
+  priceDivisor?: number | null;
+  priceCurrencyCode?: string;
+  taxonomyId?: number | null;
+  shopSectionId?: number | null;
+  whoMade?: string;
+  whenMade?: string;
+  isSupply?: boolean;
+  shouldAutoRenew?: boolean;
+  isPersonalizable?: boolean;
+  language?: string;
+  primaryColour?: string;
+  secondaryColour?: string;
+  etsySku?: string;
 };
 
 export type CollectionKind =
@@ -157,6 +221,7 @@ function cleanFileName(fileName: string) {
 function getMissingUploadFields(listing: {
   title: string;
   description: string | null;
+  listingDescription: string | null;
   quantity: number | null;
   priceAmount: number | null;
   priceDivisor: number | null;
@@ -169,6 +234,7 @@ function getMissingUploadFields(listing: {
   return [
     normalize(listing.title) ? null : 'Title',
     normalize(listing.description) ? null : 'Description',
+    normalize(listing.listingDescription) ? null : 'Listing description',
     listing.quantity !== null && listing.quantity > 0 ? null : 'Quantity',
     listing.priceAmount !== null && listing.priceDivisor !== null && listing.priceDivisor > 0 ? null : 'Price',
     listing.taxonomyId !== null ? null : 'Taxonomy',
@@ -216,6 +282,7 @@ async function getListingForContext(context: ListingEditorContext) {
     select: {
       id: true,
       title: true,
+      roomTheme: true,
     },
   });
 
@@ -279,6 +346,20 @@ async function getListingForContext(context: ListingEditorContext) {
       buyerPrices: {
         orderBy: [{ id: 'asc' }],
       },
+      productConfig: true,
+      sizeOptions: {
+        orderBy: [{ position: 'asc' }, { id: 'asc' }],
+      },
+      frameOptions: {
+        orderBy: [{ position: 'asc' }, { id: 'asc' }],
+      },
+      products: {
+        orderBy: [{ position: 'asc' }, { id: 'asc' }],
+      },
+      dropboxFiles: {
+        orderBy: [{ groupNumber: 'asc' }, { id: 'asc' }],
+      },
+      dropboxBundle: true,
     },
   });
 
@@ -286,16 +367,94 @@ async function getListingForContext(context: ListingEditorContext) {
     throw new Error('Listing not found.');
   }
 
+  const adminPrices = await prisma.adminProductPrice.findMany({
+    select: {
+      productKey: true,
+      amountPence: true,
+      currencyCode: true,
+    },
+  });
+
   return {
     shop,
     section,
     subSection,
     listing,
+    adminPrices,
   };
 }
 
-function mapEditorData(context: ListingEditorContext, data: Awaited<ReturnType<typeof getListingForContext>>): ListingEditorData {
+async function mapEditorData(
+  context: ListingEditorContext,
+  data: Awaited<ReturnType<typeof getListingForContext>>,
+): Promise<ListingEditorData> {
   const missingUploadFields = getMissingUploadFields(data.listing);
+  const sizeOptions = new Map(data.listing.sizeOptions.map((option) => [option.sizeKey, option.enabled]));
+  const frameOptions = new Map(data.listing.frameOptions.map((option) => [option.frameKey, option.enabled]));
+  const savedPrices = new Map(data.adminPrices.map((price) => [price.productKey, price]));
+  const prices = PRICE_OPTIONS.map((option) => {
+    const saved = savedPrices.get(option.key);
+    return {
+      key: option.key,
+      label: option.label,
+      category: option.category,
+      amountPence: saved?.amountPence ?? option.defaultAmountPence,
+      currencyCode: saved?.currencyCode ?? 'GBP',
+    };
+  });
+  const priceByKey = new Map<string, (typeof prices)[number]>(prices.map((price) => [price.key, price]));
+  const sizeLabels = new Map<string, string>(ETSY_PRODUCT_SIZES.map((size) => [size.key, size.label]));
+  const rawListing = data.listing.rawJson && typeof data.listing.rawJson === 'object' && !Array.isArray(data.listing.rawJson)
+    ? data.listing.rawJson as Record<string, unknown>
+    : null;
+  const importedReturnPolicyId = typeof rawListing?.return_policy_id === 'string' || typeof rawListing?.return_policy_id === 'number'
+    ? String(rawListing.return_policy_id)
+    : null;
+  const defaultListingSku = (data.listing.localDirectoryName ?? data.listing.title)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32) || `LISTING-${data.listing.id}`;
+  const defaultListingItem = (data.listing.localDirectoryName ?? data.listing.title).slice(0, 100);
+  const listingPath = getListingDirectoryPath(
+    data.shop.shopName ?? data.shop.title ?? `Shop ${data.shop.etsyShopId}`,
+    data.section.title,
+    data.subSection.name,
+    data.listing.localDirectoryName ?? `Listing-${data.listing.id}`,
+  );
+  const zipStorageStatus = await inspectListingZipStorage(data.listing, listingPath);
+  const zippedFilesAreCurrent = zipStorageStatus.valid;
+  const hasDigitalDownloads = data.listing.files.some((file) => !isDropboxInstructionPdfFile(file));
+  const groupedDropboxNeedsPdf = data.listing.dropboxFiles.length > 0;
+  const hasDropboxInstructionPdf = data.listing.files.some(isDropboxInstructionPdfFile);
+  const dropboxIsCurrent = Boolean(data.listing.dropboxBundle?.sharedUrl?.trim())
+    && data.listing.dropboxSyncedAt !== null
+    && data.listing.dropboxRevision === data.listing.downloadsRevision
+    && (!groupedDropboxNeedsPdf || hasDropboxInstructionPdf);
+  const activeImages = data.listing.images.slice(0, ETSY_MAX_LISTING_IMAGES);
+  const todoItems = getListingTodoItems({
+    hasListingDescription: normalize(data.listing.listingDescription).length > 0,
+    hasThumbnail: normalize(data.listing.thumbnailFileName).length > 0,
+    hasTenImages: activeImages.length === 10 && activeImages.every((image) => normalize(image.localFileName).length > 0),
+    hasCurrentZips: zippedFilesAreCurrent,
+    hasCurrentDropbox: dropboxIsCurrent,
+    hasEtsyProducts: data.listing.productConfig !== null && data.listing.products.length > 0,
+    hasTags: data.listing.tags.length > 0,
+    hasTitle: normalize(data.listing.title).length > 0,
+    hasEtsyDescription: normalize(data.listing.description).length > 0,
+    hasQuantity: (data.listing.quantity ?? 0) > 0,
+    hasPrimaryColour: normalize(data.listing.primaryColour).length > 0,
+  });
+  let dropboxMessage: string | null = null;
+  if (!hasDigitalDownloads) {
+    dropboxMessage = 'Add at least one file to Digital Downloads before creating Dropbox.';
+  } else if (groupedDropboxNeedsPdf && !hasDropboxInstructionPdf) {
+    dropboxMessage = 'Create or update Dropbox to generate the Etsy download PDF.';
+  } else if (data.listing.dropboxBundle && !dropboxIsCurrent) {
+    dropboxMessage = 'Please update Dropbox because the digital downloads have changed.';
+  }
 
   return {
     context,
@@ -306,6 +465,7 @@ function mapEditorData(context: ListingEditorContext, data: Awaited<ReturnType<t
     section: {
       id: String(data.section.id),
       sectionName: data.section.title,
+      roomTheme: data.section.roomTheme ?? '',
     },
     subSection: {
       id: String(data.subSection.id),
@@ -319,6 +479,14 @@ function mapEditorData(context: ListingEditorContext, data: Awaited<ReturnType<t
       title: data.listing.title,
       localDirectoryName: data.listing.localDirectoryName,
       description: data.listing.description ?? '',
+      listingDescription: data.listing.listingDescription ?? '',
+      listingItem: data.listing.listingItem ?? defaultListingItem,
+      listingItemInherited: data.listing.listingItem === null,
+      roomTheme: data.listing.roomTheme ?? data.section.roomTheme ?? '',
+      roomThemeInherited: data.listing.roomTheme === null && Boolean(data.section.roomTheme?.trim()),
+      personalisationHeaderText: data.listing.personalisationHeaderText ?? "Rory's",
+      personalisationFooterText: data.listing.personalisationFooterText ?? 'Bedroom',
+      personalisationFontId: data.listing.personalisationFontId ?? DEFAULT_PERSONALISATION_FONT_ID,
       status: data.listing.state ?? '',
       quantity: data.listing.quantity,
       priceAmount: data.listing.priceAmount,
@@ -334,7 +502,10 @@ function mapEditorData(context: ListingEditorContext, data: Awaited<ReturnType<t
       language: data.listing.language ?? 'en-US',
       primaryColour: data.listing.primaryColour === 'grey' ? 'gray' : data.listing.primaryColour ?? '',
       secondaryColour: data.listing.secondaryColour === 'grey' ? 'gray' : data.listing.secondaryColour ?? '',
-      listingType: 'download',
+      listingType: data.listing.etsyProductType,
+      etsySku: data.listing.productConfig?.sku ?? defaultListingSku,
+      numberOfItems: data.listing.numberOfItems,
+      includeAllItems: data.listing.includeAllItems,
     },
     thumbnail: data.listing.thumbnailFileName ? {
       fileName: data.listing.thumbnailFileName,
@@ -344,14 +515,18 @@ function mapEditorData(context: ListingEditorContext, data: Awaited<ReturnType<t
       data.listing.detailsChanged ? 'Details' as const : null,
       data.listing.tagsChanged ? 'Tags' as const : null,
       data.listing.imagesChanged ? 'Images' as const : null,
-      data.listing.downloadsChanged ? 'Downloads' as const : null,
-    ].filter((area): area is 'Details' | 'Tags' | 'Images' | 'Downloads' => area !== null),
+      data.listing.downloadsChanged ? 'Digital Downloads' as const : null,
+      data.listing.productsChanged ? 'Etsy Products' as const : null,
+    ].filter((area): area is Exclude<PendingListingChange, 'Thumbnail' | 'Dropbox'> => area !== null),
     readyToUpload: missingUploadFields.length === 0,
     missingUploadFields,
+    todoItems,
     tags: data.listing.tags.map((tag) => ({ id: String(tag.id), value: tag.tag })),
     materials: data.listing.materials.map((material) => ({ id: String(material.id), value: material.material })),
     styles: data.listing.styles.map((style) => ({ id: String(style.id), value: style.style })),
-    images: data.listing.images.map((image) => ({
+    // Keep up to 25 local images available for preparing the listing. Etsy sync
+    // continues to use only the first ten images.
+    images: data.listing.images.slice(0, LISTING_EDITOR_MAX_IMAGES).map((image) => ({
       id: String(image.id),
       fileName: image.localFileName ?? image.urlFullxFull ?? image.etsyImageId ?? `Image ${image.id}`,
       originalFileName: image.originalFileName,
@@ -407,12 +582,62 @@ function mapEditorData(context: ListingEditorContext, data: Awaited<ReturnType<t
       currencyCode: buyerPrice.currencyCode,
       note: buyerPrice.note ?? '',
     })),
+    etsyProducts: {
+      config: {
+        listOnEtsy: data.listing.productConfig?.listOnEtsy ?? true,
+        digitalDownload: data.listing.productConfig?.digitalDownload ?? false,
+        customTop: data.listing.productConfig?.customTop ?? true,
+        customBottom: data.listing.productConfig?.customBottom ?? true,
+        returnPolicyId: data.listing.productConfig?.returnPolicyId ?? importedReturnPolicyId,
+      },
+      sizes: ETSY_PRODUCT_SIZES.map((size) => ({
+        key: size.key,
+        label: size.label,
+        enabled: sizeOptions.get(size.key) ?? true,
+      })),
+      frames: ETSY_PRODUCT_FRAMES.map((frame) => ({
+        key: frame.key,
+        label: frame.label,
+        enabled: frameOptions.get(frame.key) ?? frame.defaultEnabled,
+      })),
+      products: data.listing.products.map((product) => {
+        const price = priceByKey.get(product.priceKey);
+        return {
+          id: String(product.id),
+          key: product.productKey,
+          type: product.productType,
+          sizeKey: product.sizeKey,
+          sizeLabel: product.sizeKey ? sizeLabels.get(product.sizeKey) ?? product.sizeKey : null,
+          frame: product.frameKey === 'no_frame' ? 'no_frame' : product.frameKey ? 'frame' : null,
+          sku: product.sku,
+          priceKey: product.priceKey,
+          priceAmountPence: price?.amountPence ?? 0,
+          currencyCode: price?.currencyCode ?? 'GBP',
+          etsyListingId: product.etsyListingId,
+          etsyProductId: product.etsyProductId,
+          etsyOfferingId: product.etsyOfferingId,
+        };
+      }),
+      prices,
+    },
+    dropbox: {
+      bundle: data.listing.dropboxBundle ? {
+        folderPath: data.listing.dropboxBundle.folderPath,
+        sharedUrl: data.listing.dropboxBundle.sharedUrl,
+        updatedAt: data.listing.dropboxBundle.updatedAt.toISOString(),
+      } : null,
+      current: dropboxIsCurrent,
+      canCreateZips: data.listing.dropboxFiles.length > 0,
+      zipsCurrent: zippedFilesAreCurrent,
+      message: dropboxMessage,
+      action: hasDigitalDownloads ? (data.listing.dropboxBundle ? 'update' : 'create') : null,
+    },
   };
 }
 
 export async function getListingEditorData(context: ListingEditorContext) {
   try {
-    return mapEditorData(context, await getListingForContext(context));
+    return await mapEditorData(context, await getListingForContext(context));
   } catch {
     return null;
   }
@@ -513,33 +738,118 @@ async function refresh(context: ListingEditorContext, areas: ListingChangeArea[]
 
 export async function saveListingDetails(input: SaveListingDetailsInput) {
   const data = await getListingForContext(input);
+  const supplied = (key: keyof SaveListingDetailsInput) => Object.prototype.hasOwnProperty.call(input, key);
+
+  if (supplied('etsySku') && normalize(input.etsySku) !== data.listing.productConfig?.sku) {
+    await saveListingSku(input, normalize(input.etsySku));
+  }
 
   await prisma.etsyListing.update({
     where: {
       id: data.listing.id,
     },
     data: {
-      title: normalize(input.title),
-      description: normalize(input.description) || null,
-      state: normalize(input.status) || null,
-      quantity: input.quantity,
-      priceAmount: input.priceAmount,
-      priceDivisor: input.priceDivisor,
-      priceCurrencyCode: normalize(input.priceCurrencyCode) || null,
-      taxonomyId: input.taxonomyId,
-      shopSectionId: input.shopSectionId,
-      whoMade: normalize(input.whoMade) || null,
-      whenMade: normalize(input.whenMade) || null,
-      isSupply: input.isSupply,
-      shouldAutoRenew: input.shouldAutoRenew,
-      isPersonalizable: input.isPersonalizable,
-      language: normalize(input.language) || null,
-      primaryColour: normalizeEtsyColour(input.primaryColour),
-      secondaryColour: normalizeEtsyColour(input.secondaryColour),
+      ...(supplied('title') ? { title: normalize(input.title) } : {}),
+      ...(supplied('description') ? { description: normalize(input.description) || null } : {}),
+      ...(supplied('status') ? { state: normalize(input.status) || null } : {}),
+      ...(supplied('quantity') ? { quantity: input.quantity } : {}),
+      ...(supplied('priceAmount') ? { priceAmount: input.priceAmount } : {}),
+      ...(supplied('priceDivisor') ? { priceDivisor: input.priceDivisor } : {}),
+      ...(supplied('priceCurrencyCode') ? { priceCurrencyCode: normalize(input.priceCurrencyCode) || null } : {}),
+      ...(supplied('taxonomyId') ? { taxonomyId: input.taxonomyId } : {}),
+      ...(supplied('shopSectionId') ? { shopSectionId: input.shopSectionId } : {}),
+      ...(supplied('whoMade') ? { whoMade: normalize(input.whoMade) || null } : {}),
+      ...(supplied('whenMade') ? { whenMade: normalize(input.whenMade) || null } : {}),
+      ...(supplied('isSupply') ? { isSupply: input.isSupply } : {}),
+      ...(supplied('shouldAutoRenew') ? { shouldAutoRenew: input.shouldAutoRenew } : {}),
+      ...(supplied('isPersonalizable') ? { isPersonalizable: input.isPersonalizable } : {}),
+      ...(supplied('language') ? { language: normalize(input.language) || null } : {}),
+      ...(supplied('primaryColour') ? { primaryColour: normalizeEtsyColour(input.primaryColour ?? '') } : {}),
+      ...(supplied('secondaryColour') ? { secondaryColour: normalizeEtsyColour(input.secondaryColour ?? '') } : {}),
     },
   });
 
   return refresh(input, ['details']);
+}
+
+export async function saveListingDescription(context: ListingEditorContext, value: string) {
+  const data = await getListingForContext(context);
+  const listingDescription = value.trim();
+  if (Array.from(listingDescription).length > 1000) {
+    throw new Error('The listing description cannot be longer than 1,000 characters.');
+  }
+  await prisma.etsyListing.update({
+    where: { id: data.listing.id },
+    data: {
+      listingDescription: listingDescription || null,
+      lastLocalChangeAt: new Date(),
+    },
+  });
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('Listing not found.');
+  return refreshed;
+}
+
+export async function saveListingRoomTheme(context: ListingEditorContext, value: string) {
+  const data = await getListingForContext(context);
+  const roomTheme = value.trim();
+  if (Array.from(roomTheme).length > 200) {
+    throw new Error('The room theme cannot be longer than 200 characters.');
+  }
+  const sectionRoomTheme = data.section.roomTheme?.trim() ?? '';
+  await prisma.etsyListing.update({
+    where: { id: data.listing.id },
+    data: {
+      roomTheme: !roomTheme || roomTheme === sectionRoomTheme ? null : roomTheme,
+      lastLocalChangeAt: new Date(),
+    },
+  });
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('Listing not found.');
+  return refreshed;
+}
+
+export async function saveListingItem(context: ListingEditorContext, value: string) {
+  const data = await getListingForContext(context);
+  const listingItem = value.trim();
+  if (Array.from(listingItem).length > 100) {
+    throw new Error('The listing item cannot be longer than 100 characters.');
+  }
+  const defaultListingItem = (data.listing.localDirectoryName ?? data.listing.title).slice(0, 100).trim();
+  await prisma.etsyListing.update({
+    where: { id: data.listing.id },
+    data: {
+      listingItem: !listingItem || listingItem === defaultListingItem ? null : listingItem,
+      lastLocalChangeAt: new Date(),
+    },
+  });
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('Listing not found.');
+  return refreshed;
+}
+
+export async function savePersonalisationPromptSettings(
+  context: ListingEditorContext,
+  values: { headerText: string; footerText: string; fontId: string },
+) {
+  const data = await getListingForContext(context);
+  if (Array.from(values.headerText).length > 200 || Array.from(values.footerText).length > 200) {
+    throw new Error('Personalisation text cannot be longer than 200 characters.');
+  }
+  if (!getPersonalisationFont(values.fontId)) throw new Error('Choose a supported personalisation font.');
+
+  await prisma.etsyListing.update({
+    where: { id: data.listing.id },
+    data: {
+      personalisationHeaderText: values.headerText,
+      personalisationFooterText: values.footerText,
+      personalisationFontId: values.fontId,
+      lastLocalChangeAt: new Date(),
+    },
+  });
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('Listing not found.');
+  return refreshed;
 }
 
 export async function addListingCollectionItem(context: ListingEditorContext, kind: CollectionKind, payload: Record<string, unknown>) {
@@ -736,8 +1046,8 @@ export async function uploadListingAsset(context: ListingEditorContext, kind: Up
     throw new Error('Choose a JPG, PNG, or WEBP image.');
   }
 
-  if (kind === 'image' && data.listing.images.length >= 20) {
-    throw new Error('A listing can have no more than 20 images.');
+  if (kind === 'image' && data.listing.images.length >= LISTING_EDITOR_MAX_IMAGES) {
+    throw new Error(`A listing can have no more than ${LISTING_EDITOR_MAX_IMAGES} images.`);
   }
 
   const assetDirectory = kind === 'file'
@@ -778,7 +1088,8 @@ export async function uploadListingAsset(context: ListingEditorContext, kind: Up
       // Non-image downloads do not have pixel dimensions.
     }
 
-    await prisma.etsyListingFile.create({
+    await prisma.$transaction([
+      prisma.etsyListingFile.create({
         data: {
           listingId: data.listing.id,
           localFileName: fileName,
@@ -798,7 +1109,13 @@ export async function uploadListingAsset(context: ListingEditorContext, kind: Up
             heightPixels: dimensions.height ?? null,
           }),
         },
-      });
+      }),
+      prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } }),
+      prisma.etsyListing.update({
+        where: { id: data.listing.id },
+        data: { downloadsRevision: { increment: 1 } },
+      }),
+    ]);
   } else {
     await prisma.etsyListingVideo.create({
       data: {
@@ -811,7 +1128,6 @@ export async function uploadListingAsset(context: ListingEditorContext, kind: Up
   }
 
   if (kind === 'file') {
-    await prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } });
     await removeListingZipFiles(listingPath, data.listing.zippedFiles);
   }
 
@@ -863,7 +1179,8 @@ async function renameImageFilesSafely(
 export async function reorderListingImages(context: ListingEditorContext, order: ImageOrderItem[]) {
   const { data, listingPath } = await getListingAssetDirectory(context);
   const requestedIds = order.map((item) => toInt(item.id, 'image id'));
-  const existingIds = data.listing.images.map((image) => image.id);
+  const activeImages = data.listing.images.slice(0, LISTING_EDITOR_MAX_IMAGES);
+  const existingIds = activeImages.map((image) => image.id);
 
   if (requestedIds.length !== existingIds.length || new Set(requestedIds).size !== requestedIds.length) {
     throw new Error('The image order must contain every listing image exactly once.');
@@ -872,7 +1189,7 @@ export async function reorderListingImages(context: ListingEditorContext, order:
     throw new Error('The image order contains an image that does not belong to this listing.');
   }
 
-  const imagesById = new Map(data.listing.images.map((image) => [image.id, image]));
+  const imagesById = new Map(activeImages.map((image) => [image.id, image]));
   const updates = requestedIds.map((id, index) => {
     const image = imagesById.get(id)!;
     const extension = image.localFileName ? path.extname(image.localFileName).toLowerCase() : '';
@@ -971,7 +1288,10 @@ async function writeZipFile(targetPath: string, files: Array<{ path: string; nam
     archive.on('end', resolve);
     archive.on('error', reject);
   });
-  for (const file of files) archive.append(await readFile(file.path), { name: file.name });
+  // A fixed entry timestamp keeps identical source sets byte-identical across
+  // runs, so unchanged archives can retain their Etsy file mapping.
+  const entryDate = new Date(Date.UTC(1980, 0, 1));
+  for (const file of files) archive.append(await readFile(file.path), { name: file.name, date: entryDate });
   await archive.finalize();
   await completed;
   await writeFile(targetPath, Buffer.concat(chunks));
@@ -998,7 +1318,74 @@ async function removeListingZipFiles(listingPath: string, zippedFiles: Array<{ f
   }));
 }
 
-export async function createListingZipFiles(context: ListingEditorContext, assignments: DownloadZipAssignment[]) {
+const ordinaryZipLocks = new Map<number, Promise<void>>();
+
+async function withOrdinaryZipLock<T>(listingId: number, action: () => Promise<T>) {
+  const previous = ordinaryZipLocks.get(listingId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const tail = previous.catch(() => undefined).then(() => current);
+  ordinaryZipLocks.set(listingId, tail);
+  await previous.catch(() => undefined);
+  try {
+    return await action();
+  } finally {
+    release();
+    if (ordinaryZipLocks.get(listingId) === tail) ordinaryZipLocks.delete(listingId);
+  }
+}
+
+function isMissingZipStorageError(error: unknown) {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+async function unlinkZipIfPresent(storagePath: string) {
+  try {
+    await unlink(storagePath);
+  } catch (error) {
+    if (!isMissingZipStorageError(error)) throw error;
+  }
+}
+
+async function cleanupZipStoragePaths(storagePaths: Iterable<string>) {
+  const failures: unknown[] = [];
+  for (const storagePath of storagePaths) {
+    try {
+      await unlinkZipIfPresent(storagePath);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  return failures;
+}
+
+type OrdinaryZipBackup = {
+  livePath: string;
+  backupPath: string;
+  sizeBytes: number;
+};
+
+async function rollbackOrdinaryZipInstall(livePaths: Set<string>, backups: OrdinaryZipBackup[]) {
+  const failures = await cleanupZipStoragePaths(livePaths);
+  for (const backup of backups) {
+    try {
+      await copyFile(backup.backupPath, backup.livePath);
+      const restored = await stat(backup.livePath);
+      if (!restored.isFile() || restored.size !== backup.sizeBytes) {
+        throw new Error(`Failed to restore ${path.basename(backup.livePath)} to its previous size.`);
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error('The previous listing ZIP files could not be fully restored after a failed install.', {
+      cause: failures[0],
+    });
+  }
+}
+
+async function createListingZipFilesUnlocked(context: ListingEditorContext, assignments: DownloadZipAssignment[]) {
   const { data, listingPath } = await getListingAssetDirectory(context);
   const assignmentMap = new Map(assignments.map((assignment) => [toInt(assignment.fileId, 'file id'), assignment.zipNumber]));
   const files = data.listing.files;
@@ -1028,57 +1415,312 @@ export async function createListingZipFiles(context: ListingEditorContext, assig
   const downloadsDirectory = path.join(listingPath, 'downloads');
   const zippedDirectory = path.join(listingPath, 'zipped');
   await mkdir(zippedDirectory, { recursive: true });
-  const generated: Array<{ zipNumber: number; fileName: string; tempPath: string; targetPath: string; sizeBytes: number }> = [];
+  const operationId = randomUUID();
+  const failureRevisionMarker = -1 - Number.parseInt(operationId.slice(0, 7), 16);
+  const generated: Array<{
+    zipNumber: number;
+    fileName: string;
+    stagingPath: string;
+    targetPath: string;
+    sizeBytes: number;
+    storageUnchanged: boolean;
+  }> = [];
+  const stagingPaths = new Set<string>();
+  const backups: OrdinaryZipBackup[] = [];
+  const backupPaths = new Set<string>();
+  const livePaths = new Set<string>();
+  let liveInstallStarted = false;
+  let databaseCommitted = false;
   const zipBaseName = listingZipBaseName(data.listing.localDirectoryName ?? data.listing.title);
 
   try {
     for (const zipNumber of usedZipNumbers as number[]) {
-    const groupedFiles = files.filter((file) => assignmentMap.get(file.id) === zipNumber && file.localFileName);
-    const fileName = `${zipBaseName}_${zipNumber}.zip`;
-    const targetPath = path.join(zippedDirectory, fileName);
-    const tempPath = path.join(zippedDirectory, `.${fileName}.${randomUUID()}.tmp`);
+      const groupedFiles = files.filter((file) => assignmentMap.get(file.id) === zipNumber && file.localFileName);
+      const fileName = `${zipBaseName}_${zipNumber}.zip`;
+      const targetPath = path.join(zippedDirectory, fileName);
+      const stagingPath = path.join(zippedDirectory, `.${operationId}.${zipNumber}.staged`);
+      stagingPaths.add(stagingPath);
 
-    await writeZipFile(
-      tempPath,
-      groupedFiles.map((file) => ({ path: path.join(downloadsDirectory, file.localFileName!), name: file.originalFileName ?? file.localFileName! }))
-    );
-    const zipStats = await stat(tempPath);
-    if (zipStats.size > ETSY_MAX_FILE_SIZE_BYTES) throw new Error(`Generated ZIP ${zipNumber} exceeds Etsy's 20 MB file limit.`);
-    generated.push({ zipNumber, fileName, tempPath, targetPath, sizeBytes: zipStats.size });
+      await writeZipFile(
+        stagingPath,
+        groupedFiles.map((file) => ({
+          path: path.join(downloadsDirectory, file.localFileName!),
+          name: file.originalFileName ?? file.localFileName!,
+        })),
+      );
+      const zipStats = await stat(stagingPath);
+      if (!zipStats.isFile() || zipStats.size <= 0) throw new Error(`Generated ZIP ${zipNumber} is empty or invalid.`);
+      if (zipStats.size > ETSY_MAX_FILE_SIZE_BYTES) {
+        throw new Error(`Generated ZIP ${zipNumber} exceeds Etsy's 20 MB file limit.`);
+      }
+      const stagedContents = await readFile(stagingPath);
+      let storageUnchanged = false;
+      try {
+        const liveContents = await readFile(targetPath);
+        storageUnchanged = liveContents.equals(stagedContents);
+      } catch (error) {
+        if (!isMissingZipStorageError(error)) throw error;
+      }
+      generated.push({
+        zipNumber,
+        fileName,
+        stagingPath,
+        targetPath,
+        sizeBytes: zipStats.size,
+        storageUnchanged,
+      });
     }
 
+    const currentListing = await prisma.etsyListing.findUnique({
+      where: { id: data.listing.id },
+      select: { downloadsRevision: true, zippedRevision: true },
+    });
+    if (currentListing?.downloadsRevision !== data.listing.downloadsRevision
+      || currentListing.zippedRevision !== data.listing.zippedRevision) {
+      throw new Error('The downloads or ZIP state changed while the archives were being prepared. Please try again.');
+    }
+
+    const existingZipNames = (await readdir(zippedDirectory))
+      .filter((fileName) => fileName.toLocaleLowerCase().endsWith('.zip'));
+    const unchangedStoragePaths = new Set(generated
+      .filter((zip) => zip.storageUnchanged)
+      .map((zip) => zip.targetPath.toLocaleLowerCase()));
+    for (let index = 0; index < existingZipNames.length; index += 1) {
+      const fileName = existingZipNames[index];
+      const livePath = path.join(zippedDirectory, fileName);
+      if (unchangedStoragePaths.has(livePath.toLocaleLowerCase())) continue;
+      const liveStats = await stat(livePath);
+      if (!liveStats.isFile()) continue;
+      const backupPath = path.join(zippedDirectory, `.${operationId}.${index + 1}.backup`);
+      backupPaths.add(backupPath);
+      await copyFile(livePath, backupPath);
+      const backupStats = await stat(backupPath);
+      if (!backupStats.isFile() || backupStats.size !== liveStats.size) {
+        throw new Error(`Unable to stage a rollback copy of ${fileName}.`);
+      }
+      backups.push({ livePath, backupPath, sizeBytes: liveStats.size });
+      livePaths.add(livePath);
+    }
+
+    for (const zip of generated) {
+      if (!zip.storageUnchanged) livePaths.add(zip.targetPath);
+    }
+    liveInstallStarted = livePaths.size > 0;
+    for (const zip of generated) {
+      if (!zip.storageUnchanged) await rename(zip.stagingPath, zip.targetPath);
+    }
+
+    const generatedFileNames = new Set(generated.map((zip) => zip.fileName.toLocaleLowerCase()));
+    for (const existingName of existingZipNames) {
+      if (!generatedFileNames.has(existingName.toLocaleLowerCase())) {
+        await unlinkZipIfPresent(path.join(zippedDirectory, existingName));
+      }
+    }
+
+    for (const zip of generated) {
+      const installedStats = await stat(zip.targetPath);
+      if (!installedStats.isFile() || installedStats.size !== zip.sizeBytes) {
+        throw new Error(`Installed ZIP ${zip.zipNumber} did not match its staged archive.`);
+      }
+    }
+
+    const existingZipByNumber = new Map(data.listing.zippedFiles.map((zip) => [zip.zipNumber, zip]));
+    const generatedZipNumbers = new Set(generated.map((zip) => zip.zipNumber));
+    const removedZipIds = data.listing.zippedFiles
+      .filter((zip) => !generatedZipNumbers.has(zip.zipNumber))
+      .map((zip) => zip.id);
+    const zipSetChanged = removedZipIds.length > 0 || generated.some((zip) => {
+      const existingZip = existingZipByNumber.get(zip.zipNumber);
+      return !existingZip || existingZip.fileName !== zip.fileName || !zip.storageUnchanged;
+    });
+
     await prisma.$transaction(async (tx) => {
+      const revisionGuard = await tx.etsyListing.updateMany({
+        where: {
+          id: data.listing.id,
+          downloadsRevision: data.listing.downloadsRevision,
+          zippedRevision: data.listing.zippedRevision,
+        },
+        data: {
+          hasEverZipped: true,
+          zippedRevision: data.listing.downloadsRevision,
+          ...(zipSetChanged ? { downloadsChanged: true, lastLocalChangeAt: new Date() } : {}),
+        },
+      });
+      if (revisionGuard.count !== 1) {
+        throw new Error('The downloads or ZIP state changed while the archives were being installed. Please try again.');
+      }
       await Promise.all(files.map((file) => tx.etsyListingFile.update({
         where: { id: file.id },
         data: { zipNumber: assignmentMap.get(file.id)! },
       })));
-      await tx.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } });
-      await Promise.all(generated.map((zip) => tx.etsyListingZip.create({
-        data: { listingId: data.listing.id, zipNumber: zip.zipNumber, fileName: zip.fileName, sizeBytes: zip.sizeBytes },
-      })));
+      if (removedZipIds.length > 0) {
+        await tx.etsyListingZip.deleteMany({ where: { id: { in: removedZipIds } } });
+      }
+      for (const zip of generated) {
+        const existingZip = existingZipByNumber.get(zip.zipNumber);
+        if (existingZip) {
+          const preserveEtsyFileId = existingZip.fileName === zip.fileName && zip.storageUnchanged;
+          await tx.etsyListingZip.update({
+            where: { id: existingZip.id },
+            data: {
+              fileName: zip.fileName,
+              sizeBytes: zip.sizeBytes,
+              ...(!preserveEtsyFileId ? { etsyListingFileId: null } : {}),
+            },
+          });
+        } else {
+          await tx.etsyListingZip.create({
+            data: {
+              listingId: data.listing.id,
+              zipNumber: zip.zipNumber,
+              fileName: zip.fileName,
+              sizeBytes: zip.sizeBytes,
+            },
+          });
+        }
+      }
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    databaseCommitted = true;
 
-    for (const zip of generated) {
-      try { await unlink(zip.targetPath); } catch (error) {
-        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-      }
-      await rename(zip.tempPath, zip.targetPath);
-    }
-    const generatedFileNames = new Set(generated.map((zip) => zip.fileName));
-    for (const oldZip of data.listing.zippedFiles) {
-      if (generatedFileNames.has(oldZip.fileName)) continue;
-      try { await unlink(path.join(zippedDirectory, oldZip.fileName)); } catch (error) {
-        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-      }
+    const cleanupFailures = await cleanupZipStoragePaths([...stagingPaths, ...backupPaths]);
+    if (cleanupFailures.length > 0) {
+      console.warn('Listing ZIPs were installed, but one or more temporary rollback copies could not be removed.');
     }
   } catch (error) {
-    await Promise.all(generated.map(async (zip) => {
-      try { await unlink(zip.tempPath); } catch { /* Temporary archive may already have been renamed. */ }
-    }));
+    let rollbackError: unknown = null;
+    if (liveInstallStarted && !databaseCommitted) {
+      try {
+        await rollbackOrdinaryZipInstall(livePaths, backups);
+      } catch (caughtRollbackError) {
+        rollbackError = caughtRollbackError;
+      }
+    }
+    await cleanupZipStoragePaths(stagingPaths);
+    if (!rollbackError) await cleanupZipStoragePaths(backupPaths);
+    if (rollbackError) {
+      try {
+        await prisma.etsyListing.updateMany({
+          where: {
+            id: data.listing.id,
+            downloadsRevision: data.listing.downloadsRevision,
+            zippedRevision: data.listing.downloadsRevision,
+          },
+          data: { zippedRevision: failureRevisionMarker },
+        });
+      } catch {
+        // Preserve rollback copies when both storage recovery and invalidation fail.
+      }
+      throw new Error('ZIP creation failed and the previous ZIP files could not be fully restored.', {
+        cause: rollbackError,
+      });
+    }
     throw error;
   }
 
-  return refresh(context, ['downloads']);
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('The ZIP files were created, but the refreshed listing could not be loaded.');
+  return refreshed;
+}
+
+export async function createListingZipFiles(context: ListingEditorContext, assignments: DownloadZipAssignment[]) {
+  const listingId = toInt(context.listingId, 'listing id');
+  return withOrdinaryZipLock(listingId, () => createListingZipFilesUnlocked(context, assignments));
+}
+
+type InstalledDownloadReplacement = {
+  targetPath: string;
+  backupPath: string;
+  previousContents: Buffer;
+};
+
+async function installDownloadReplacement(
+  targetPath: string,
+  previousContents: Buffer,
+  replacementContents: Buffer,
+): Promise<InstalledDownloadReplacement> {
+  const directoryPath = path.dirname(targetPath);
+  const operationId = randomUUID();
+  const stagingPath = path.join(directoryPath, `.${operationId}.download-edit.staged`);
+  const backupPath = path.join(directoryPath, `.${operationId}.download-edit.backup`);
+  let installStarted = false;
+
+  try {
+    await writeFile(stagingPath, replacementContents);
+    const stagedContents = await readFile(stagingPath);
+    if (!stagedContents.equals(replacementContents) || stagedContents.length === 0) {
+      throw new Error('The edited download could not be staged safely.');
+    }
+
+    await copyFile(targetPath, backupPath);
+    const backupContents = await readFile(backupPath);
+    if (!backupContents.equals(previousContents)) {
+      throw new Error('The existing download could not be backed up safely.');
+    }
+
+    installStarted = true;
+    await rename(stagingPath, targetPath);
+    const installedContents = await readFile(targetPath);
+    if (!installedContents.equals(replacementContents)) {
+      throw new Error('The edited download did not persist correctly.');
+    }
+
+    return { targetPath, backupPath, previousContents };
+  } catch (error) {
+    let rollbackError: unknown = null;
+    if (installStarted) {
+      try {
+        await unlinkZipIfPresent(targetPath);
+        await copyFile(backupPath, targetPath);
+        const restoredContents = await readFile(targetPath);
+        if (!restoredContents.equals(previousContents)) {
+          throw new Error('The previous download bytes could not be restored.');
+        }
+      } catch (caughtRollbackError) {
+        rollbackError = caughtRollbackError;
+      }
+    }
+    await cleanupZipStoragePaths([stagingPath]);
+    if (!rollbackError) await cleanupZipStoragePaths([backupPath]);
+    if (rollbackError) {
+      throw new Error('The download edit failed and the previous file could not be restored.', {
+        cause: rollbackError,
+      });
+    }
+    throw error;
+  }
+}
+
+async function commitDownloadReplacement(
+  targetPath: string,
+  previousContents: Buffer,
+  replacementContents: Buffer,
+  commitDatabaseChanges: () => Promise<unknown>,
+) {
+  const installed = await installDownloadReplacement(targetPath, previousContents, replacementContents);
+  try {
+    await commitDatabaseChanges();
+  } catch (error) {
+    try {
+      await unlinkZipIfPresent(installed.targetPath);
+      await copyFile(installed.backupPath, installed.targetPath);
+      const restoredContents = await readFile(installed.targetPath);
+      if (!restoredContents.equals(installed.previousContents)) {
+        throw new Error('The previous download bytes could not be restored.');
+      }
+      await cleanupZipStoragePaths([installed.backupPath]);
+    } catch (rollbackError) {
+      throw new Error('The database rejected the download edit and the previous file could not be restored.', {
+        cause: rollbackError,
+      });
+    }
+    throw error;
+  }
+
+  const cleanupFailures = await cleanupZipStoragePaths([installed.backupPath]);
+  if (cleanupFailures.length > 0) {
+    console.warn('The download was updated, but its temporary rollback copy could not be removed.');
+  }
 }
 
 export async function reduceListingDownload(context: ListingEditorContext, fileId: string) {
@@ -1092,36 +1734,48 @@ export async function reduceListingDownload(context: ListingEditorContext, fileI
   if (!target) throw new Error('This file is already at its smallest supported size or does not match a supported print size.');
 
   const filePath = path.join(listingPath, 'downloads', file.localFileName);
-  const resizedBuffer = await sharp(await readFile(filePath))
+  const sourceBuffer = await readFile(filePath);
+  const resizedBuffer = await sharp(sourceBuffer)
     .resize(target.width, target.height, { fit: 'inside', withoutEnlargement: true })
     .withMetadata({ density: 300 })
     .toBuffer();
-  await writeFile(filePath, resizedBuffer);
 
   const metadata = await sharp(resizedBuffer).metadata();
-  await prisma.etsyListingFile.update({
-      where: { id: file.id },
-      data: {
-        etsyListingFileId: null,
-        widthPixels: metadata.width ?? target.width,
-        heightPixels: metadata.height ?? target.height,
-        sizeBytes: resizedBuffer.length,
-        filesize: `${(resizedBuffer.length / (1024 * 1024)).toFixed(2)} MB`,
-        rawJson: toRawJson({
-          localFileName: file.localFileName,
-          originalFileName: file.originalFileName,
-          sizeBytes: resizedBuffer.length,
+  await commitDownloadReplacement(filePath, sourceBuffer, resizedBuffer, () => prisma.$transaction([
+      prisma.etsyListingFile.update({
+        where: { id: file.id },
+        data: {
+          etsyListingFileId: null,
           widthPixels: metadata.width ?? target.width,
           heightPixels: metadata.height ?? target.height,
-          density: 300,
-        }),
-      },
-    });
+          sizeBytes: resizedBuffer.length,
+          filesize: `${(resizedBuffer.length / (1024 * 1024)).toFixed(2)} MB`,
+          rawJson: toRawJson({
+            localFileName: file.localFileName,
+            originalFileName: file.originalFileName,
+            sizeBytes: resizedBuffer.length,
+            widthPixels: metadata.width ?? target.width,
+            heightPixels: metadata.height ?? target.height,
+            density: 300,
+          }),
+        },
+      }),
+      prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } }),
+      prisma.etsyListing.update({
+        where: { id: data.listing.id },
+        data: {
+          downloadsRevision: { increment: 1 },
+          downloadsChanged: true,
+          lastLocalChangeAt: new Date(),
+        },
+      }),
+    ]));
 
-  await prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } });
   await removeListingZipFiles(listingPath, data.listing.zippedFiles);
 
-  return refresh(context, ['downloads']);
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('The download was resized, but the refreshed listing could not be loaded.');
+  return refreshed;
 }
 
 export async function reduceListingDownloadQuality(context: ListingEditorContext, fileId: string) {
@@ -1143,34 +1797,45 @@ export async function reduceListingDownloadQuality(context: ListingEditorContext
     .withMetadata({ density: 300 })
     .jpeg({ quality: nextQuality })
     .toBuffer();
-  await writeFile(filePath, recompressedBuffer);
 
   const metadata = await sharp(recompressedBuffer).metadata();
-  await prisma.etsyListingFile.update({
-    where: { id: file.id },
-      data: {
-        etsyListingFileId: null,
-        widthPixels: metadata.width ?? sourceMetadata.width ?? file.widthPixels,
-      heightPixels: metadata.height ?? sourceMetadata.height ?? file.heightPixels,
-      jpegQuality: nextQuality,
-      sizeBytes: recompressedBuffer.length,
-      filesize: `${(recompressedBuffer.length / (1024 * 1024)).toFixed(2)} MB`,
-      rawJson: toRawJson({
-        localFileName: file.localFileName,
-        originalFileName: file.originalFileName,
-        sizeBytes: recompressedBuffer.length,
-        widthPixels: metadata.width ?? sourceMetadata.width ?? file.widthPixels,
-        heightPixels: metadata.height ?? sourceMetadata.height ?? file.heightPixels,
-        density: 300,
-        jpegQuality: nextQuality,
+  await commitDownloadReplacement(filePath, sourceBuffer, recompressedBuffer, () => prisma.$transaction([
+      prisma.etsyListingFile.update({
+        where: { id: file.id },
+        data: {
+          etsyListingFileId: null,
+          widthPixels: metadata.width ?? sourceMetadata.width ?? file.widthPixels,
+          heightPixels: metadata.height ?? sourceMetadata.height ?? file.heightPixels,
+          jpegQuality: nextQuality,
+          sizeBytes: recompressedBuffer.length,
+          filesize: `${(recompressedBuffer.length / (1024 * 1024)).toFixed(2)} MB`,
+          rawJson: toRawJson({
+            localFileName: file.localFileName,
+            originalFileName: file.originalFileName,
+            sizeBytes: recompressedBuffer.length,
+            widthPixels: metadata.width ?? sourceMetadata.width ?? file.widthPixels,
+            heightPixels: metadata.height ?? sourceMetadata.height ?? file.heightPixels,
+            density: 300,
+            jpegQuality: nextQuality,
+          }),
+        },
       }),
-    },
-  });
+      prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } }),
+      prisma.etsyListing.update({
+        where: { id: data.listing.id },
+        data: {
+          downloadsRevision: { increment: 1 },
+          downloadsChanged: true,
+          lastLocalChangeAt: new Date(),
+        },
+      }),
+    ]));
 
-  await prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } });
   await removeListingZipFiles(listingPath, data.listing.zippedFiles);
 
-  return refresh(context, ['downloads']);
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('The download was recompressed, but the refreshed listing could not be loaded.');
+  return refreshed;
 }
 
 export async function deleteListingAsset(context: ListingEditorContext, kind: UploadKind, id: string) {
@@ -1194,7 +1859,14 @@ export async function deleteListingAsset(context: ListingEditorContext, kind: Up
     const numericId = toInt(id, 'asset id');
     const file = await prisma.etsyListingFile.findFirst({ where: { id: numericId, listingId: data.listing.id } });
     if (!file) throw new Error('Asset not found.');
-    await prisma.etsyListingFile.delete({ where: { id: numericId } });
+    await prisma.$transaction([
+      prisma.etsyListingFile.delete({ where: { id: numericId } }),
+      prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } }),
+      prisma.etsyListing.update({
+        where: { id: data.listing.id },
+        data: { downloadsRevision: { increment: 1 } },
+      }),
+    ]);
     localFileName = file.localFileName;
   } else {
     const numericId = toInt(id, 'asset id');
@@ -1219,7 +1891,6 @@ export async function deleteListingAsset(context: ListingEditorContext, kind: Up
   }
 
   if (kind === 'file') {
-    await prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } });
     await removeListingZipFiles(listingPath, data.listing.zippedFiles);
   }
 
@@ -1232,6 +1903,10 @@ export async function deleteAllListingDownloads(context: ListingEditorContext) {
   await prisma.$transaction([
     prisma.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } }),
     prisma.etsyListingFile.deleteMany({ where: { listingId: data.listing.id } }),
+    prisma.etsyListing.update({
+      where: { id: data.listing.id },
+      data: { downloadsRevision: { increment: 1 } },
+    }),
   ]);
 
   await Promise.all([

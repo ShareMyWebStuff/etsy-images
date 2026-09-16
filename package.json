@@ -10,6 +10,7 @@
     "prisma:push": "prisma db push",
     "db:pinterest": "node scripts/add-pinterest-module.cjs",
     "db:set-prices": "node scripts/add-set-prices.cjs",
+    "db:etsy-products": "node scripts/add-etsy-products.cjs",
     "test:pinterest": "node scripts/test-pinterest.cjs",
     "test:set-prices": "vitest run",
     "db:reset": "prisma db push --force-reset"

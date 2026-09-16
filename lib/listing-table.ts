@@ -1,3 +1,6 @@
+import { inspectListingZipStorage, isDropboxInstructionPdfFile } from '@/lib/dropbox-bundle';
+import { getListingDirectoryPath } from '@/lib/local-shop-directory';
+import { isListingComplete } from '@/lib/listing-completeness';
 import { prisma } from '@/lib/prisma';
 
 export type SubSectionListingsPageData = {
@@ -130,23 +133,48 @@ export async function getSubSectionListingsPageData(
       localDirectoryName: true,
       state: true,
       description: true,
+      listingDescription: true,
       primaryColour: true,
+      secondaryColour: true,
       priceAmount: true,
       priceDivisor: true,
       priceCurrencyCode: true,
       quantity: true,
       thumbnailFileName: true,
       tags: { select: { id: true } },
-      images: { select: { localFileName: true } },
-      zippedFiles: { select: { id: true } },
+      images: {
+        orderBy: [{ rank: 'asc' }, { id: 'asc' }],
+        select: { rank: true, localFileName: true },
+      },
+      files: { select: { rawJson: true } },
+      zippedFiles: { select: { fileName: true, sizeBytes: true } },
+      productConfig: { select: { id: true } },
+      products: { select: { id: true } },
+      dropboxBundle: { select: { id: true, sharedUrl: true } },
+      dropboxFiles: {
+        select: {
+          groupNumber: true,
+          sourceListingId: true,
+          sourceDirectoryName: true,
+          localFileName: true,
+        },
+      },
+      numberOfItems: true,
+      includeAllItems: true,
+      downloadsRevision: true,
+      zippedRevision: true,
+      hasEverZipped: true,
+      dropboxRevision: true,
+      dropboxSyncedAt: true,
       sourceSection: { select: { title: true } },
     },
   });
 
+  const shopName = shop.shopName ?? shop.title ?? `Shop ${shop.etsyShopId}`;
   return {
     shop: {
       id: shop.etsyShopId.toString(),
-      shopName: shop.shopName ?? shop.title ?? `Shop ${shop.etsyShopId}`,
+      shopName,
     },
     section: {
       id: String(section.id),
@@ -158,18 +186,38 @@ export async function getSubSectionListingsPageData(
       numberOfDownloads: subSection.numberOfDownloads,
       includeAllDownloads: subSection.includeAllDownloads,
     },
-    listings: listings.map((listing) => {
-      const hasDetailsTitle = listing.title.trim().length > 0
-        && listing.title.trim() !== listing.localDirectoryName?.trim();
-      const uploadedImageCount = listing.images.filter((image) => (image.localFileName?.trim().length ?? 0) > 0).length;
+    listings: await Promise.all(listings.map(async (listing) => {
+      const hasDetailsTitle = listing.title.trim().length > 0;
+      const activeImages = listing.images.slice(0, 10);
+      const hasTenUploadedImages = activeImages.length === 10
+        && activeImages.every((image) => (image.localFileName?.trim().length ?? 0) > 0);
       const hasThumbnail = (listing.thumbnailFileName?.trim().length ?? 0) > 0;
-      const isComplete = hasThumbnail
-        && uploadedImageCount === 10
-        && listing.zippedFiles.length > 0
-        && listing.tags.length > 0
-        && hasDetailsTitle
-        && (listing.description?.trim().length ?? 0) > 0
-        && (listing.primaryColour?.trim().length ?? 0) > 0;
+      const listingPath = getListingDirectoryPath(
+        shopName,
+        section.title,
+        subSection.name,
+        listing.localDirectoryName ?? `Listing-${listing.id}`,
+      );
+      const zipStorageStatus = await inspectListingZipStorage(listing, listingPath);
+      const hasCurrentZips = zipStorageStatus.valid;
+      const hasCurrentDropbox = Boolean(listing.dropboxBundle?.sharedUrl?.trim())
+        && listing.dropboxSyncedAt !== null
+        && listing.dropboxRevision === listing.downloadsRevision
+        && (listing.dropboxFiles.length === 0 || listing.files.some(isDropboxInstructionPdfFile));
+      const hasEtsyProducts = listing.productConfig !== null && listing.products.length > 0;
+      const isComplete = isListingComplete({
+        hasListingDescription: (listing.listingDescription?.trim().length ?? 0) > 0,
+        hasThumbnail,
+        hasTenImages: hasTenUploadedImages,
+        hasCurrentZips,
+        hasCurrentDropbox,
+        hasEtsyProducts,
+        hasTags: listing.tags.length > 0,
+        hasTitle: hasDetailsTitle,
+        hasEtsyDescription: (listing.description?.trim().length ?? 0) > 0,
+        hasQuantity: (listing.quantity ?? 0) > 0,
+        hasPrimaryColour: (listing.primaryColour?.trim().length ?? 0) > 0,
+      });
       const isPublished = listing.state === 'active' || listing.state === 'published';
 
       return {
@@ -183,7 +231,7 @@ export async function getSubSectionListingsPageData(
         quantity: listing.quantity,
         hasEtsyListingId: listing.etsyId !== null,
       };
-    }),
+    })),
   };
 }
 

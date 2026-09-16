@@ -24,6 +24,7 @@ export const PRICE_SECTIONS = [
       { key: 'unframed_12x16', label: '12 × 16 inches', defaultAmountPence: 2599 },
       { key: 'unframed_16x20', label: '16 × 20 inches', defaultAmountPence: 2899 },
       { key: 'unframed_18x24', label: '18 × 24 inches', defaultAmountPence: 3599 },
+      { key: 'unframed_20x28', label: '20 × 28 inches', defaultAmountPence: 3999 },
       { key: 'unframed_24x36', label: '24 × 36 inches', defaultAmountPence: 4499 },
     ],
   },
@@ -40,7 +41,16 @@ export const PRICE_SECTIONS = [
       { key: 'framed_12x16', label: '12 × 16 inches', defaultAmountPence: 4499 },
       { key: 'framed_16x20', label: '16 × 20 inches', defaultAmountPence: 5999 },
       { key: 'framed_18x24', label: '18 × 24 inches', defaultAmountPence: 7499 },
+      { key: 'framed_20x28', label: '20 × 28 inches', defaultAmountPence: 8499 },
       { key: 'framed_24x36', label: '24 × 36 inches', defaultAmountPence: 10999 },
+    ],
+  },
+  {
+    key: 'customisation',
+    title: 'Customisation',
+    description: 'Fee for customising a listing.',
+    options: [
+      { key: 'customisation_fee', label: 'Fee', defaultAmountPence: 499 },
     ],
   },
 ] as const;
@@ -55,7 +65,10 @@ export const PRICE_OPTION_BY_KEY = new Map<string, (typeof PRICE_OPTIONS)[number
   PRICE_OPTIONS.map((option) => [option.key, option])
 );
 export const PHYSICAL_KEYS = new Set<ProductPriceKey>(
-  PRICE_OPTIONS.filter((option) => option.category !== 'digital').map((option) => option.key)
+  PRICE_OPTIONS.filter((option) => option.category === 'unframed' || option.category === 'framed').map((option) => option.key)
+);
+export const ETSY_SYNCABLE_KEYS = new Set<ProductPriceKey>(
+  PRICE_OPTIONS.filter((option) => option.category !== 'customisation').map((option) => option.key)
 );
 
 export function getDefaultPriceRows() {

@@ -40,6 +40,12 @@ model EtsyListing {
   userId                    String?
   title                     String
   description               String?                      @db.Text
+  listingDescription        String?                      @db.VarChar(1000)
+  listingItem               String?                      @db.VarChar(100)
+  roomTheme                 String?                      @db.VarChar(200)
+  personalisationHeaderText String?                      @db.VarChar(200)
+  personalisationFooterText String?                      @db.VarChar(200)
+  personalisationFontId     String?                      @db.VarChar(64)
   state                     String?
   url                       String?                      @db.Text
   quantity                  Int?
@@ -76,6 +82,15 @@ model EtsyListing {
   tagsChanged               Boolean                      @default(false)
   imagesChanged             Boolean                      @default(false)
   downloadsChanged          Boolean                      @default(false)
+  productsChanged           Boolean                      @default(false)
+  numberOfItems             Int?                         @default(1)
+  includeAllItems           Boolean                      @default(false)
+  etsyProductType           String                       @default("physical") @db.VarChar(16)
+  downloadsRevision         Int                          @default(0)
+  zippedRevision            Int                          @default(0)
+  hasEverZipped             Boolean                      @default(false)
+  dropboxRevision           Int                          @default(0)
+  dropboxSyncedAt           DateTime?
   tags                      EtsyListingTag[]
   materials                 EtsyListingMaterial[]
   images                    EtsyListingImage[]
@@ -93,6 +108,10 @@ model EtsyListing {
   pinterestPins             PinterestPin[]
   priceMappings             EtsyListingPriceMapping[]
   priceUpdateItems          EtsyPriceUpdateItem[]
+  productConfig             EtsyListingProductConfig?
+  sizeOptions               EtsyListingSizeOption[]
+  frameOptions              EtsyListingFrameOption[]
+  products                  EtsyListingProduct[]
   subSection                EtsyShopSubSection?          @relation(fields: [subSectionId], references: [id], onDelete: SetNull)
   sourceSection             EtsyShopSection?             @relation("ListingSourceSection", fields: [sourceSectionId], references: [id], onDelete: SetNull)
 
@@ -102,6 +121,75 @@ model EtsyListing {
   @@index([subSectionId])
   @@index([sourceSectionId])
   @@map("etsy_listings")
+}
+
+model EtsyListingProductConfig {
+  id              Int         @id @default(autoincrement())
+  listingId       Int         @unique
+  listOnEtsy      Boolean     @default(true)
+  digitalDownload Boolean     @default(false)
+  customTop       Boolean     @default(true)
+  customBottom    Boolean     @default(true)
+  returnPolicyId  String?     @db.VarChar(64)
+  sku             String?     @db.VarChar(32)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  listing         EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@map("etsy_listing_product_configs")
+}
+
+model EtsyListingSizeOption {
+  id        Int         @id @default(autoincrement())
+  listingId Int
+  sizeKey   String      @db.VarChar(16)
+  enabled   Boolean     @default(true)
+  position  Int         @default(0)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  listing   EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, sizeKey])
+  @@index([listingId, position])
+  @@map("etsy_listing_size_options")
+}
+
+model EtsyListingFrameOption {
+  id        Int         @id @default(autoincrement())
+  listingId Int
+  frameKey  String      @db.VarChar(16)
+  enabled   Boolean     @default(false)
+  position  Int         @default(0)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  listing   EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, frameKey])
+  @@index([listingId, position])
+  @@map("etsy_listing_frame_options")
+}
+
+model EtsyListingProduct {
+  id             Int         @id @default(autoincrement())
+  listingId      Int
+  productKey     String      @db.VarChar(64)
+  productType    String      @db.VarChar(16)
+  sizeKey        String?     @db.VarChar(16)
+  frameKey       String?     @db.VarChar(16)
+  sku            String      @unique @db.VarChar(32)
+  priceKey       String      @db.VarChar(64)
+  position       Int         @default(0)
+  etsyListingId  String?     @db.VarChar(64)
+  etsyProductId  String?     @db.VarChar(64)
+  etsyOfferingId String?     @db.VarChar(64)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  listing        EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, productKey])
+  @@index([listingId, position])
+  @@index([priceKey])
+  @@map("etsy_listing_products")
 }
 
 model AdminProductPrice {
@@ -240,6 +328,7 @@ model EtsyShopSection {
   etsyShopId          BigInt?
   etsyShopSectionId   String?
   title               String
+  roomTheme           String?              @db.VarChar(200)
   rank                Int?
   activeListingCount  Int?
   rawJson             Json?

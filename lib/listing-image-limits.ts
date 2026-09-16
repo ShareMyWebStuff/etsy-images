@@ -1,0 +1,2 @@
+export const ETSY_MAX_LISTING_IMAGES = 10;
+export const LISTING_EDITOR_MAX_IMAGES = 25;

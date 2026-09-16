@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ETSY_SYNCABLE_KEYS,
+  PHYSICAL_KEYS,
   PRICE_OPTIONS,
   PRICE_SECTIONS,
   digitalPriceKeyForSection,
@@ -11,19 +13,24 @@ import {
 } from '@/lib/set-prices-core';
 
 describe('Set Prices catalogue and validation', () => {
-  it('defines all three sections and every requested stable product option', () => {
+  it('defines all four sections and every requested stable product option', () => {
     expect(PRICE_SECTIONS.map((section) => section.title)).toEqual([
       'Digital Downloads',
       'Unframed Prints',
       'Framed Prints',
+      'Customisation',
     ]);
-    expect(PRICE_OPTIONS).toHaveLength(23);
-    expect(new Set(PRICE_OPTIONS.map((option) => option.key)).size).toBe(23);
+    expect(PRICE_OPTIONS).toHaveLength(26);
+    expect(new Set(PRICE_OPTIONS.map((option) => option.key)).size).toBe(26);
     expect(PRICE_OPTIONS.filter((option) => option.category === 'digital').map((option) => option.label)).toEqual([
       '1 Image Download', '3 Downloads', '6 Downloads', '12 Downloads', 'Complete Set',
     ]);
     expect(PRICE_OPTIONS.filter((option) => option.category === 'unframed').map((option) => option.label)).toContain('24 × 36 inches');
     expect(PRICE_OPTIONS.filter((option) => option.category === 'framed').map((option) => option.label)).toContain('24 × 36 inches');
+    expect(PRICE_OPTIONS.filter((option) => option.category === 'unframed').map((option) => option.label)).toContain('20 × 28 inches');
+    expect(PRICE_OPTIONS.filter((option) => option.category === 'framed').map((option) => option.label)).toContain('20 × 28 inches');
+    expect(PHYSICAL_KEYS.has('customisation_fee')).toBe(false);
+    expect(ETSY_SYNCABLE_KEYS.has('customisation_fee')).toBe(false);
   });
 
   it('uses the requested integer-pence defaults', () => {
@@ -31,6 +38,7 @@ describe('Set Prices catalogue and validation', () => {
       digital_1: 349,
       digital_complete: 1999,
       unframed_a4: 1599,
+      unframed_20x28: 3999,
       unframed_24x36: 4499,
       framed_a4: 3499,
       framed_a3: 4499,
@@ -40,7 +48,9 @@ describe('Set Prices catalogue and validation', () => {
       framed_12x16: 4499,
       framed_16x20: 5999,
       framed_18x24: 7499,
+      framed_20x28: 8499,
       framed_24x36: 10999,
+      customisation_fee: 499,
     });
   });
 
@@ -56,7 +66,7 @@ describe('Set Prices catalogue and validation', () => {
 
   it('validates a complete payload and rejects missing, duplicate, unknown, or invalid prices', () => {
     const valid = PRICE_OPTIONS.map((option) => ({ key: option.key, amountPence: option.defaultAmountPence }));
-    expect(validatePriceEntries(valid)).toHaveLength(23);
+    expect(validatePriceEntries(valid)).toHaveLength(26);
     expect(() => validatePriceEntries(valid.slice(1))).toThrow(/every product option/i);
     expect(() => validatePriceEntries([...valid, valid[0]])).toThrow(/more than once/i);
     expect(() => validatePriceEntries(valid.map((entry, index) => index === 0 ? { key: 'unknown', amountPence: 1 } : entry))).toThrow(/unknown product/i);

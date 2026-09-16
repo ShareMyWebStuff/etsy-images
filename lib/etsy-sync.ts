@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { getEtsyKeystring, getValidEtsyAccessToken, readSavedTokens } from '@/lib/etsy-oauth';
 import { shopDirectoryExists } from '@/lib/local-shop-directory';
 import { ensureSingleListingsSubSection } from '@/lib/shop-sub-sections';
+import { ensureListingProductDefaultsInTransaction } from '@/lib/listing-products';
 
 type EtsyApiOptions = {
   accessToken: string;
@@ -51,6 +52,7 @@ type EtsyListingResponse = {
   quantity?: number | null;
   price?: EtsyListingPrice;
   taxonomy_id?: number | null;
+  listing_type?: 'physical' | 'download' | 'both' | string | null;
   shop_section_id?: number | string | null;
   who_made?: string | null;
   is_supply?: boolean | null;
@@ -115,6 +117,7 @@ export type ShopSectionsPageData = {
     id: string;
     subSectionId: string | null;
     sectionName: string;
+    roomTheme: string;
     noOfActive: number;
     noOfDraft: number;
     noOfListings: number;
@@ -316,25 +319,39 @@ async function syncEtsyListingDownload(
   const etsyId = String(listing.listing_id);
   const price = parsePriceParts(listing.price);
   const rawJson = toRawJson(listing);
+  const importedProductType = listing.listing_type === 'download' ? 'digital' : 'physical';
+  const importedTaxonomyId = importedProductType === 'digital' ? 2078 : listing.taxonomy_id ?? 121;
 
-  await prisma.listing.upsert({
-    where: {
-      etsyId,
-    },
-    update: {
-      title: listing.title ?? `Listing ${etsyId}`,
-      price: parsePrice(listing.price),
-      shopName: listing.shop?.shop_name ?? null,
-    },
-    create: {
-      etsyId,
-      title: listing.title ?? `Listing ${etsyId}`,
-      price: parsePrice(listing.price),
-      shopName: listing.shop?.shop_name ?? null,
-    },
-  });
+  const savedListing = await prisma.$transaction(async (tx) => {
+    await tx.listing.upsert({
+      where: { etsyId },
+      update: {
+        title: listing.title ?? `Listing ${etsyId}`,
+        price: parsePrice(listing.price),
+        shopName: listing.shop?.shop_name ?? null,
+      },
+      create: {
+        etsyId,
+        title: listing.title ?? `Listing ${etsyId}`,
+        price: parsePrice(listing.price),
+        shopName: listing.shop?.shop_name ?? null,
+      },
+    });
 
-  return prisma.$transaction(async (tx) => {
+    const existingListing = await tx.etsyListing.findUnique({
+      where: { etsyId },
+      select: {
+        productConfig: { select: { id: true } },
+        detailsChanged: true,
+        tagsChanged: true,
+        imagesChanged: true,
+        downloadsChanged: true,
+        productsChanged: true,
+      },
+    });
+    const shouldInitializeProducts = !existingListing?.productConfig;
+    const preserveLocalDetails = existingListing?.detailsChanged === true;
+    const preserveLocalProducts = existingListing?.productsChanged === true;
     const savedListing = await tx.etsyListing.upsert({
       where: {
         etsyId,
@@ -342,23 +359,32 @@ async function syncEtsyListingDownload(
       update: {
         shopId: toNullableString(listing.shop_id) ?? shopId,
         userId: toNullableString(listing.user_id) ?? userId,
-        title: listing.title ?? `Listing ${etsyId}`,
-        description: listing.description ?? null,
+        ...(preserveLocalDetails ? {} : {
+          title: listing.title ?? `Listing ${etsyId}`,
+          description: listing.description ?? null,
+          quantity: listing.quantity ?? null,
+          whoMade: listing.who_made ?? null,
+          isSupply: listing.is_supply ?? null,
+          whenMade: listing.when_made ?? null,
+          shouldAutoRenew: listing.should_auto_renew ?? null,
+          language: listing.language ?? null,
+        }),
         state: listing.state ?? null,
         url: listing.url ?? null,
-        quantity: listing.quantity ?? null,
-        priceAmount: price.amount,
-        priceDivisor: price.divisor,
-        priceCurrencyCode: price.currencyCode,
-        taxonomyId: listing.taxonomy_id ?? null,
+        ...(preserveLocalProducts ? {} : {
+          priceAmount: price.amount,
+          priceDivisor: price.divisor,
+          priceCurrencyCode: price.currencyCode,
+        }),
+        ...(shouldInitializeProducts
+          ? {
+              taxonomyId: importedTaxonomyId,
+              etsyProductType: importedProductType,
+            }
+          : {}),
         shopSectionId: toNullableNumber(listing.shop_section_id),
-        whoMade: listing.who_made ?? null,
-        isSupply: listing.is_supply ?? null,
-        whenMade: listing.when_made ?? null,
-        shouldAutoRenew: listing.should_auto_renew ?? null,
         isPersonalizable: listing.is_personalizable ?? null,
         personalizationIsRequired: listing.personalization_is_required ?? null,
-        language: listing.language ?? null,
         createdTimestamp: listing.created_timestamp ?? null,
         updatedTimestamp: listing.updated_timestamp ?? null,
         originalCreationTimestamp: listing.original_creation_timestamp ?? null,
@@ -378,7 +404,8 @@ async function syncEtsyListingDownload(
         priceAmount: price.amount,
         priceDivisor: price.divisor,
         priceCurrencyCode: price.currencyCode,
-        taxonomyId: listing.taxonomy_id ?? null,
+        taxonomyId: importedTaxonomyId,
+        etsyProductType: importedProductType,
         shopSectionId: toNullableNumber(listing.shop_section_id),
         whoMade: listing.who_made ?? null,
         isSupply: listing.is_supply ?? null,
@@ -399,36 +426,32 @@ async function syncEtsyListingDownload(
       },
     });
 
-    await tx.etsyListingTag.deleteMany({ where: { listingId: savedListing.id } });
-    await tx.etsyListingMaterial.deleteMany({ where: { listingId: savedListing.id } });
-    await tx.etsyListingImage.deleteMany({ where: { listingId: savedListing.id } });
-    await tx.etsyListingFile.deleteMany({ where: { listingId: savedListing.id } });
-
-    if (listing.tags && listing.tags.length > 0) {
-      await tx.etsyListingTag.createMany({
-        data: listing.tags.map((tag, index) => ({
-          listingId: savedListing.id,
-          tag,
-          position: index,
-        })),
-      });
+    if (existingListing?.tagsChanged !== true) {
+      await tx.etsyListingTag.deleteMany({ where: { listingId: savedListing.id } });
+      if (listing.tags && listing.tags.length > 0) {
+        await tx.etsyListingTag.createMany({
+          data: listing.tags.map((tag, index) => ({ listingId: savedListing.id, tag, position: index })),
+        });
+      }
     }
 
+    await tx.etsyListingMaterial.deleteMany({ where: { listingId: savedListing.id } });
     if (listing.materials && listing.materials.length > 0) {
       await tx.etsyListingMaterial.createMany({
-        data: listing.materials.map((material, index) => ({
-          listingId: savedListing.id,
-          material,
-          position: index,
-        })),
+        data: listing.materials.map((material, index) => ({ listingId: savedListing.id, material, position: index })),
       });
     }
 
-    if (images.length > 0) {
-      await tx.etsyListingImage.createMany({
-        data: images.map((image) => ({
-          listingId: savedListing.id,
-          etsyImageId: toNullableString(image.listing_image_id),
+    if (existingListing?.imagesChanged !== true) {
+      const localImages = await tx.etsyListingImage.findMany({ where: { listingId: savedListing.id } });
+      const byRemoteId = new Map(localImages.flatMap((image) => image.etsyImageId ? [[image.etsyImageId, image] as const] : []));
+      const returnedIds = new Set<string>();
+      let imagesNeedResync = false;
+      for (const image of images) {
+        const remoteId = toNullableString(image.listing_image_id);
+        if (!remoteId) continue;
+        returnedIds.add(remoteId);
+        const data = {
           rank: image.rank ?? null,
           url75x75: image.url_75x75 ?? null,
           url170x135: image.url_170x135 ?? null,
@@ -436,15 +459,49 @@ async function syncEtsyListingDownload(
           urlFullxFull: image.url_fullxfull ?? null,
           fullHeight: image.full_height ?? null,
           fullWidth: image.full_width ?? null,
-        })),
-      });
+        };
+        const localImage = byRemoteId.get(remoteId);
+        if (localImage) {
+          await tx.etsyListingImage.update({ where: { id: localImage.id }, data });
+        } else {
+          await tx.etsyListingImage.create({ data: { listingId: savedListing.id, etsyImageId: remoteId, ...data } });
+        }
+      }
+      for (const localImage of localImages) {
+        if (!localImage.etsyImageId || returnedIds.has(localImage.etsyImageId)) continue;
+        if (localImage.localFileName) {
+          imagesNeedResync = true;
+          await tx.etsyListingImage.update({
+            where: { id: localImage.id },
+            data: { etsyImageId: null, url75x75: null, url170x135: null, url570xN: null, urlFullxFull: null },
+          });
+        } else {
+          await tx.etsyListingImage.delete({ where: { id: localImage.id } });
+        }
+      }
+      if (imagesNeedResync) {
+        await tx.etsyListing.update({
+          where: { id: savedListing.id },
+          data: { imagesChanged: true, lastLocalChangeAt: new Date() },
+        });
+      }
     }
 
-    if (files.length > 0) {
-      await tx.etsyListingFile.createMany({
-        data: files.map((file) => ({
-          listingId: savedListing.id,
-          etsyListingFileId: toNullableString(file.listing_file_id),
+    if (existingListing?.downloadsChanged !== true) {
+      const [localFiles, localZips] = await Promise.all([
+        tx.etsyListingFile.findMany({ where: { listingId: savedListing.id } }),
+        tx.etsyListingZip.findMany({ where: { listingId: savedListing.id } }),
+      ]);
+      const byRemoteId = new Map(localFiles.flatMap((file) => file.etsyListingFileId ? [[file.etsyListingFileId, file] as const] : []));
+      const zipRemoteIds = new Set(localZips.flatMap((zip) => zip.etsyListingFileId ? [zip.etsyListingFileId] : []));
+      const returnedIds = new Set<string>();
+      let downloadsNeedResync = false;
+      for (const file of files) {
+        const remoteId = toNullableString(file.listing_file_id);
+        if (!remoteId) continue;
+        returnedIds.add(remoteId);
+        if (zipRemoteIds.has(remoteId)) continue;
+        const data = {
           rank: file.rank ?? null,
           filename: file.filename ?? null,
           filesize: file.filesize ?? null,
@@ -453,12 +510,45 @@ async function syncEtsyListingDownload(
           createTimestamp: file.create_timestamp ?? null,
           createdTimestamp: file.created_timestamp ?? null,
           rawJson: toRawJson(file),
-        })),
-      });
+        };
+        const localFile = byRemoteId.get(remoteId);
+        if (localFile) {
+          await tx.etsyListingFile.update({ where: { id: localFile.id }, data });
+        } else {
+          await tx.etsyListingFile.create({
+            data: { listingId: savedListing.id, etsyListingFileId: remoteId, ...data },
+          });
+        }
+      }
+      for (const localFile of localFiles) {
+        if (!localFile.etsyListingFileId || returnedIds.has(localFile.etsyListingFileId)) continue;
+        if (localFile.localFileName) {
+          downloadsNeedResync = true;
+          await tx.etsyListingFile.update({ where: { id: localFile.id }, data: { etsyListingFileId: null } });
+        } else {
+          await tx.etsyListingFile.delete({ where: { id: localFile.id } });
+        }
+      }
+      for (const localZip of localZips) {
+        if (localZip.etsyListingFileId && !returnedIds.has(localZip.etsyListingFileId)) {
+          downloadsNeedResync = true;
+          await tx.etsyListingZip.update({ where: { id: localZip.id }, data: { etsyListingFileId: null } });
+        }
+      }
+      if (downloadsNeedResync) {
+        await tx.etsyListing.update({
+          where: { id: savedListing.id },
+          data: { downloadsChanged: true, lastLocalChangeAt: new Date() },
+        });
+      }
     }
 
+    await ensureListingProductDefaultsInTransaction(tx, savedListing.id, {
+      digitalDownload: listing.listing_type === 'download' || listing.listing_type === 'both',
+    });
     return savedListing;
   });
+  return savedListing;
 }
 
 export async function syncEtsyShops() {
@@ -840,6 +930,7 @@ export async function getShopSectionsPageData(shopId: string): Promise<ShopSecti
       id: true,
       etsyShopSectionId: true,
       title: true,
+      roomTheme: true,
       activeListingCount: true,
       numberOfDownloads: true,
       includeAllDownloads: true,
@@ -897,6 +988,7 @@ export async function getShopSectionsPageData(shopId: string): Promise<ShopSecti
         id: String(section.id),
         subSectionId: section.subSections[0] ? String(section.subSections[0].id) : null,
         sectionName: section.title,
+        roomTheme: section.roomTheme ?? '',
         noOfActive: activeListingCount,
         noOfDraft: draftCount,
         noOfListings: Math.max(listingsCount, activeListingCount + draftCount),

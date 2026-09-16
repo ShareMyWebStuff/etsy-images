@@ -1,24 +1,51 @@
 'use client';
 
-import { ChangeEvent, FormEvent, useState } from 'react';
+import { ChangeEvent, FormEvent, MouseEvent, useEffect, useRef, useState } from 'react';
 import { closestCenter, DndContext, DragEndEvent, DragOverlay, DragStartEvent, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, rectSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { AlertTriangle, CheckCircle2, Plus, Trash2, Upload, X, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, FileText, ImageIcon, Plus, Sparkles, Trash2, Upload, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { CollectionKind, ListingEditorData, UploadKind } from '@/lib/listing-editor';
 import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
 import { getNextPrintSize } from '@/lib/print-sizes';
 import { ETSY_MAX_DOWNLOAD_FILES, ETSY_MAX_FILE_SIZE_BYTES } from '@/lib/etsy-download-limits';
+import { LISTING_EDITOR_MAX_IMAGES } from '@/lib/listing-image-limits';
+import { buildBedroomDoorImagePrompt, buildBedroomImagePrompt, buildDigitalDownloadIncludedImagePrompt, buildFramesImagePrompt, buildHowToPrintIncludedImagePrompt, buildListingImagePrompt, buildNoFrameIncludedImagePrompt, buildPerfectGiftImagePrompt, buildPersonalUseIncludedImagePrompt, buildPlayroomImagePrompt, buildSizesImagePrompt } from '@/lib/listing-prompts';
+import { buildDigitalDownloadGeneratePrompt } from '@/lib/digital-download-generate-prompt';
+import { buildDetailsGeneratePrompt } from '@/lib/details-generate-prompt';
+import { buildThumbnailGeneratePrompt, missingThumbnailGeneratePromptFields } from '@/lib/thumbnail-generate-prompt';
+import { loadBundledPersonalisationFont, prepareClipboardImage, type PreparedClipboardImage } from '@/lib/browser-personalisation';
+import { prepareImagePersonalisationPrompt, type PersonalisationPromptMode } from '@/lib/image-personalisation-prompt';
+import { DEFAULT_PERSONALISATION_FONT_ID, getPersonalisationFont, PERSONALISATION_FONTS } from '@/lib/personalisation-fonts';
 
 type ListingEditorClientProps = {
   initialData: ListingEditorData | null;
   showAdminEditSection?: boolean;
-  initialTab?: 'thumbnail' | 'images' | 'details' | 'tags' | 'downloads';
+  initialTab?: 'thumbnail' | 'etsy-products' | 'images' | 'details' | 'tags' | 'downloads' | 'dropbox' | 'todo';
+};
+
+type WorkflowTab = NonNullable<ListingEditorClientProps['initialTab']>;
+
+type EtsyProductsForm = {
+  listOnEtsy: boolean;
+  digitalDownload: boolean;
+  customTop: boolean;
+  customBottom: boolean;
+  returnPolicyId: string;
+  sizes: Record<string, boolean>;
+  frames: Record<string, boolean>;
+};
+
+type EtsyReturnPolicy = {
+  id: string;
+  label: string;
+  acceptsReturns: boolean;
+  acceptsExchanges: boolean;
 };
 
 type EditorResponse = {
@@ -121,6 +148,7 @@ function createDetailsForm(listing: ListingEditorData['listing'] | undefined) {
     language: listing?.language ?? 'en-US',
     primaryColour: listing?.primaryColour ?? '',
     secondaryColour: listing?.secondaryColour ?? '',
+    etsySku: listing?.etsySku ?? '',
   };
 }
 
@@ -146,12 +174,43 @@ function haveSameTags(first: string[], second: string[]) {
   return JSON.stringify(normalizeTags(first)) === JSON.stringify(normalizeTags(second));
 }
 
+function createEtsyProductsForm(data: ListingEditorData | null | undefined): EtsyProductsForm {
+  return {
+    listOnEtsy: data?.etsyProducts.config.listOnEtsy ?? true,
+    digitalDownload: data?.etsyProducts.config.digitalDownload ?? false,
+    customTop: data?.etsyProducts.config.customTop ?? true,
+    customBottom: data?.etsyProducts.config.customBottom ?? true,
+    returnPolicyId: data?.etsyProducts.config.returnPolicyId ?? '',
+    sizes: Object.fromEntries(data?.etsyProducts.sizes.map((size) => [size.key, size.enabled]) ?? []),
+    frames: Object.fromEntries(data?.etsyProducts.frames.map((frame) => [frame.key, frame.enabled]) ?? []),
+  };
+}
+
+function formatProductPrice(amountPence: number, currencyCode: string) {
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: currencyCode || 'GBP',
+  }).format(amountPence / 100);
+}
+
 export function ListingEditorClient({ initialData, showAdminEditSection = false, initialTab = 'thumbnail' }: ListingEditorClientProps) {
   const [data, setData] = useState(initialData);
-  const [activeTab, setActiveTab] = useState<'thumbnail' | 'images' | 'details' | 'tags' | 'downloads'>(initialTab);
+  const [activeTab, setActiveTab] = useState<WorkflowTab>(initialTab);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
   const [deleteThumbnailOpen, setDeleteThumbnailOpen] = useState(false);
   const [deleteAllDownloadsOpen, setDeleteAllDownloadsOpen] = useState(false);
+  const [promptsOpen, setPromptsOpen] = useState(false);
+  const [selectedPromptRow, setSelectedPromptRow] = useState<string | null>(null);
+  const [promptClipboardStatus, setPromptClipboardStatus] = useState<string | null>(null);
+  const [promptCopying, setPromptCopying] = useState<'text' | 'image' | null>(null);
+  const [preparedPersonalisationPrompt, setPreparedPersonalisationPrompt] = useState<string | null>(null);
+  const [personalisationPromptSettings, setPersonalisationPromptSettings] = useState(() => ({
+    headerText: initialData?.listing.personalisationHeaderText ?? "Rory's",
+    footerText: initialData?.listing.personalisationFooterText ?? 'Bedroom',
+    fontId: initialData?.listing.personalisationFontId ?? DEFAULT_PERSONALISATION_FONT_ID,
+  }));
+  const personalisationPreparationId = useRef(0);
+  const personalisationSourceImage = useRef<PreparedClipboardImage | null>(null);
   const [activeImageId, setActiveImageId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -165,11 +224,52 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   const [inventory, setInventory] = useState({ name: '', value: '', sku: '', price: '', quantity: '' });
   const [personalization, setPersonalization] = useState({ instructions: '', isRequired: false, charCountMax: '' });
   const [buyerPrice, setBuyerPrice] = useState({ amount: '', divisor: '100', currencyCode: 'GBP', note: '' });
+  const [etsyProductsForm, setEtsyProductsForm] = useState<EtsyProductsForm>(() => createEtsyProductsForm(initialData));
+  const [returnPolicies, setReturnPolicies] = useState<EtsyReturnPolicy[]>([]);
+  const [returnPoliciesLoading, setReturnPoliciesLoading] = useState(false);
+  const [returnPoliciesError, setReturnPoliciesError] = useState<string | null>(null);
+  const [listingDescription, setListingDescription] = useState(initialData?.listing.listingDescription ?? '');
+  const [listingItem, setListingItem] = useState(initialData?.listing.listingItem ?? '');
+  const [roomTheme, setRoomTheme] = useState(initialData?.listing.roomTheme ?? '');
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
   const [form, setForm] = useState(() => createDetailsForm(initialData?.listing));
+
+  useEffect(() => {
+    const shopId = data?.context.shopId;
+    if (!shopId || data?.listing.listingType === 'digital') return;
+    const controller = new AbortController();
+    setReturnPoliciesLoading(true);
+    setReturnPoliciesError(null);
+    fetch(`/api/shops/listings/editor/return-policies?shopId=${encodeURIComponent(shopId)}`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = await response.json() as { policies?: EtsyReturnPolicy[]; error?: string };
+        if (!response.ok) throw new Error(payload.error ?? 'Unable to load Etsy return policies.');
+        const policies = payload.policies ?? [];
+        setReturnPolicies(policies);
+        const noReturnsPolicies = policies.filter((policy) => !policy.acceptsReturns && !policy.acceptsExchanges);
+        const defaultPolicy = noReturnsPolicies.length === 1
+          ? noReturnsPolicies[0]
+          : policies.length === 1
+            ? policies[0]
+            : null;
+        if (defaultPolicy) {
+          setEtsyProductsForm((current) => current.returnPolicyId
+            ? current
+            : { ...current, returnPolicyId: defaultPolicy.id });
+        }
+      })
+      .catch((caughtError) => {
+        if (caughtError instanceof DOMException && caughtError.name === 'AbortError') return;
+        setReturnPoliciesError(caughtError instanceof Error ? caughtError.message : 'Unable to load Etsy return policies.');
+      })
+      .finally(() => { if (!controller.signal.aborted) setReturnPoliciesLoading(false); });
+    return () => controller.abort();
+  }, [data?.context.shopId, data?.listing.listingType]);
 
   if (!data) {
     return (
@@ -183,12 +283,33 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   }
 
   const context = data.context;
-  const usesDropboxPdfDownload = data.subSection.includeAllDownloads
-    || data.subSection.numberOfDownloads === 6
-    || data.subSection.numberOfDownloads === 12;
+  const usesDropboxPdfDownload = data.listing.includeAllItems
+    || data.listing.numberOfItems === 3
+    || data.listing.numberOfItems === 6
+    || data.listing.numberOfItems === 12;
   const detailsChanged = JSON.stringify(form) !== JSON.stringify(createDetailsForm(data.listing));
   const desiredTags = uniqueTags([...tagDraft, ...parseTags(simpleInputs.tag)]);
   const tagsChanged = !haveSameTags(desiredTags, data.tags.map((tag) => tag.value));
+  const etsyProductsChanged = JSON.stringify(etsyProductsForm) !== JSON.stringify(createEtsyProductsForm(data));
+  const listingDescriptionChanged = listingDescription.trim() !== data.listing.listingDescription;
+  const listingItemChanged = listingItem.trim() !== data.listing.listingItem;
+  const roomThemeChanged = roomTheme.trim() !== data.listing.roomTheme;
+  const savedPersonalisationPromptSettings = {
+    headerText: data.listing.personalisationHeaderText,
+    footerText: data.listing.personalisationFooterText,
+    fontId: data.listing.personalisationFontId,
+  };
+  const personalisationPromptSettingsChanged = JSON.stringify(personalisationPromptSettings)
+    !== JSON.stringify(savedPersonalisationPromptSettings);
+  const selectedPersonalisationFont = getPersonalisationFont(personalisationPromptSettings.fontId)
+    ?? getPersonalisationFont(DEFAULT_PERSONALISATION_FONT_ID)!;
+  const thumbnailGeneratePromptInput = {
+    numberOfAnimals: data.listing.numberOfItems,
+    animals: data.listing.listingDescription,
+    collectionTheme: data.listing.roomTheme,
+    sectionName: data.section.sectionName,
+  };
+  const missingThumbnailPromptFields = missingThumbnailGeneratePromptFields(thumbnailGeneratePromptInput);
 
   function getImageUrl(assetId: string) {
     return `/api/shops/listings/editor/assets?${new URLSearchParams({ ...context, kind: 'image', assetId })}`;
@@ -196,6 +317,170 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
 
   function getThumbnailUrl() {
     return `/api/shops/listings/editor/assets?${new URLSearchParams({ ...context, kind: 'thumbnail', assetId: 'thumbnail' })}`;
+  }
+
+  function promptRowProps(rowId: string) {
+    return {
+      className: selectedPromptRow === rowId
+        ? 'cursor-pointer bg-green-50 hover:bg-green-100'
+        : 'cursor-pointer',
+      onClick: (event: MouseEvent<HTMLTableRowElement>) => {
+        if (event.target instanceof Element && event.target.closest('button')) return;
+        setSelectedPromptRow((current) => current === rowId ? null : rowId);
+      },
+    };
+  }
+
+  function updatePersonalisationPromptSetting(key: 'headerText' | 'footerText' | 'fontId', value: string) {
+    personalisationPreparationId.current += 1;
+    setPreparedPersonalisationPrompt(null);
+    setPersonalisationPromptSettings((current) => ({ ...current, [key]: value }));
+  }
+
+  function getDetailsGeneratePrompt() {
+    if (!data) return '';
+    const personalisationAreas = [
+      etsyProductsForm.customTop ? 'top' : null,
+      etsyProductsForm.customBottom ? 'bottom' : null,
+    ].filter((area): area is string => area !== null);
+    const personalisationDetails = personalisationAreas.length > 0
+      ? `Optional ${personalisationAreas.join(' and ')} text personalisation is available.`
+      : '';
+
+    return buildDetailsGeneratePrompt({
+      sectionName: data.section.sectionName,
+      listingName: data.listing.localDirectoryName ?? data.listing.title,
+      animal: data.listing.listingItem,
+      roomTheme: data.listing.roomTheme,
+      digitalDownload: etsyProductsForm.digitalDownload,
+      paperDetails: data.materials.map((material) => material.value).join(', '),
+      printSizes: data.etsyProducts.sizes
+        .filter((size) => etsyProductsForm.sizes[size.key])
+        .map((size) => size.label)
+        .join(', '),
+      frameColours: data.etsyProducts.frames
+        .filter((frame) => etsyProductsForm.frames[frame.key])
+        .map((frame) => frame.label)
+        .join(', '),
+      personalisationDetails,
+      digitalFilesIncluded: data.files
+        .map((file) => file.originalFileName ?? file.fileName)
+        .join(', '),
+    });
+  }
+
+  async function copyPromptText(text: string, copiedLabel = 'Prompt text') {
+    setPromptCopying('text');
+    setPromptClipboardStatus(null);
+    try {
+      if (!navigator.clipboard) throw new Error('Clipboard access is not available in this browser.');
+      await navigator.clipboard.writeText(text);
+      setPromptClipboardStatus(`${copiedLabel} copied to the clipboard.`);
+    } catch (caughtError) {
+      setPromptClipboardStatus(caughtError instanceof Error ? caughtError.message : 'Unable to copy the prompt text.');
+    } finally {
+      setPromptCopying(null);
+    }
+  }
+
+  async function getPersonalisationSourceImage() {
+    if (personalisationSourceImage.current) return personalisationSourceImage.current;
+    const response = await fetch(getThumbnailUrl(), { cache: 'no-store' });
+    if (!response.ok) throw new Error('Unable to load the original listing artwork.');
+    const preparedImage = await prepareClipboardImage(await response.blob());
+    personalisationSourceImage.current = preparedImage;
+    return preparedImage;
+  }
+
+  async function copyPersonalisationPrompt(mode: PersonalisationPromptMode, label: string) {
+    const preparationId = personalisationPreparationId.current + 1;
+    personalisationPreparationId.current = preparationId;
+    setPreparedPersonalisationPrompt(null);
+    setPromptClipboardStatus(null);
+    setPromptCopying('text');
+    try {
+      const sourceImage = await getPersonalisationSourceImage();
+      const prepared = await prepareImagePersonalisationPrompt({
+        mode,
+        headerText: personalisationPromptSettings.headerText,
+        footerText: personalisationPromptSettings.footerText,
+        font: selectedPersonalisationFont,
+        sourceWidth: sourceImage.width,
+        sourceHeight: sourceImage.height,
+        loadFont: loadBundledPersonalisationFont,
+      });
+      if (preparationId !== personalisationPreparationId.current) return;
+      setPreparedPersonalisationPrompt(prepared.prompt);
+      try {
+        if (!navigator.clipboard) throw new Error('Clipboard access is not available in this browser.');
+        await navigator.clipboard.writeText(prepared.prompt);
+        setPromptClipboardStatus(`${label} copied to the clipboard for ${prepared.sourceWidth} × ${prepared.sourceHeight}px artwork. The prompt calculates the shared font size after curved-line placement.`);
+      } catch {
+        setPromptClipboardStatus(`${label} is prepared. Click “Copy prepared prompt” to copy it.`);
+      }
+    } catch (caughtError) {
+      if (preparationId === personalisationPreparationId.current) {
+        setPromptClipboardStatus(caughtError instanceof Error ? caughtError.message : `Unable to prepare ${label}.`);
+      }
+    } finally {
+      setPromptCopying(null);
+    }
+  }
+
+  async function copyPersonalisationSourceImage() {
+    setPromptCopying('image');
+    setPromptClipboardStatus(null);
+    try {
+      if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+        throw new Error('Image clipboard access is not available in this browser.');
+      }
+      const sourceImage = await getPersonalisationSourceImage();
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': sourceImage.blob })]);
+      setPromptClipboardStatus(`Original listing artwork copied at ${sourceImage.width} × ${sourceImage.height}px. Attach the selected font separately.`);
+    } catch (caughtError) {
+      setPromptClipboardStatus(caughtError instanceof Error ? caughtError.message : 'Unable to copy the original listing artwork.');
+    } finally {
+      setPromptCopying(null);
+    }
+  }
+
+  async function copyPromptThumbnail() {
+    setPromptCopying('image');
+    setPromptClipboardStatus(null);
+    try {
+      if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+        throw new Error('Image clipboard access is not available in this browser.');
+      }
+      const response = await fetch(getThumbnailUrl());
+      if (!response.ok) throw new Error('Unable to load the thumbnail.');
+      const thumbnail = await prepareClipboardImage(await response.blob());
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': thumbnail.blob })]);
+      setPromptClipboardStatus('Thumbnail copied to the clipboard.');
+    } catch (caughtError) {
+      setPromptClipboardStatus(caughtError instanceof Error ? caughtError.message : 'Unable to copy the thumbnail.');
+    } finally {
+      setPromptCopying(null);
+    }
+  }
+
+  async function savePersonalisationPromptSettings() {
+    setBusyKey('save-personalisation-prompt-settings');
+    setPromptClipboardStatus(null);
+    try {
+      const response = await fetch('/api/shops/listings/editor/personalisation-prompt', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, ...personalisationPromptSettings }),
+      });
+      const payload = (await response.json()) as EditorResponse;
+      if (!response.ok) throw new Error(payload.error ?? 'Unable to save personalisation settings.');
+      applyFreshData(payload.data);
+      setPromptClipboardStatus('Personalisation settings saved.');
+    } catch (caughtError) {
+      setPromptClipboardStatus(caughtError instanceof Error ? caughtError.message : 'Unable to save personalisation settings.');
+    } finally {
+      setBusyKey(null);
+    }
   }
 
   function updateForm(key: keyof typeof form, value: string | boolean) {
@@ -278,6 +563,17 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     }
 
     setData(nextData);
+    setListingDescription(nextData.listing.listingDescription);
+    setListingItem(nextData.listing.listingItem);
+    setRoomTheme(nextData.listing.roomTheme);
+    setPersonalisationPromptSettings({
+      headerText: nextData.listing.personalisationHeaderText,
+      footerText: nextData.listing.personalisationFooterText,
+      fontId: nextData.listing.personalisationFontId,
+    });
+    setPreparedPersonalisationPrompt(null);
+    personalisationSourceImage.current = null;
+    setEtsyProductsForm(createEtsyProductsForm(nextData));
     setZipAssignments((currentAssignments) => Object.fromEntries(
       nextData.files.map((file) => [
         file.id,
@@ -312,21 +608,24 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           ...context,
           title: form.title,
           description: form.description,
-          status: form.status,
           quantity: toNumberOrNull(form.quantity),
-          priceAmount: form.priceAmount.trim() ? Math.round(Number(form.priceAmount) * 100) : null,
-          priceDivisor: 100,
-          priceCurrencyCode: form.priceCurrencyCode,
-          taxonomyId: toNumberOrNull(form.taxonomyId),
-          shopSectionId: toNumberOrNull(form.shopSectionId),
-          whoMade: form.whoMade,
-          whenMade: form.whenMade,
-          isSupply: form.isSupply,
-          shouldAutoRenew: form.shouldAutoRenew,
-          isPersonalizable: form.isPersonalizable,
-          language: form.language,
           primaryColour: form.primaryColour,
           secondaryColour: form.secondaryColour,
+          etsySku: form.etsySku,
+          ...(showAdminEditSection ? {
+            status: form.status,
+            priceAmount: form.priceAmount.trim() ? Math.round(Number(form.priceAmount) * 100) : null,
+            priceDivisor: 100,
+            priceCurrencyCode: form.priceCurrencyCode,
+            taxonomyId: toNumberOrNull(form.taxonomyId),
+            shopSectionId: toNumberOrNull(form.shopSectionId),
+            whoMade: form.whoMade,
+            whenMade: form.whenMade,
+            isSupply: form.isSupply,
+            shouldAutoRenew: form.shouldAutoRenew,
+            isPersonalizable: form.isPersonalizable,
+            language: form.language,
+          } : {}),
         }),
       });
 
@@ -336,6 +635,115 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to save listing details.');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveListingDescription() {
+    setError(null);
+    setBusyKey('listing-description');
+    try {
+      const response = await fetch('/api/shops/listings/editor/listing-description', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, listingDescription }),
+      });
+      await parseResponse(response, 'Unable to save the listing description.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the listing description.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function saveRoomTheme() {
+    setError(null);
+    setBusyKey('room-theme');
+    try {
+      const response = await fetch('/api/shops/listings/editor/room-theme', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, roomTheme }),
+      });
+      await parseResponse(response, 'Unable to save the room theme.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the room theme.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function saveListingItem() {
+    setError(null);
+    setBusyKey('listing-item');
+    try {
+      const response = await fetch('/api/shops/listings/editor/listing-item', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, listingItem }),
+      });
+      await parseResponse(response, 'Unable to save the listing item.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the listing item.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function saveEtsyProducts() {
+    setError(null);
+    setBusyKey('save-etsy-products');
+
+    try {
+      const response = await fetch('/api/shops/listings/editor/products', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...context,
+          ...etsyProductsForm,
+        }),
+      });
+      await parseResponse(response, 'Unable to save Etsy products.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save Etsy products.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function runDropboxAction() {
+    if (!data?.dropbox.action) return;
+    setError(null);
+    setBusyKey('dropbox');
+
+    try {
+      const response = await fetch('/api/shops/listings/dropbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, action: 'dropbox' }),
+      });
+      await parseResponse(response, 'Unable to update Dropbox.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to update Dropbox.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function createGroupedZipFiles() {
+    setError(null);
+    setBusyKey('create-grouped-zips');
+
+    try {
+      const response = await fetch('/api/shops/listings/dropbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, action: 'zip' }),
+      });
+      await parseResponse(response, 'Unable to create the grouped ZIP files.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to create the grouped ZIP files.');
+    } finally {
+      setBusyKey(null);
     }
   }
 
@@ -447,11 +855,37 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     }
   }
 
+  async function deleteAllTags() {
+    if (!data) return;
+
+    setError(null);
+    setBusyKey('delete-all-tags');
+
+    try {
+      const response = await fetch('/api/shops/listings/editor', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, tags: [] }),
+      });
+      const payload = (await response.json()) as EditorResponse;
+      if (!response.ok) throw new Error(payload.error ?? 'Unable to delete all tags.');
+
+      applyFreshData(payload.data);
+      setTagDraft([]);
+      setSimpleInputs((inputs) => ({ ...inputs, tag: '' }));
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to delete all tags.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   async function uploadFiles(kind: UploadKind, files: File[]) {
     if (files.length === 0) return;
 
-    if (kind === 'image' && data!.images.length + files.length > 20) {
-      setError(`You can upload ${20 - data!.images.length} more image${20 - data!.images.length === 1 ? '' : 's'}.`);
+    if (kind === 'image' && data!.images.length + files.length > LISTING_EDITOR_MAX_IMAGES) {
+      const remainingImages = LISTING_EDITOR_MAX_IMAGES - data!.images.length;
+      setError(`You can upload ${remainingImages} more image${remainingImages === 1 ? '' : 's'}.`);
       return;
     }
 
@@ -701,14 +1135,14 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     }>
   ) {
     if (kind === 'image') {
-      const remaining = 20 - items.length;
+      const remaining = LISTING_EDITOR_MAX_IMAGES - items.length;
 
       return (
         <div className="grid gap-6">
           <div>
             <h3 className="text-lg font-semibold">Photo and video</h3>
             <p className="text-sm text-muted-foreground">Show off different angles, available options, or details of your listing.</p>
-            {data?.subSection.numberOfDownloads === 1 && !data.subSection.includeAllDownloads ? (
+            {data?.listing.numberOfItems === 1 && !data.listing.includeAllItems ? (
               <div className="mt-3 grid w-fit grid-cols-[max-content_max-content] gap-x-6 text-sm">
                 <ol className="list-inside list-decimal">
                   {singleDownloadImageGuide.slice(0, 6).map((item) => <li key={item}>{item}</li>)}
@@ -720,7 +1154,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
             ) : null}
           </div>
           <div>
-            <p className="mb-4 font-semibold">Add up to 20 photos.</p>
+            <p className="mb-4 font-semibold">Add up to {LISTING_EDITOR_MAX_IMAGES} photos.</p>
             <div
               className="rounded-lg border border-dashed border-border p-5"
               onDragOver={(event) => event.preventDefault()}
@@ -790,8 +1224,20 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     if (usesDropboxPdfDownload) {
       const pdfFiles = items.filter((item) => /\.pdf$/i.test(item.originalFileName ?? item.fileName));
       return (
-        <div className="grid gap-3">
-          <h2 className="text-lg font-semibold">{title}</h2>
+        <div className="grid gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold">{title}</h2>
+              <p className="text-sm text-muted-foreground">The source animals are stored in separate grouped ZIP files for Dropbox.</p>
+            </div>
+            {data?.dropbox.canCreateZips ? (
+              <Button type="button" onClick={createGroupedZipFiles} disabled={busyKey !== null}>
+                {busyKey === 'create-grouped-zips'
+                  ? 'Creating ZIPs...'
+                  : data.dropbox.zipsCurrent ? 'Re-zip files' : 'Zip files'}
+              </Button>
+            ) : null}
+          </div>
           {pdfFiles.length > 0 ? pdfFiles.map((item) => (
             <div key={item.id} className="rounded-md border p-4">
               <div className="font-medium">{item.originalFileName ?? item.fileName}</div>
@@ -975,8 +1421,113 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   }
 
   function renderThumbnail() {
+    if (!data) return null;
     return (
       <div className="grid gap-6">
+        <section className="grid gap-2">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold">Listing Item</h3>
+              <p className="text-sm text-muted-foreground">
+                {data.listing.listingItemInherited
+                  ? 'Using the first 100 characters of the listing name.'
+                  : 'A custom listing item is set for this listing.'}
+              </p>
+            </div>
+            <span className="text-xs tabular-nums text-muted-foreground">{listingItem.length} / 100</span>
+          </div>
+          <Input
+            value={listingItem}
+            maxLength={100}
+            onChange={(event) => setListingItem(event.target.value)}
+            placeholder="Enter the listing item"
+            disabled={busyKey === 'listing-item'}
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setListingItem(data.listing.listingItem)}
+              disabled={busyKey !== null || !listingItemChanged}
+            >
+              Undo
+            </Button>
+            <Button type="button" onClick={saveListingItem} disabled={busyKey !== null || !listingItemChanged}>
+              {busyKey === 'listing-item' ? 'Saving...' : 'Save'}
+            </Button>
+          </div>
+        </section>
+        <div className="border-t" />
+        <section className="grid gap-2">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold">Room Theme</h3>
+              <p className="text-sm text-muted-foreground">
+                {data.listing.roomThemeInherited
+                  ? `Using the section default: ${data.section.roomTheme}`
+                  : 'Override the section room theme for this listing.'}
+              </p>
+            </div>
+            <span className="text-xs tabular-nums text-muted-foreground">{roomTheme.length} / 200</span>
+          </div>
+          <textarea
+            value={roomTheme}
+            maxLength={200}
+            onChange={(event) => setRoomTheme(event.target.value)}
+            className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            placeholder="Enter the room theme"
+            disabled={busyKey === 'room-theme'}
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRoomTheme(data.listing.roomTheme)}
+              disabled={busyKey !== null || !roomThemeChanged}
+            >
+              Undo
+            </Button>
+            <Button type="button" onClick={saveRoomTheme} disabled={busyKey !== null || !roomThemeChanged}>
+              {busyKey === 'room-theme' ? 'Saving...' : 'Save'}
+            </Button>
+          </div>
+        </section>
+        <div className="border-t" />
+        <section className="grid gap-2">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold">Listing description</h3>
+              <p className="text-sm text-muted-foreground">Describe this listing in up to 1,000 characters.</p>
+            </div>
+            <span className="text-xs tabular-nums text-muted-foreground">{listingDescription.length} / 1000</span>
+          </div>
+          <textarea
+            value={listingDescription}
+            maxLength={1000}
+            onChange={(event) => setListingDescription(event.target.value)}
+            className={textAreaClassName}
+            placeholder="Enter the listing description"
+            disabled={busyKey === 'listing-description'}
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setListingDescription(data.listing.listingDescription)}
+              disabled={busyKey !== null || !listingDescriptionChanged}
+            >
+              Undo
+            </Button>
+            <Button
+              type="button"
+              onClick={saveListingDescription}
+              disabled={busyKey !== null || !listingDescriptionChanged}
+            >
+              {busyKey === 'listing-description' ? 'Saving...' : 'Save'}
+            </Button>
+          </div>
+        </section>
+        <div className="border-t" />
         <div>
           <h3 className="text-lg font-semibold">Thumbnail</h3>
           <p className="text-sm text-muted-foreground">
@@ -1037,13 +1588,291 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     );
   }
 
+  function renderEtsyProducts() {
+    if (!data) return null;
+    const checkbox = (
+      checked: boolean,
+      label: string,
+      onChange: (checked: boolean) => void
+    ) => (
+      <label key={label} className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted/60">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => onChange(event.target.checked)}
+          disabled={busyKey !== null}
+          className="h-4 w-4 rounded border-input accent-primary"
+        />
+        <span>{label}</span>
+      </label>
+    );
+
+    return (
+      <div className="grid gap-6">
+        <div>
+          <h3 className="text-lg font-semibold">Etsy Products</h3>
+          <p className="text-sm text-muted-foreground">Choose exactly what customers can buy from this listing.</p>
+        </div>
+        <div className="rounded-lg border bg-muted/20 p-3">
+          {checkbox(etsyProductsForm.listOnEtsy, 'List this listing on Etsy', (checked) =>
+            setEtsyProductsForm((current) => ({ ...current, listOnEtsy: checked }))
+          )}
+        </div>
+        <div className="grid gap-5 md:grid-cols-3">
+          <section className="rounded-lg border p-4">
+            <h4 className="mb-2 font-semibold">Size</h4>
+            {checkbox(etsyProductsForm.digitalDownload, 'Digital Download', (checked) =>
+              setEtsyProductsForm((current) => ({ ...current, digitalDownload: checked }))
+            )}
+            <div className="my-2 border-t" />
+            {data.etsyProducts.sizes.map((size) => checkbox(
+              etsyProductsForm.sizes[size.key] ?? false,
+              size.label,
+              (checked) => setEtsyProductsForm((current) => ({
+                ...current,
+                sizes: { ...current.sizes, [size.key]: checked },
+              }))
+            ))}
+          </section>
+          <section className="rounded-lg border p-4">
+            <h4 className="mb-2 font-semibold">Frames</h4>
+            {data.etsyProducts.frames.map((frame) => checkbox(
+              etsyProductsForm.frames[frame.key] ?? false,
+              frame.label,
+              (checked) => setEtsyProductsForm((current) => ({
+                ...current,
+                frames: { ...current.frames, [frame.key]: checked },
+              }))
+            ))}
+          </section>
+          <section className="rounded-lg border p-4">
+            <h4 className="mb-2 font-semibold">Customised</h4>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Leave both unchecked for no customisation. Top and bottom are separate optional text boxes with no additional fee.
+            </p>
+            {checkbox(etsyProductsForm.customTop, 'Top of image', (checked) =>
+              setEtsyProductsForm((current) => ({ ...current, customTop: checked }))
+            )}
+            {checkbox(etsyProductsForm.customBottom, 'Bottom of image', (checked) =>
+              setEtsyProductsForm((current) => ({ ...current, customBottom: checked }))
+            )}
+          </section>
+        </div>
+        {data.listing.listingType !== 'digital' ? (
+          <section className="rounded-lg border p-4">
+            <h4 className="font-semibold">Physical delivery</h4>
+            <p className="mt-1 text-xs text-muted-foreground">Choose the Etsy return policy applied when this physical listing is synced.</p>
+            <label className="mt-3 grid gap-2 text-sm font-medium">
+              Return policy
+              <select
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                value={etsyProductsForm.returnPolicyId}
+                onChange={(event) => setEtsyProductsForm((current) => ({ ...current, returnPolicyId: event.target.value }))}
+                disabled={busyKey !== null || returnPoliciesLoading}
+              >
+                <option value="">{returnPoliciesLoading ? 'Loading Etsy policies...' : 'Choose a return policy'}</option>
+                {returnPolicies.map((policy) => <option key={policy.id} value={policy.id}>{policy.label}</option>)}
+              </select>
+            </label>
+            {returnPoliciesError ? <p className="mt-2 text-sm text-destructive">{returnPoliciesError}</p> : null}
+            {!returnPoliciesLoading && !returnPoliciesError && returnPolicies.length === 0 ? (
+              <p className="mt-2 text-sm text-amber-700">Create a return policy in Etsy Policy settings, then reload this page.</p>
+            ) : null}
+          </section>
+        ) : null}
+        <div className="flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setEtsyProductsForm(createEtsyProductsForm(data))}
+            disabled={busyKey !== null || !etsyProductsChanged}
+          >
+            Undo
+          </Button>
+          <Button type="button" onClick={saveEtsyProducts} disabled={busyKey !== null || !etsyProductsChanged}>
+            {busyKey === 'save-etsy-products' ? 'Saving...' : 'Save'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderProductsTable() {
+    if (!data) return null;
+    return (
+      <section className="mt-4 grid gap-3 border-t pt-6">
+        <div>
+          <h3 className="text-lg font-semibold">Products</h3>
+          <p className="text-sm text-muted-foreground">
+            Each size and frame option uses the listing SKU shown above.
+          </p>
+        </div>
+        <div className="w-fit max-w-full overflow-x-auto rounded-md border">
+          <Table className="w-auto table-auto">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="h-10 whitespace-nowrap px-3">Product</TableHead>
+                <TableHead className="h-10 whitespace-nowrap px-3">Frame</TableHead>
+                <TableHead className="h-10 whitespace-nowrap px-3 text-right">Price</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.etsyProducts.products.length > 0 ? data.etsyProducts.products.map((product) => (
+                <TableRow key={product.key}>
+                  <TableCell className="whitespace-nowrap px-3 py-2 font-medium">
+                    {product.type === 'digital' ? 'Digital Download' : product.sizeLabel}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap px-3 py-2">
+                    {product.type === 'digital' ? '—' : product.frame === 'frame' ? 'Frame' : 'No Frame'}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap px-3 py-2 text-right tabular-nums">
+                    {formatProductPrice(product.priceAmountPence, product.currencyCode)}
+                  </TableCell>
+                </TableRow>
+              )) : (
+                <TableRow>
+                  <TableCell colSpan={3} className="text-center text-muted-foreground">
+                    Select at least one size and frame option on the Etsy Products tab.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </section>
+    );
+  }
+
+  function renderDropbox() {
+    if (!data) return null;
+    return (
+      <div className="grid gap-5">
+        <div>
+          <h3 className="text-lg font-semibold">Dropbox</h3>
+          <p className="text-sm text-muted-foreground">Create or refresh the Dropbox files for this listing.</p>
+        </div>
+        {data.dropbox.message ? (
+          <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>{data.dropbox.message}</span>
+          </div>
+        ) : data.dropbox.current ? (
+          <div className="flex items-start gap-2 rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>The Dropbox listing is up to date.</span>
+          </div>
+        ) : null}
+        {data.dropbox.bundle?.sharedUrl ? (
+          <a href={data.dropbox.bundle.sharedUrl} target="_blank" rel="noreferrer" className="text-sm font-medium text-primary underline underline-offset-4">
+            Open Dropbox folder
+          </a>
+        ) : null}
+        {data.dropbox.action ? (
+          <div>
+            <Button type="button" onClick={runDropboxAction} disabled={busyKey !== null}>
+              {busyKey === 'dropbox'
+                ? data.dropbox.action === 'create' ? 'Creating...' : 'Updating...'
+                : data.dropbox.action === 'create' ? 'Create Dropbox' : 'Update Dropbox'}
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderTodo() {
+    if (!data) return null;
+    if (data.todoItems.length === 0) {
+      return (
+        <div className="flex items-start gap-3 rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+          <div>
+            <h3 className="font-semibold">This listing is complete</h3>
+            <p>There are no outstanding items.</p>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="grid gap-4">
+        <div>
+          <h3 className="text-lg font-semibold">Todo</h3>
+          <p className="text-sm text-muted-foreground">Complete these {data.todoItems.length} items to make this listing complete.</p>
+        </div>
+        <ul className="divide-y rounded-md border">
+          {data.todoItems.map((item) => (
+            <li key={`${item.tab}-${item.label}`} className="flex items-center justify-between gap-4 p-4">
+              <span className="flex items-center gap-3 text-sm font-medium">
+                <XCircle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+                {item.label}
+              </span>
+              <Button type="button" size="sm" variant="outline" onClick={() => setActiveTab(item.tab)}>
+                Open {item.tab === 'etsy-products' ? 'Etsy Products' : item.tab === 'downloads' ? 'Digital Downloads' : item.tab.charAt(0).toUpperCase() + item.tab.slice(1)}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  function renderPersonalisationPromptRow(mode: PersonalisationPromptMode, label: string) {
+    const rowId = `images-personalisation-${mode}`;
+    return (
+      <TableRow key={rowId} {...promptRowProps(rowId)}>
+        <TableCell className="font-medium">Images</TableCell>
+        <TableCell>{label}</TableCell>
+        <TableCell>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              onClick={() => copyPersonalisationPrompt(mode, `${label} prompt`)}
+              disabled={promptCopying !== null}
+              aria-label={`Copy ${label} prompt`}
+              title={`Copy ${label} prompt`}
+            >
+              <FileText className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              onClick={copyPersonalisationSourceImage}
+              disabled={promptCopying !== null}
+              aria-label={`Copy original listing artwork for ${label} prompt`}
+              title="Copy original listing artwork"
+            >
+              <ImageIcon className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
   return (
     <div className="grid gap-4">
       {error ? <p className="text-sm font-medium text-destructive">{error}</p> : null}
 
       <Card>
         <CardHeader className="pb-0">
-          <CardTitle className="mb-4">{data.listing.localDirectoryName ?? data.listing.title}</CardTitle>
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <CardTitle>{data.listing.localDirectoryName ?? data.listing.title}</CardTitle>
+            <Button
+              type="button"
+              variant="outline"
+              className="shrink-0"
+              onClick={() => {
+                setPromptClipboardStatus(null);
+                setPromptsOpen(true);
+              }}
+            >
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
+              Prompts
+            </Button>
+          </div>
           {data.pendingChanges.length > 0 ? (
             <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-amber-700">
               <AlertTriangle className="h-4 w-4" aria-hidden="true" />
@@ -1053,13 +1882,16 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               ))}
             </div>
           ) : null}
-          <div className="flex gap-1 border-b border-border" role="tablist" aria-label="Listing editor sections">
+          <div className="flex flex-wrap gap-1 border-b border-border" role="tablist" aria-label="Listing editor sections">
             {([
               ['thumbnail', 'Thumbnail'],
+              ['etsy-products', 'Etsy Products'],
               ['images', 'Images'],
               ['details', 'Details'],
               ['tags', 'Tags'],
-              ['downloads', 'Downloads'],
+              ['downloads', 'Digital Downloads'],
+              ['dropbox', 'Dropbox'],
+              ['todo', 'Todo'],
             ] as const).map(([value, label]) => (
               <button
                 key={value}
@@ -1072,7 +1904,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 }`}
               >
                 {label}
-                {label !== 'Thumbnail' && data.pendingChanges.includes(label) ? (
+                {label !== 'Todo' && data.pendingChanges.includes(label) ? (
                   <span className="ml-1 text-amber-600" aria-label="Changed">●</span>
                 ) : null}
               </button>
@@ -1081,8 +1913,11 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
         </CardHeader>
         <CardContent className="pt-6">
           {activeTab === 'thumbnail' ? renderThumbnail() : null}
+          {activeTab === 'etsy-products' ? renderEtsyProducts() : null}
           {activeTab === 'images' ? renderWorkflowAssetTable('image', 'Images', data.images) : null}
-          {activeTab === 'downloads' ? renderWorkflowAssetTable('file', 'Downloads', data.files) : null}
+          {activeTab === 'downloads' ? renderWorkflowAssetTable('file', 'Digital Downloads', data.files) : null}
+          {activeTab === 'dropbox' ? renderDropbox() : null}
+          {activeTab === 'todo' ? renderTodo() : null}
           {activeTab === 'details' ? (
             <form className="grid gap-4" onSubmit={saveDetails}>
                 <div className="grid gap-2 text-sm font-medium">
@@ -1102,7 +1937,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                   </span>
                 </div>
                 <div className="grid gap-2 text-sm font-medium">
-                  <span>Description</span>
+                  <span>Etsy Description</span>
                   <span className="flex items-start gap-2">
                     <textarea value={form.description} onChange={(event) => updateForm('description', event.target.value)} className={textAreaClassName} />
                     <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-md border border-input px-4 py-2 font-medium hover:bg-accent">
@@ -1117,11 +1952,17 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                     </label>
                   </span>
                 </div>
+                <label className="grid max-w-md gap-2 text-sm font-medium">
+                  Etsy SKU
+                  <Input
+                    value={form.etsySku}
+                    maxLength={32}
+                    onChange={(event) => updateForm('etsySku', event.target.value)}
+                    placeholder="Enter one SKU for this listing"
+                  />
+                  <span className="text-xs font-normal text-muted-foreground">The same SKU is sent for every size and frame variation when syncing to Etsy.</span>
+                </label>
                 <div className="grid gap-4">
-                  <label className="grid gap-2 text-sm font-medium">
-                    Price (£)
-                    <Input type="number" min="0" step="0.01" value={form.priceAmount} onChange={(event) => updateForm('priceAmount', event.target.value)} />
-                  </label>
                   <label className="grid gap-2 text-sm font-medium">
                     Quantity
                     <Input type="number" value={form.quantity} onChange={(event) => updateForm('quantity', event.target.value)} />
@@ -1147,6 +1988,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                   <Button type="button" variant="outline" onClick={undoDetails} disabled={saving || !detailsChanged}>Undo</Button>
                   <Button type="submit" disabled={saving || !detailsChanged}>{saving ? 'Saving...' : 'Save'}</Button>
                 </div>
+                {renderProductsTable()}
             </form>
           ) : null}
           {activeTab === 'tags' ? (
@@ -1167,6 +2009,14 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 </label>
               </div>
               <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={deleteAllTags}
+                  disabled={busyKey !== null || (data.tags.length === 0 && desiredTags.length === 0)}
+                >
+                  {busyKey === 'delete-all-tags' ? 'Deleting...' : 'Delete All'}
+                </Button>
                 <Button type="button" variant="outline" onClick={cancelTagChanges} disabled={busyKey !== null || !tagsChanged}>Cancel</Button>
                 <Button type="button" onClick={saveTagChanges} disabled={busyKey !== null || !tagsChanged}>
                   {busyKey === 'save-tags' ? 'Saving...' : 'Save'}
@@ -1187,6 +2037,571 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           ) : null}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={promptsOpen}
+        onOpenChange={(open) => {
+          setPromptsOpen(open);
+          if (!open) {
+            personalisationPreparationId.current += 1;
+            setPreparedPersonalisationPrompt(null);
+            setPromptClipboardStatus(null);
+            setSelectedPromptRow(null);
+          }
+        }}
+      >
+        <DialogContent className={`max-h-[90vh] max-w-5xl content-start overflow-y-auto ${data.thumbnail ? 'min-h-[28rem]' : ''}`}>
+          <DialogHeader>
+            <DialogTitle>Prompts</DialogTitle>
+            <DialogDescription>
+              This is where we can put prompts and images into the clipboard for pasting into ChatGPT.
+            </DialogDescription>
+          </DialogHeader>
+          {data.thumbnail ? (
+          <section className="grid gap-3 rounded-md border bg-muted/20 p-4" aria-labelledby="personalisation-prompt-settings-heading">
+            <div>
+              <h3 id="personalisation-prompt-settings-heading" className="font-semibold">Image personalisation</h3>
+              <p className="text-sm text-muted-foreground">Shared text and font settings for the Top text, Bottom text and Both text prompts.</p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="grid gap-1.5 text-sm font-medium">
+                Header text
+                <Input
+                  value={personalisationPromptSettings.headerText}
+                  maxLength={200}
+                  onChange={(event) => updatePersonalisationPromptSetting('headerText', event.target.value)}
+                />
+              </label>
+              <label className="grid gap-1.5 text-sm font-medium">
+                Footer text
+                <Input
+                  value={personalisationPromptSettings.footerText}
+                  maxLength={200}
+                  onChange={(event) => updatePersonalisationPromptSetting('footerText', event.target.value)}
+                />
+              </label>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="grid min-w-64 flex-1 gap-1.5 text-sm font-medium">
+                Font
+                <select
+                  className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                  value={personalisationPromptSettings.fontId}
+                  onChange={(event) => updatePersonalisationPromptSetting('fontId', event.target.value)}
+                >
+                  {PERSONALISATION_FONTS.map((font) => (
+                    <option key={font.id} value={font.id}>{font.displayName}</option>
+                  ))}
+                </select>
+              </label>
+              <Button type="button" variant="outline" asChild>
+                <a href={selectedPersonalisationFont.assetPath} download={selectedPersonalisationFont.downloadFileName}>
+                  <Download className="h-4 w-4" aria-hidden="true" />
+                  Download selected font
+                </a>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busyKey !== null || !personalisationPromptSettingsChanged}
+                onClick={() => setPersonalisationPromptSettings(savedPersonalisationPromptSettings)}
+              >
+                Undo
+              </Button>
+              <Button
+                type="button"
+                disabled={busyKey !== null || !personalisationPromptSettingsChanged}
+                onClick={savePersonalisationPromptSettings}
+              >
+                {busyKey === 'save-personalisation-prompt-settings' ? 'Saving...' : 'Save'}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Attach the selected font file alongside your image in ChatGPT for accurate text rendering.</p>
+            {preparedPersonalisationPrompt ? (
+              <div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => copyPromptText(preparedPersonalisationPrompt, 'Prepared personalisation prompt')}
+                  disabled={promptCopying !== null}
+                >
+                  <FileText className="h-4 w-4" aria-hidden="true" />
+                  Copy prepared prompt
+                </Button>
+              </div>
+            ) : null}
+          </section>
+          ) : null}
+          {missingThumbnailPromptFields.length > 0 ? (
+            <div
+              className="flex items-start gap-3 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800"
+              role="alert"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <div>
+                <p className="font-semibold">The Thumbnail / Generate image prompt cannot be copied.</p>
+                <p>Complete the following required {missingThumbnailPromptFields.length === 1 ? 'field' : 'fields'}: {missingThumbnailPromptFields.join(', ')}.</p>
+              </div>
+            </div>
+          ) : null}
+          <div className="overflow-x-auto rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Tab</TableHead>
+                    <TableHead>Prompt</TableHead>
+                    <TableHead className="w-32">Clipboard</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow {...promptRowProps('thumbnail-generate-image')}>
+                    <TableCell className="font-medium">Thumbnail</TableCell>
+                    <TableCell>
+                      Generate image
+                    </TableCell>
+                    <TableCell>
+                      <span title={missingThumbnailPromptFields.length > 0 ? `Fill in ${missingThumbnailPromptFields.join(', ')} first` : 'Copy Generate image prompt'}>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(buildThumbnailGeneratePrompt(thumbnailGeneratePromptInput), 'Thumbnail Generate image prompt')}
+                          disabled={promptCopying !== null || missingThumbnailPromptFields.length > 0}
+                          aria-label="Copy Thumbnail Generate image prompt"
+                          title="Copy Generate image prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                  {data.thumbnail ? (
+                    <>
+                  <TableRow {...promptRowProps('images-listing-image')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Listing Image</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(buildListingImagePrompt(data.listing.roomTheme), 'Listing Image prompt')}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Listing Image prompt"
+                          title="Copy Listing Image prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Listing Image prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-bedroom')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Bedroom</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildBedroomImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'Bedroom prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Bedroom prompt"
+                          title="Copy Bedroom prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Bedroom prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-playroom')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Playroom</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildPlayroomImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'Playroom prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Playroom prompt"
+                          title="Copy Playroom prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Playroom prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-perfect-gift')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Perfect Gift</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildPerfectGiftImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'Perfect Gift prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Perfect Gift prompt"
+                          title="Copy Perfect Gift prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Perfect Gift prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-frames')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Frames</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildFramesImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'Frames prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Frames prompt"
+                          title="Copy Frames prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Frames prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-sizes')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Sizes</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildSizesImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'Sizes prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Sizes prompt"
+                          title="Copy Sizes prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Sizes prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-no-frame-included')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>No Frame Included</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildNoFrameIncludedImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'No Frame Included prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy No Frame Included prompt"
+                          title="Copy No Frame Included prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for No Frame Included prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-digital-download-included')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Digital Download Included</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildDigitalDownloadIncludedImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'Digital Download Included prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Digital Download Included prompt"
+                          title="Copy Digital Download Included prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Digital Download Included prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-how-to-print-included')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>How to Print Included</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildHowToPrintIncludedImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'How to Print Included prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy How to Print Included prompt"
+                          title="Copy How to Print Included prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for How to Print Included prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-personal-use-included')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Personal Use Included</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildPersonalUseIncludedImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'Personal Use Included prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Personal Use Included prompt"
+                          title="Copy Personal Use Included prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Personal Use Included prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  {renderPersonalisationPromptRow('top', 'Top text')}
+                  {renderPersonalisationPromptRow('bottom', 'Bottom text')}
+                  {renderPersonalisationPromptRow('both', 'Both text')}
+                  <TableRow {...promptRowProps('images-bedroom-door')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Bedroom door</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildBedroomDoorImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'Bedroom door prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Bedroom door prompt"
+                          title="Copy Bedroom door prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Bedroom door prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('details-generate')}>
+                    <TableCell className="font-medium">Details</TableCell>
+                    <TableCell>Generate details tab info</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(getDetailsGeneratePrompt(), 'Details prompt')}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Details prompt"
+                          title="Copy Details prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('digital-downloads-generate')}>
+                    <TableCell className="font-medium">Digital Downloads</TableCell>
+                    <TableCell>Generate</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildDigitalDownloadGeneratePrompt(data.listing.listingItem),
+                            'Digital Downloads Generate prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Digital Downloads Generate prompt"
+                          title="Copy Digital Downloads Generate prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Digital Downloads Generate prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                    </>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </div>
+          {promptClipboardStatus ? (
+            <p className="text-sm text-muted-foreground" role="status">{promptClipboardStatus}</p>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={previewImage !== null} onOpenChange={(open) => { if (!open) setPreviewImage(null); }}>
         <DialogContent className="max-w-5xl p-4">

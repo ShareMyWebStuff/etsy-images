@@ -7,6 +7,7 @@ type CreateSectionRequest = {
   sectionName?: string;
   numberOfDownloads?: number | null;
   includeAllDownloads?: boolean;
+  roomTheme?: string;
 };
 
 type DeleteSectionRequest = {
@@ -76,7 +77,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Select a valid number of downloads.' }, { status: 400 });
     }
 
-    await createLocalShopSection(body.shopId, body.sectionName, numberOfDownloads, includeAllDownloads);
+    await createLocalShopSection(body.shopId, body.sectionName, numberOfDownloads, includeAllDownloads, body.roomTheme ?? '');
     const data = await getShopSectionsPageData(body.shopId);
 
     return NextResponse.json({ data });

@@ -24,9 +24,10 @@ describe('Set Prices initialisation', () => {
     await ensureDefaultPrices(fakeClient);
     await ensureDefaultPrices(fakeClient);
 
-    expect(stored.size).toBe(23);
+    expect(stored.size).toBe(26);
     expect(stored.get('digital_1')).toBe(777);
     expect(stored.get('framed_24x36')).toBe(10999);
+    expect(stored.get('customisation_fee')).toBe(499);
     expect(createMany).toHaveBeenCalledTimes(2);
     expect(createMany.mock.calls.every(([args]) => args.skipDuplicates)).toBe(true);
   });
@@ -40,6 +41,11 @@ describe('Set Prices Etsy mapping', () => {
     localDirectoryName: 'Listing',
     rawJson: { listing_type: 'download' },
     shopId: '1',
+    etsyProductType: 'digital',
+    numberOfItems: 3,
+    includeAllItems: false,
+    productConfig: { digitalDownload: true },
+    products: [{ productType: 'digital', priceKey: 'digital_3' }],
     files: [{ id: 1 }],
     subSection: { shopSection: { numberOfDownloads: 3, includeAllDownloads: false } },
     priceMappings: [],
@@ -66,6 +72,27 @@ describe('Set Prices Etsy mapping', () => {
     })] as never, ['framed_a4']);
     expect(plans).toHaveLength(1);
     expect(plans[0]).toMatchObject({ keys: ['framed_a4'], canUpdate: true, skipReason: null });
+  });
+
+  it('uses the mapped digital variation for a combined physical and download listing', () => {
+    const combined = listing({
+      etsyProductType: 'physical',
+      productConfig: { digitalDownload: true },
+      products: [{ productType: 'digital', priceKey: 'digital_3' }],
+      priceMappings: [{
+        productKey: 'digital_3',
+        etsyProductId: 'digital-product',
+        etsyOfferingId: 'digital-offering',
+        fulfilmentProvider: 'Etsy inventory',
+        isSupported: true,
+        shippingProfileId: 'shipping-1',
+      }],
+    });
+    expect(buildImpactPlans([combined] as never, ['digital_3'])[0]).toMatchObject({
+      keys: ['digital_3'],
+      canUpdate: true,
+      skipReason: null,
+    });
   });
 
   it('skips unsupported sizes and missing Etsy variations without guessing', () => {

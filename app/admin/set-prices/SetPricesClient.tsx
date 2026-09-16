@@ -325,6 +325,8 @@ export function SetPricesClient({ initialData }: SetPricesClientProps) {
                 <div id={`price-${price.key}-help`} className="min-h-5 text-xs">
                   {validationErrors[price.key] ? (
                     <span className="text-destructive">{validationErrors[price.key]}</span>
+                  ) : section.key === 'customisation' ? (
+                    <span className="text-muted-foreground">Saved locally as the default customisation fee</span>
                   ) : price.affectedListings > 0 ? (
                     <span className="text-muted-foreground">{price.affectedListings} mapped Etsy listing{price.affectedListings === 1 ? '' : 's'}</span>
                   ) : price.unsupportedMappings > 0 ? (

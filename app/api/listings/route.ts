@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getValidEtsyAccessToken } from '@/lib/etsy-oauth';
+import { ensureListingProductDefaultsInTransaction } from '@/lib/listing-products';
 
 type EtsyListingPrice =
   | string
@@ -25,6 +26,7 @@ type EtsyListing = {
   quantity?: number | null;
   price?: EtsyListingPrice;
   taxonomy_id?: number | null;
+  listing_type?: 'physical' | 'download' | 'both' | string | null;
   shop_section_id?: number | null;
   who_made?: string | null;
   is_supply?: boolean | null;
@@ -159,8 +161,38 @@ async function syncEtsyListingDownload(shopId: string, listing: EtsyListing) {
   const price = parsePriceParts(listing.price);
   const etsyId = String(listing.listing_id);
   const rawJson = toRawJson(listing);
+  const importedProductType = listing.listing_type === 'download' ? 'digital' : 'physical';
+  const importedTaxonomyId = importedProductType === 'digital' ? 2078 : listing.taxonomy_id ?? 121;
 
   await prisma.$transaction(async (tx) => {
+    await tx.listing.upsert({
+      where: { etsyId },
+      update: {
+        title: listing.title ?? `Listing ${etsyId}`,
+        price: parsePrice(listing.price),
+        shopName: listing.shop?.shop_name ?? null,
+      },
+      create: {
+        etsyId,
+        title: listing.title ?? `Listing ${etsyId}`,
+        price: parsePrice(listing.price),
+        shopName: listing.shop?.shop_name ?? null,
+      },
+    });
+
+    const existingListing = await tx.etsyListing.findUnique({
+      where: { etsyId },
+      select: {
+        productConfig: { select: { id: true } },
+        detailsChanged: true,
+        tagsChanged: true,
+        imagesChanged: true,
+        productsChanged: true,
+      },
+    });
+    const shouldInitializeProducts = !existingListing?.productConfig;
+    const preserveLocalDetails = existingListing?.detailsChanged === true;
+    const preserveLocalProducts = existingListing?.productsChanged === true;
     const savedListing = await tx.etsyListing.upsert({
       where: {
         etsyId,
@@ -168,23 +200,32 @@ async function syncEtsyListingDownload(shopId: string, listing: EtsyListing) {
       update: {
         shopId: toNullableString(listing.shop_id) ?? shopId,
         userId: toNullableString(listing.user_id),
-        title: listing.title ?? `Listing ${etsyId}`,
-        description: listing.description ?? null,
+        ...(preserveLocalDetails ? {} : {
+          title: listing.title ?? `Listing ${etsyId}`,
+          description: listing.description ?? null,
+          quantity: listing.quantity ?? null,
+          whoMade: listing.who_made ?? null,
+          isSupply: listing.is_supply ?? null,
+          whenMade: listing.when_made ?? null,
+          shouldAutoRenew: listing.should_auto_renew ?? null,
+          language: listing.language ?? null,
+        }),
         state: listing.state ?? null,
         url: listing.url ?? null,
-        quantity: listing.quantity ?? null,
-        priceAmount: price.amount,
-        priceDivisor: price.divisor,
-        priceCurrencyCode: price.currencyCode,
-        taxonomyId: listing.taxonomy_id ?? null,
+        ...(preserveLocalProducts ? {} : {
+          priceAmount: price.amount,
+          priceDivisor: price.divisor,
+          priceCurrencyCode: price.currencyCode,
+        }),
+        ...(shouldInitializeProducts
+          ? {
+              taxonomyId: importedTaxonomyId,
+              etsyProductType: importedProductType,
+            }
+          : {}),
         shopSectionId: listing.shop_section_id ?? null,
-        whoMade: listing.who_made ?? null,
-        isSupply: listing.is_supply ?? null,
-        whenMade: listing.when_made ?? null,
-        shouldAutoRenew: listing.should_auto_renew ?? null,
         isPersonalizable: listing.is_personalizable ?? null,
         personalizationIsRequired: listing.personalization_is_required ?? null,
-        language: listing.language ?? null,
         createdTimestamp: listing.created_timestamp ?? null,
         updatedTimestamp: listing.updated_timestamp ?? null,
         originalCreationTimestamp: listing.original_creation_timestamp ?? null,
@@ -204,7 +245,8 @@ async function syncEtsyListingDownload(shopId: string, listing: EtsyListing) {
         priceAmount: price.amount,
         priceDivisor: price.divisor,
         priceCurrencyCode: price.currencyCode,
-        taxonomyId: listing.taxonomy_id ?? null,
+        taxonomyId: importedTaxonomyId,
+        etsyProductType: importedProductType,
         shopSectionId: listing.shop_section_id ?? null,
         whoMade: listing.who_made ?? null,
         isSupply: listing.is_supply ?? null,
@@ -221,51 +263,38 @@ async function syncEtsyListingDownload(shopId: string, listing: EtsyListing) {
       },
     });
 
-    await tx.etsyListingTag.deleteMany({
-      where: {
-        listingId: savedListing.id,
-      },
-    });
-    await tx.etsyListingMaterial.deleteMany({
-      where: {
-        listingId: savedListing.id,
-      },
-    });
-    await tx.etsyListingImage.deleteMany({
-      where: {
-        listingId: savedListing.id,
-      },
-    });
-
-    const tags = listing.tags ?? [];
-    const materials = listing.materials ?? [];
-    const images = listing.images ?? [];
-
-    if (tags.length > 0) {
-      await tx.etsyListingTag.createMany({
-        data: tags.map((tag, index) => ({
-          listingId: savedListing.id,
-          tag,
-          position: index,
-        })),
-      });
+    if (listing.tags !== undefined && existingListing?.tagsChanged !== true) {
+      const tags = listing.tags ?? [];
+      await tx.etsyListingTag.deleteMany({ where: { listingId: savedListing.id } });
+      if (tags.length > 0) {
+        await tx.etsyListingTag.createMany({
+          data: tags.map((tag, index) => ({ listingId: savedListing.id, tag, position: index })),
+        });
+      }
     }
 
-    if (materials.length > 0) {
-      await tx.etsyListingMaterial.createMany({
-        data: materials.map((material, index) => ({
-          listingId: savedListing.id,
-          material,
-          position: index,
-        })),
-      });
+    if (listing.materials !== undefined) {
+      const materials = listing.materials ?? [];
+      await tx.etsyListingMaterial.deleteMany({ where: { listingId: savedListing.id } });
+      if (materials.length > 0) {
+        await tx.etsyListingMaterial.createMany({
+          data: materials.map((material, index) => ({ listingId: savedListing.id, material, position: index })),
+        });
+      }
     }
 
-    if (images.length > 0) {
-      await tx.etsyListingImage.createMany({
-        data: images.map((image) => ({
-          listingId: savedListing.id,
-          etsyImageId: toNullableString(image.listing_image_id),
+    // The lightweight listing endpoint does not always include images. Only merge
+    // an explicitly returned image collection, and retain local file metadata/IDs.
+    if (listing.images !== undefined && existingListing?.imagesChanged !== true) {
+      const localImages = await tx.etsyListingImage.findMany({ where: { listingId: savedListing.id } });
+      const byRemoteId = new Map(localImages.flatMap((image) => image.etsyImageId ? [[image.etsyImageId, image] as const] : []));
+      const returnedIds = new Set<string>();
+      let imagesNeedResync = false;
+      for (const image of listing.images ?? []) {
+        const remoteId = toNullableString(image.listing_image_id);
+        if (!remoteId) continue;
+        returnedIds.add(remoteId);
+        const data = {
           rank: image.rank ?? null,
           url75x75: image.url_75x75 ?? null,
           url170x135: image.url_170x135 ?? null,
@@ -273,9 +302,45 @@ async function syncEtsyListingDownload(shopId: string, listing: EtsyListing) {
           urlFullxFull: image.url_fullxfull ?? null,
           fullHeight: image.full_height ?? null,
           fullWidth: image.full_width ?? null,
-        })),
-      });
+        };
+        const existingImage = byRemoteId.get(remoteId);
+        if (existingImage) {
+          await tx.etsyListingImage.update({ where: { id: existingImage.id }, data });
+        } else {
+          await tx.etsyListingImage.create({
+            data: { listingId: savedListing.id, etsyImageId: remoteId, ...data },
+          });
+        }
+      }
+      for (const localImage of localImages) {
+        if (!localImage.etsyImageId || returnedIds.has(localImage.etsyImageId)) continue;
+        if (localImage.localFileName) {
+          imagesNeedResync = true;
+          await tx.etsyListingImage.update({
+            where: { id: localImage.id },
+            data: {
+              etsyImageId: null,
+              url75x75: null,
+              url170x135: null,
+              url570xN: null,
+              urlFullxFull: null,
+            },
+          });
+        } else {
+          await tx.etsyListingImage.delete({ where: { id: localImage.id } });
+        }
+      }
+      if (imagesNeedResync) {
+        await tx.etsyListing.update({
+          where: { id: savedListing.id },
+          data: { imagesChanged: true, lastLocalChangeAt: new Date() },
+        });
+      }
     }
+
+    await ensureListingProductDefaultsInTransaction(tx, savedListing.id, {
+      digitalDownload: listing.listing_type === 'download' || listing.listing_type === 'both',
+    });
   });
 }
 
@@ -334,25 +399,7 @@ async function syncListingsFromEtsy(state: ListingState) {
     }
 
     const etsyId = String(listing.listing_id);
-    const priceValue = parsePrice(listing.price);
     syncedEtsyIds.push(etsyId);
-
-    await prisma.listing.upsert({
-      where: {
-        etsyId,
-      },
-      update: {
-        title: listing.title ?? `Listing ${listing.listing_id}`,
-        price: priceValue,
-        shopName: listing.shop?.shop_name ?? null,
-      },
-      create: {
-        etsyId: String(listing.listing_id),
-        title: listing.title ?? `Listing ${listing.listing_id}`,
-        price: priceValue,
-        shopName: listing.shop?.shop_name ?? null,
-      },
-    });
 
     await syncEtsyListingDownload(shopId, listing);
   }

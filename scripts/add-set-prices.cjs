@@ -23,6 +23,7 @@ const defaultPrices = [
   ['unframed_12x16', 'unframed', 2599],
   ['unframed_16x20', 'unframed', 2899],
   ['unframed_18x24', 'unframed', 3599],
+  ['unframed_20x28', 'unframed', 3999],
   ['unframed_24x36', 'unframed', 4499],
   ['framed_a4', 'framed', 3499],
   ['framed_a3', 'framed', 4499],
@@ -32,7 +33,9 @@ const defaultPrices = [
   ['framed_12x16', 'framed', 4499],
   ['framed_16x20', 'framed', 5999],
   ['framed_18x24', 'framed', 7499],
+  ['framed_20x28', 'framed', 8499],
   ['framed_24x36', 'framed', 10999],
+  ['customisation_fee', 'customisation', 499],
 ];
 
 async function columnExists(tableName, columnName) {

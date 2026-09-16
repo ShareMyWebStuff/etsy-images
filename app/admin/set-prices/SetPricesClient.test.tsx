@@ -53,14 +53,17 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Set Prices screen', () => {
-  it('renders all three sections and all 23 accessible product fields with saved prices', () => {
+  it('renders all four sections and all 26 accessible product fields with saved prices', () => {
     render(<SetPricesClient initialData={makeData()} />);
     expect(screen.getByRole('heading', { name: 'Digital Downloads' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Unframed Prints' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Framed Prints' })).toBeTruthy();
-    expect(screen.getAllByRole('textbox')).toHaveLength(23);
+    expect(screen.getByRole('heading', { name: 'Customisation' })).toBeTruthy();
+    expect(screen.getAllByRole('textbox')).toHaveLength(26);
     expect((screen.getByLabelText('1 Image Download') as HTMLInputElement).value).toBe('3.49');
+    expect((screen.getByLabelText('Fee') as HTMLInputElement).value).toBe('4.99');
     expect(screen.getAllByLabelText('24 × 36 inches')).toHaveLength(2);
+    expect(screen.getAllByLabelText('20 × 28 inches')).toHaveLength(2);
     expect(screen.getByRole('button', { name: 'Save prices' }).hasAttribute('disabled')).toBe(true);
   });
 

@@ -25,10 +25,13 @@ export default async function EditListingPage({ searchParams }: EditListingPageP
   const listingId = resolvedSearchParams?.listingId ?? '';
   const requestedTab = resolvedSearchParams?.tab;
   const initialTab = requestedTab === 'images'
+    || requestedTab === 'etsy-products'
     || requestedTab === 'details'
     || requestedTab === 'tags'
     || requestedTab === 'downloads'
     || requestedTab === 'thumbnail'
+    || requestedTab === 'dropbox'
+    || requestedTab === 'todo'
     ? requestedTab
     : 'thumbnail';
   const data =

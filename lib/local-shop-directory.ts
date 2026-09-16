@@ -181,6 +181,16 @@ export async function listingDirectoryExists(shopName: string, sectionName: stri
   }
 }
 
+export async function listingDirectoryIsEmpty(
+  shopName: string,
+  sectionName: string,
+  subSectionName: string,
+  listingName: string
+) {
+  const listingPath = getListingDirectoryPath(shopName, sectionName, subSectionName, listingName);
+  return (await readdir(listingPath, { withFileTypes: true })).length === 0;
+}
+
 export async function createListingDirectory(shopName: string, sectionName: string, subSectionName: string, listingName: string) {
   const listingPath = getListingDirectoryPath(shopName, sectionName, subSectionName, listingName);
   await mkdir(listingPath, { recursive: true });

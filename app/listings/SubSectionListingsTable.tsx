@@ -28,6 +28,16 @@ type ListingActionResponse = {
 };
 
 const COLLAPSIBLE_SET_SIZES = new Set([3, 6, 12]);
+const ITEM_COUNT_OPTIONS = ['1', '3', '6', '12', 'all'] as const;
+type ItemCountOption = (typeof ITEM_COUNT_OPTIONS)[number];
+type EtsyProductType = 'physical' | 'digital';
+
+function defaultItemCount(data: SubSectionListingsPageData | null): ItemCountOption {
+  if (data?.subSection.includeAllDownloads) return 'all';
+
+  const value = String(data?.subSection.numberOfDownloads ?? 1);
+  return ITEM_COUNT_OPTIONS.includes(value as ItemCountOption) ? value as ItemCountOption : '1';
+}
 
 function listingScrollStorageKey(shopId: string | null, sectionId: string | null, subSectionId: string | null) {
   return `listing-scroll:${shopId ?? ''}:${sectionId ?? ''}:${subSectionId ?? ''}`;
@@ -44,6 +54,8 @@ export function SubSectionListingsTable({
   const [createOpen, setCreateOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [listingName, setListingName] = useState('');
+  const [numberOfItems, setNumberOfItems] = useState<ItemCountOption>(() => defaultItemCount(initialData));
+  const [etsyProductType, setEtsyProductType] = useState<EtsyProductType>('physical');
   const [error, setError] = useState<string | null>(null);
   const [createLoading, setCreateLoading] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
@@ -119,17 +131,48 @@ export function SubSectionListingsTable({
       setError('Missing listing context.');
       return;
     }
+    const trimmedListingName = listingName.trim();
+    if (!trimmedListingName) {
+      setError('Enter a listing name.');
+      return;
+    }
 
     setError(null);
     setCreateLoading(true);
 
     try {
+      const includeAllItems = numberOfItems === 'all';
+      const numericNumberOfItems = includeAllItems ? null : Number(numberOfItems);
+
+      if (includeAllItems || numericNumberOfItems !== 1) {
+        const query = new URLSearchParams({
+          shopId,
+          sectionId,
+          subSectionId,
+          listingName: trimmedListingName,
+          numberOfItems: includeAllItems ? 'all' : String(numericNumberOfItems),
+          includeAllItems: String(includeAllItems),
+          etsyProductType,
+        });
+        setCreateOpen(false);
+        router.push(`/listings/create-multi?${query.toString()}`);
+        return;
+      }
+
       const response = await fetch('/api/shops/listings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ shopId, sectionId, subSectionId, listingName }),
+        body: JSON.stringify({
+          shopId,
+          sectionId,
+          subSectionId,
+          listingName: trimmedListingName,
+          numberOfItems: numericNumberOfItems,
+          includeAllItems,
+          etsyProductType,
+        }),
       });
       const payload = (await response.json()) as ListingActionResponse;
 
@@ -139,6 +182,8 @@ export function SubSectionListingsTable({
 
       setData(payload.data ?? null);
       setListingName('');
+      setNumberOfItems(defaultItemCount(payload.data ?? data));
+      setEtsyProductType('physical');
       setCreateOpen(false);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to create listing.');
@@ -260,11 +305,10 @@ export function SubSectionListingsTable({
               title="Add listing"
               onClick={() => {
                 setError(null);
-                if (isSingleListings) {
-                  setCreateOpen(true);
-                } else {
-                  router.push(`/listings/create-multi?shopId=${encodeURIComponent(shopId ?? '')}&sectionId=${encodeURIComponent(sectionId ?? '')}&subSectionId=${encodeURIComponent(subSectionId ?? '')}`);
-                }
+                setListingName('');
+                setNumberOfItems(defaultItemCount(data));
+                setEtsyProductType('physical');
+                setCreateOpen(true);
               }}
               disabled={!subSectionId}
             >
@@ -374,13 +418,39 @@ export function SubSectionListingsTable({
             <DialogHeader>
               <DialogTitle>Create Listing</DialogTitle>
             </DialogHeader>
-            <div className="py-4">
+            <div className="grid gap-4 py-4">
               <Input
                 value={listingName}
                 onChange={(event) => setListingName(event.target.value)}
                 placeholder="Listing directory name"
                 autoFocus
               />
+              <label className="grid gap-2 text-sm font-medium">
+                No of Items
+                <select
+                  className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                  value={numberOfItems}
+                  onChange={(event) => setNumberOfItems(event.target.value as ItemCountOption)}
+                >
+                  <option value="1">1</option>
+                  <option value="3">3</option>
+                  <option value="6">6</option>
+                  <option value="12">12</option>
+                  <option value="all">All</option>
+                </select>
+              </label>
+              <label className="grid gap-2 text-sm font-medium">
+                Etsy Product
+                <select
+                  className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                  value={etsyProductType}
+                  onChange={(event) => setEtsyProductType(event.target.value as EtsyProductType)}
+                >
+                  <option value="physical">Physical</option>
+                  <option value="digital">Digital</option>
+                </select>
+              </label>
+              {error ? <p className="text-sm font-medium text-destructive">{error}</p> : null}
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={createLoading}>

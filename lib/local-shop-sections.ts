@@ -131,11 +131,15 @@ export async function createLocalShopSection(
   shopId: string,
   sectionName: string,
   numberOfDownloads: number | null,
-  includeAllDownloads: boolean
+  includeAllDownloads: boolean,
+  roomTheme: string
 ) {
   const shop = await getShopByEtsyShopId(shopId);
   const shopName = getShopDisplayName(shop);
   const trimmedSectionName = normalizeSectionName(sectionName);
+  const trimmedRoomTheme = roomTheme.trim();
+  if (Array.from(trimmedRoomTheme).length > 200) throw new Error('The room theme cannot be longer than 200 characters.');
+  const savedRoomTheme = includeAllDownloads || (numberOfDownloads ?? 1) > 1 ? null : trimmedRoomTheme || null;
 
   if (!(await shopDirectoryExists(shopName))) {
     throw new Error(`The local shop folder "${shopName}" does not exist.`);
@@ -153,6 +157,7 @@ export async function createLocalShopSection(
       shopId: shop.id,
       etsyShopId: shop.etsyShopId,
       title: trimmedSectionName,
+      roomTheme: savedRoomTheme,
       rawJson: Prisma.JsonNull,
       numberOfDownloads: includeAllDownloads ? 1 : numberOfDownloads ?? 1,
       includeAllDownloads,
