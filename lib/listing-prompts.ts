@@ -1,3 +1,7 @@
+import { UPDATED_BEDROOM_IMAGE_PROMPT } from '@/lib/prompts/bedroom-image-prompt';
+import { UPDATED_PLAYROOM_IMAGE_PROMPT } from '@/lib/prompts/playroom-image-prompt';
+import { ASPECT_RATIOS_IMAGE_PROMPT } from '@/lib/prompts/aspect-ratios-image-prompt';
+
 const LISTING_IMAGE_PROMPT = `ROOM_THEME = "{{ROOM_THEME}}"
 
 Use the image attached to this prompt as the source artwork.
@@ -258,10 +262,11 @@ function promptVariable(value: string) {
 }
 
 export function buildBedroomImagePrompt(roomTheme: string, listingItem: string) {
-  return BEDROOM_IMAGE_PROMPT
+  return UPDATED_BEDROOM_IMAGE_PROMPT
     .replaceAll('{{ROOM_THEME}}', promptVariable(roomTheme))
     .replaceAll('{{ANIMAL}}', promptVariable(listingItem))
-    .replaceAll('{{FRAME_COLOUR}}', 'Natural Oak');
+    .replaceAll('{{FRAME_COLOUR}}', 'Natural Oak')
+    .replaceAll('{{PRINT_SIZE}}', 'A3');
 }
 
 const PLAYROOM_IMAGE_PROMPT = `ROOM_THEME = "{{ROOM_THEME}}"
@@ -465,15 +470,17 @@ OUTPUT
 * Return only the generated image in the chat image viewer.`;
 
 export function buildPlayroomImagePrompt(roomTheme: string, listingItem: string) {
-  return PLAYROOM_IMAGE_PROMPT
+  return UPDATED_PLAYROOM_IMAGE_PROMPT
     .replaceAll('{{ROOM_THEME}}', promptVariable(roomTheme))
     .replaceAll('{{ANIMAL}}', promptVariable(listingItem))
-    .replaceAll('{{FRAME_COLOUR}}', 'Natural Oak');
+    .replaceAll('{{FRAME_COLOUR}}', 'Natural Oak')
+    .replaceAll('{{PRINT_SIZE}}', 'A3');
 }
 
 const PERFECT_GIFT_IMAGE_PROMPT = `ROOM_THEME = "{{ROOM_THEME}}"
 ANIMAL = "{{ANIMAL}}"
 FRAME_COLOUR = "{{FRAME_COLOUR}}"
+PRINT_SIZE = "{{PRINT_SIZE}}"
 
 Use the image attached to this prompt as the source artwork.
 
@@ -485,6 +492,49 @@ Return only the generated image in the chat image viewer.
 
 Create one photorealistic square Etsy listing image presenting this printable children’s wall art as a perfect gift.
 
+PRINT SIZE AND PROPORTIONS
+
+\`PRINT_SIZE\` controls the physical paper size of the print displayed in the scene, whether framed or unframed.
+
+Allowed values:
+
+* A3 = 297 mm wide × 420 mm high.
+* A2 = 420 mm wide × 594 mm high.
+
+If \`PRINT_SIZE\` is omitted, blank, or invalid, use A3.
+
+Use portrait orientation.
+
+The paper must follow ISO A-series portrait proportions:
+
+* Width-to-height ratio approximately 1:1.414.
+* Width approximately 70.7% of height.
+
+These proportions apply to the paper itself, not the outside edges of the frame.
+
+If framed:
+
+* Use a frame sized for the selected paper size.
+* The visible paper area must retain A-series portrait proportions.
+* The outside dimensions will be slightly larger because of the frame moulding.
+* Use slim, consistent-width moulding without an additional decorative mount.
+
+If unframed:
+
+* The complete sheet must have the selected A3 or A2 dimensions and A-series portrait proportions.
+* Keep all four paper corners visible.
+
+Show the selected size at a believable physical scale relative to furniture, books, greeting cards, and gift props:
+
+* A3 should appear as a modest-sized print.
+* A2 should appear larger and more prominent.
+* Do not enlarge an A3 print to resemble an oversized poster.
+* Make the artwork prominent through camera framing and composition while maintaining realistic physical scale.
+
+Do not substitute a 2:3, 3:4, 4:5, square, or unusually narrow paper format.
+
+The overall Etsy mockup must remain square. Only the print within the scene uses A3 or A2 portrait proportions.
+
 SOURCE ARTWORK
 
 Use the attached image as the artwork displayed in the mockup.
@@ -492,13 +542,19 @@ Use the attached image as the artwork displayed in the mockup.
 Preserve the source artwork exactly as supplied:
 
 * Do not redraw, alter, recolour, simplify, enhance, replace, expand, or reinterpret it.
-* Do not add anything inside the artwork.
+* Do not add anything inside the source artwork.
 * Do not remove any existing details.
 * Preserve its original aspect ratio.
 * Do not stretch, distort, or crop it.
 * Ensure the complete artwork remains visible.
 
-Only apply realistic perspective, lighting, shadow, and scale so that the artwork looks naturally placed in the scene.
+If the source artwork does not match A-series paper proportions, fit the entire source image proportionally within the selected A3 or A2 paper area.
+
+Centre it and use plain white padding to fill any remaining space. This padding must sit outside the original source image.
+
+Do not change the paper proportions to match the source image.
+
+Only apply realistic perspective, lighting, shadow, and scale so that the artwork looks naturally placed in the scene. Keep perspective minimal so the paper proportions remain clearly recognisable.
 
 GIFT CONCEPT
 
@@ -529,6 +585,8 @@ The scene may include:
 * Nursery or playroom décor
 * Calm neutral colours
 * Muted colours and subtle details matching \`ROOM_THEME\`
+
+Keep gift tags and greeting cards free of readable text.
 
 Gift props are lifestyle styling only. Do not make the gift box, wrapping, frame, or printed poster appear to be included with the purchase.
 
@@ -591,18 +649,28 @@ Choose the most attractive of these arrangements:
 2. Show the framed artwork leaning gently against a wall beside tasteful wrapped gifts.
 3. Show the unframed paper print laid neatly beside a wrapped gift and greeting card.
 
+For every arrangement, use the size specified by \`PRINT_SIZE\`.
+
 If the artwork is framed, use a simple \`FRAME_COLOUR\` picture frame.
 
 The frame must be:
 
-* Straight
+* Straight and rectangular
 * Realistic
 * Elegant
 * Clearly coloured according to \`FRAME_COLOUR\`
+* Made with slim, consistent-width moulding
+* Fully visible, including all four corners
 
 If the artwork is shown unframed, do not include a frame.
 
-Preserve the artwork’s original aspect ratio. If its proportions do not match the frame, use a clean white mount or border. Never stretch, crop, or distort the artwork.
+For wall-mounted or leaning artwork, use a front-facing camera angle with minimal perspective.
+
+For a print laid flat, use an overhead or near-overhead view so the A-series paper proportions are clearly visible.
+
+Preserve the source artwork’s original aspect ratio within the selected paper size. Use plain white padding where necessary, as specified above. Never stretch, crop, or distort the artwork.
+
+Do not let gift props, ribbon, text, or other objects overlap the print.
 
 Do not add any other pictures, posters, or competing wall art.
 
@@ -615,7 +683,9 @@ for Little Animal Lovers
 
 Nursery - Bedroom - Playroom
 
-Place the text prominently in the lower section of the image, similar to a polished Etsy listing layout.
+Place the text prominently in the lower section of the overall square image, similar to a polished Etsy listing layout.
+
+The text is a listing overlay, not part of the source artwork. Do not place it inside the print or frame.
 
 Text styling:
 
@@ -628,6 +698,8 @@ Text styling:
 * Neat spacing
 * Balanced, premium appearance
 * Generous safe margins
+
+Reserve enough uncluttered space below the displayed artwork for the text.
 
 The text must be crisp, readable, correctly spelled, and intentionally positioned. It must not be warped, distorted, duplicated, incomplete, or randomly placed.
 
@@ -668,8 +740,12 @@ DO NOT INCLUDE
 * Harsh shadows
 * Distorted artwork
 * Distorted or warped frames
+* Incorrect paper proportions
+* Unrealistically oversized prints
+* Size labels, measurement arrows, or dimension annotations
 * Overly bright cartoon colours
 * Misspelled, warped, duplicated, or unreadable text
+* Additional readable text beyond the required listing text and any text already present in the source artwork
 * Unrelated decorative details
 * Generic nursery styling with no visible connection to \`ROOM_THEME\`
 * Animal-only styling unless explicitly required by \`ROOM_THEME\`
@@ -688,6 +764,7 @@ OUTPUT
 * Target dimensions: 3000 × 3000 pixels.
 * Minimum dimensions: 2000 × 2000 pixels.
 * Use an sRGB colour profile.
+* The framed or unframed print must have A-series portrait proportions and represent the selected \`PRINT_SIZE\`.
 * Keep the artwork, gift styling, and text centred within generous safe margins so Etsy cropping does not cut anything off.
 * Return only the generated image in the chat image viewer.`;
 
@@ -695,7 +772,8 @@ export function buildPerfectGiftImagePrompt(roomTheme: string, listingItem: stri
   return PERFECT_GIFT_IMAGE_PROMPT
     .replaceAll('{{ROOM_THEME}}', promptVariable(roomTheme))
     .replaceAll('{{ANIMAL}}', promptVariable(listingItem))
-    .replaceAll('{{FRAME_COLOUR}}', 'Natural Oak');
+    .replaceAll('{{FRAME_COLOUR}}', 'Natural Oak')
+    .replaceAll('{{PRINT_SIZE}}', 'A3');
 }
 
 const FRAMES_IMAGE_PROMPT = `PROMPT – Frame examples
@@ -812,6 +890,313 @@ export function buildFramesImagePrompt(roomTheme: string, listingItem: string) {
     .replaceAll('{{ANIMAL}}', promptVariable(listingItem))
     .replaceAll('{{FRAME_COLOURS}}', 'Black, White, Dark Brown, Natural Wood')
     .replaceAll('{{REFERENCE_IMAGE}}', 'Copied thumbnail image');
+}
+
+const THREE_FRAMES_IMAGE_PROMPT = `PROMPT – Print and Frame Options
+
+Generate this as one inline ChatGPT image only.
+
+Do not create or attach a downloadable file.
+
+Do not return a filename, Markdown link, sandbox link, download link, explanation, or other text.
+
+Do not use Python, Code Interpreter, Data Analysis, or file generation.
+
+Return only the generated image in the chat image viewer.
+
+Create one square Etsy listing image comparing an unframed paper print with the same print displayed in the three frame colours offered by PrintShrimp.
+
+INPUTS
+
+ROOM_THEME = "{{ROOM_THEME}}"
+ANIMAL = "{{ANIMAL}}"
+FRAME_COLOURS = "{{FRAME_COLOURS}}"
+SOURCE_IMAGE_FILE = "{{SOURCE_IMAGE_FILE}}"
+
+SOURCE ARTWORK
+
+Use the uploaded SOURCE_IMAGE_FILE as the artwork in all four examples.
+
+Preserve the source artwork exactly as supplied:
+
+- Do not redraw, alter, recolour, simplify, enhance, replace, expand, or reinterpret it.
+- Do not add anything inside the artwork.
+- Do not remove any existing details.
+- Preserve any existing text exactly, including spelling, punctuation, capitalisation, font appearance, curvature, and placement.
+- Preserve the original aspect ratio.
+- Do not stretch, distort, or crop the artwork.
+- Ensure the complete artwork remains visible in every example.
+
+If the supplied source artwork has transparency:
+
+- Treat transparent areas as empty space rather than as a black background.
+- Composite transparent areas onto the clean white paper of each print.
+- Do not reproduce a black attachment-preview background inside the print.
+- Do not add a black, dark or coloured rectangle behind the artwork.
+- Preserve every visible non-transparent part of the source artwork exactly.
+
+FOUR PRODUCT OPTIONS
+
+Show exactly these four options:
+
+1. Unframed Print
+2. Black Frame
+3. White Frame
+4. Natural Wood Frame
+
+Do not include a dark-brown frame or any additional frame colours.
+
+LAYOUT
+
+Create a clean and evenly balanced 2 × 2 comparison grid:
+
+- Top left: Unframed Print
+- Top right: Black Frame
+- Bottom left: White Frame
+- Bottom right: Natural Wood Frame
+
+Use four equal-sized grid areas with consistent spacing.
+
+Each option must:
+
+- Display the exact same uploaded artwork.
+- Use the same portrait orientation.
+- Show the same physical print size.
+- Use the same visible artwork scale.
+- Preserve the same artwork proportions.
+- Show the complete artwork.
+- Be centred within its grid area.
+- Be photographed from the same straight-on angle.
+- Receive the same lighting and shadow treatment.
+
+The visible paper area must be identical in size across all four examples.
+
+The framed examples will be slightly larger overall because the frames surround the same-sized paper print.
+
+Do not reduce the visible print size inside the frames to make the outside frame dimensions match the unframed example.
+
+UNFRAMED PRINT
+
+Show the first option as a professionally printed, unframed paper print.
+
+The unframed print must:
+
+- Have clearly visible paper edges.
+- Have realistic portrait proportions.
+- Appear flat and straight.
+- Have a subtle natural paper texture.
+- Cast a soft, narrow contact shadow.
+- Contain no frame.
+- Contain no mount or mat board.
+- Contain no glass.
+- Contain no poster hanger.
+- Contain no clips, tape, pins, or visible fixings.
+- Not curl, bend, fold, warp, or appear damaged.
+- Not appear as a canvas or mounted board.
+
+Present it as a clean paper print placed flat against the neutral background for comparison purposes.
+
+FRAMED OPTIONS
+
+Show the remaining three examples using the same simple, modern frame design.
+
+Only the frame colour or finish may change:
+
+- Black: smooth matte-black finish.
+- White: smooth matte-white finish.
+- Natural Wood: pale natural-wood finish with subtle realistic grain.
+
+All three frames must have:
+
+- Identical dimensions.
+- Identical moulding width.
+- Identical moulding profile.
+- Identical depth.
+- Identical corner joints.
+- The same visible print size.
+- The same artwork placement.
+- The same white border or mount treatment.
+- The same glass appearance.
+- The same camera angle.
+- The same lighting.
+- The same soft, narrow contact-shadow treatment.
+
+Use thin or medium-width contemporary frames.
+
+The white frame must remain clearly visible against the background through realistic edges and a soft contact shadow. Do not darken or recolour the white frame merely to improve contrast.
+
+Do not use ornate, distressed, metallic, glossy, brightly coloured, dark-brown, reddish-brown, or decorative frames.
+
+MOUNT AND BORDER
+
+If a white mount or border is needed, use exactly the same border width in all three framed examples.
+
+Do not add a mount to the unframed print unless that white border is already part of the supplied source artwork.
+
+Never crop, stretch, enlarge, or distort the artwork to fit a frame.
+
+BACKGROUND
+
+Use one consistent, plain, pale warm-greige background across the complete 2 × 2 grid.
+
+Use a colour approximately equivalent to \`#DED9D0\`: light enough to complement the black frame, but sufficiently darker than pure white to define the white frame clearly.
+
+The background must:
+
+- Provide clear visual separation around the unframed white paper and white frame.
+- Complement the pale natural-wood frame without matching or blending into it.
+- Remain lighter and visually quieter than the black frame.
+- Have a subtle matte painted-wall or studio-surface texture.
+- Use exactly the same colour, brightness and texture across all four grid areas.
+- Remain neutral and must not be influenced by ROOM_THEME.
+- Contain no colour gradient, vignette, panel divisions or differently coloured grid areas.
+
+Ensure every product has a soft, narrow contact shadow so that the white paper, white frame and pale natural-wood frame remain clearly defined against the background.
+
+Do not use:
+
+- Pure white
+- Cream or yellow-toned beige
+- A background close to the natural-wood colour
+- Dark grey
+- Green
+- Blue
+- Strongly coloured walls
+- Different background colours behind different options
+- Patterned wallpaper
+- Wall decals
+- Murals
+- Furniture
+- Shelves
+- Plants
+- Toys
+- Additional pictures
+- Decorative room scenes
+- An underwater setting
+
+Keep the background plain, neutral, consistent and visually secondary to the four product options.
+
+ROOM THEME
+
+ROOM_THEME must not change the background colour.
+
+ROOM_THEME may influence only one or two extremely subtle styling details if they are genuinely necessary.
+
+Do not add themed props, decorations, sea-creature ornaments, shells, waves, toys or underwater elements. The artwork itself already conveys the specified room theme.
+
+TEXT LABELS
+
+If accurate text can be rendered, place one simple label beneath each corresponding option:
+
+- Unframed Print
+- Black Frame
+- White Frame
+- Natural Wood Frame
+
+The labels must:
+
+- Use identical font, size, weight, and colour.
+- Use a muted dark-grey colour that is clearly readable against the warm-greige background.
+- Be horizontally centred beneath the correct option.
+- Be spelled exactly as supplied.
+- Be clear and easy to read.
+- Remain outside the artwork and frames.
+- Not overlap any product example or shadow.
+
+Do not abbreviate, reword, misspell, duplicate, or swap the labels.
+
+If accurate text rendering cannot be guaranteed, do not generate substitute or approximate text. Instead, leave equal clean blank space beneath all four options so the labels can be added manually later.
+
+PRODUCT ACCURACY
+
+This comparison shows four different product presentation options:
+
+- One unframed paper print.
+- One print in a black frame.
+- One print in a white frame.
+- One print in a natural-wood frame.
+
+Do not imply that every order includes a frame.
+
+A frame is supplied only when the customer selects a framed product option.
+
+Do not add:
+
+- Prices
+- Discounts
+- Sale badges
+- Delivery claims
+- Digital-download badges
+- Promotional banners
+- Logos
+- Watermarks
+- Packaging
+- Misleading product claims
+
+STYLE
+
+- Photorealistic Etsy product-comparison image.
+- Clean, premium, warm, calm, and professional.
+- Neutral Scandinavian-inspired presentation.
+- Soft, even natural lighting.
+- Gentle, realistic shadows.
+- Soft, narrow contact shadows around every product.
+- Minimal glass reflections.
+- Consistent colour balance across all four examples.
+- The artwork must remain the main visual focus.
+- The black, white and natural-wood frame finishes must all remain clearly distinguishable.
+
+AVOID
+
+- People
+- Children or children’s faces
+- Pets
+- Brand names or logos
+- Copyrighted characters
+- Additional artwork
+- Extra product options
+- More than three frames
+- Dark-brown frames
+- Inconsistent frame styles
+- Inconsistent frame thicknesses
+- Inconsistent print sizes
+- Different artwork scales
+- Cropped artwork
+- Distorted artwork
+- Redrawn artwork
+- Black backgrounds caused by source transparency
+- Warped frames
+- Curled or folded paper
+- Canvas prints
+- Poster hangers
+- Clips or visible fixings
+- Messy clutter
+- Busy backgrounds
+- Harsh shadows
+- Strong reflections
+- Unreadable or incorrect text
+- Watermarks
+
+OUTPUT
+
+- Create one square Etsy listing image.
+- Target dimensions: 3000 × 3000 pixels.
+- Minimum dimensions: 2000 × 2000 pixels.
+- Use an sRGB colour profile.
+- Use a clean 2 × 2 grid.
+- Show exactly one unframed print and exactly three framed prints.
+- Keep all four examples centred within generous safe margins.
+- Ensure Etsy cropping does not cut off any print, frame, label, or shadow.
+- Keep the uploaded artwork clear and recognisable at Etsy thumbnail size.
+- Ensure the pale warm-greige background clearly separates the unframed white paper, white frame, black frame and natural-wood frame.
+- Return only the generated image in the chat image viewer.`;
+
+export function buildThreeFramesImagePrompt(roomTheme: string, listingItem: string) {
+  return THREE_FRAMES_IMAGE_PROMPT
+    .replaceAll('{{ROOM_THEME}}', promptVariable(roomTheme))
+    .replaceAll('{{ANIMAL}}', promptVariable(listingItem))
+    .replaceAll('{{FRAME_COLOURS}}', 'Black, White, Natural Wood')
+    .replaceAll('{{SOURCE_IMAGE_FILE}}', 'Copied thumbnail image');
 }
 
 const SIZES_IMAGE_PROMPT = `ROOM_THEME = "{{ROOM_THEME}}"
@@ -1077,6 +1462,10 @@ export function buildSizesImagePrompt(roomTheme: string, listingItem: string) {
     .replaceAll('{{ROOM_THEME}}', promptVariable(roomTheme))
     .replaceAll('{{ANIMAL}}', promptVariable(listingItem))
     .replaceAll('{{FRAME_COLOUR}}', 'Natural Oak');
+}
+
+export function buildAspectRatiosImagePrompt() {
+  return ASPECT_RATIOS_IMAGE_PROMPT;
 }
 
 const NO_FRAME_INCLUDED_IMAGE_PROMPT = `ROOM_THEME = "{{ROOM_THEME}}"
@@ -2012,7 +2401,7 @@ export function buildPersonalUseIncludedImagePrompt(roomTheme: string, listingIt
 
 const BEDROOM_DOOR_IMAGE_PROMPT = `ROOM_THEME = "{{ROOM_THEME}}"
 ANIMAL = "{{ANIMAL}}"
-FRAME_COLOUR = "Natural Oak"
+FRAME_COLOUR = "Black"
 
 Use the image attached to this prompt as the source artwork.
 
@@ -2022,7 +2411,299 @@ Do not create or attach a downloadable file. Do not return a filename, Markdown 
 
 Return only the generated image in the chat image viewer.
 
-Create one photorealistic square Etsy mockup scene showing printable children’s artwork framed and mounted on a child’s bedroom door.
+Create one photorealistic square Etsy mockup showing printable children’s artwork framed and mounted on the outside of a child’s bedroom door, clearly photographed from the hallway.
+
+SOURCE ARTWORK
+
+Use the attached transparent PNG as the artwork displayed in the mockup.
+
+Preserve every visible, non-transparent part of the source artwork exactly as supplied:
+
+* Do not redraw, alter, recolour, simplify, enhance, replace, expand, or reinterpret it.
+* Do not add anything inside the artwork.
+* Do not remove any existing visible details.
+* Preserve all existing text exactly, including spelling, punctuation, capitalisation, font appearance, curvature, colour, and placement.
+* Preserve the original aspect ratio.
+* Do not stretch, distort, or crop the artwork.
+* Ensure the complete artwork remains visible.
+
+TRANSPARENT BACKGROUND HANDLING
+
+The source artwork has a transparent background.
+
+Any black-looking background visible in the attachment preview represents transparent pixels displayed against a black viewer background. It is not part of the artwork.
+
+* Do not reproduce or interpret transparent areas as black.
+* Do not place a black rectangle or dark-coloured background behind the artwork.
+* Composite the transparent areas naturally onto the clean white paper of the physical print.
+* The printed artwork inside the frame must therefore have a clean white background.
+* Preserve the turtle, personalised text, colours, positioning, proportions, and every non-transparent pixel exactly.
+* Do not show transparency grids, checkerboards, cut-out holes, or transparent paper.
+* Do not recolour or modify the white paper.
+* Any clean white mount surrounding the print must remain visually distinct from the printed paper using only its physical edges and subtle natural shadows.
+
+ESSENTIAL VIEWPOINT
+
+The photograph must unmistakably be taken from the hallway, looking towards the outside of a child’s closed bedroom door.
+
+Position the camera approximately 1.5 to 2 metres away from the door in the hallway.
+
+Show enough surrounding hallway architecture to establish the viewpoint clearly:
+
+* A visible section of hallway floor extending towards the door
+* Hallway skirting boards
+* The complete door casing or most of the door casing
+* A short section of wall on both sides of the doorway
+* A small wall return, corner, or adjoining section of hallway on one side
+* Realistic depth between the camera position and the bedroom door
+
+Use a very slight three-quarter hallway angle of approximately 5–10 degrees rather than a perfectly flat studio-style view. The door should still appear nearly front-facing, and the artwork must remain easy to see.
+
+Do not make the scene look like it was photographed from inside the child’s bedroom.
+
+Do not show a bed, bedroom furniture, or the interior of the bedroom. The door must remain closed.
+
+CHILD’S BEDROOM ENTRANCE
+
+Make the entrance feel recognisably like a child’s bedroom while remaining tasteful, calm, and premium.
+
+Use a standard warm-white or soft-cream painted interior door with:
+
+* Realistic residential bedroom-door proportions
+* Four or six subtle recessed panels, or a broad flat upper panel
+* A visible door frame and architrave
+* A simple lever-style door handle at a realistic height
+* A small keyhole or plain handle plate if appropriate
+* Subtle painted wood grain
+* Slightly softened signs of normal family-home use
+* Natural contact shadows around the door casing and frame
+
+The door should look like a genuine bedroom door in a well-kept family home, not a front door, cupboard door, hotel door, classroom door, nursery-school door, or freestanding display panel.
+
+Add only two or three understated details outside the bedroom that gently indicate the room belongs to a child. Suitable details include:
+
+* One low child-height wooden wall peg
+* A small neutral-coloured child’s backpack hanging from the peg
+* A small pair of tidy children’s slippers or soft shoes beside the skirting board
+* A narrow pale-oak hallway shelf
+* A small woven storage basket
+* A soft, child-friendly patterned hallway runner
+* One tasteful nursery-style ornament
+
+Use only two or three of these details. Keep them subtle, naturally positioned, and secondary to the framed artwork.
+
+Do not add a separate name plaque, bedroom sign, door number, lettering, or other text.
+
+HALLWAY STYLE
+
+Create a calm, premium Scandinavian-style family hallway.
+
+Use:
+
+* Warm-white or cream hallway walls
+* Pale-oak or light natural-wood flooring
+* White or cream skirting boards
+* Soft woven natural textures
+* Muted nursery-friendly colours
+* Gentle daylight entering from elsewhere in the hallway
+* Clean but lived-in residential styling
+* Realistic architectural depth
+
+The hallway must feel warm, cosy, welcoming, and suitable for a family home.
+
+Avoid making it look like a product studio, hotel corridor, office corridor, school corridor, hospital corridor, or empty undecorated passageway.
+
+THEME AND SURROUNDINGS
+
+Use ROOM_THEME as the inspiration for a few subtle decorative accents around the child’s bedroom entrance.
+
+The theme must be recognisable but understated and must not overwhelm the doorway.
+
+For ROOM_THEME = "Sea Creatures", suitable accents include:
+
+* A muted blue-green hallway runner with a subtle wave pattern
+* One small wooden or ceramic sea-creature ornament on a narrow shelf
+* Two or three very small, tasteful sea-inspired wall decals beside the door
+* A soft teal or seafoam child’s backpack
+* A small shell-shaped or wave-patterned accessory
+
+Use no more than two or three themed accents in total.
+
+Keep all accents outside the picture frame and away from the artwork, door handle, and door edges.
+
+Do not turn the hallway into an underwater scene. Do not add realistic water, coral reefs, ocean backgrounds, beach scenery, excessive shells, or bright cartoon sea-creature decorations.
+
+ANIMAL GUIDANCE
+
+ANIMAL identifies the animal featured in the source artwork.
+
+Do not allow ANIMAL to control the whole scene design unless ROOM_THEME supports it.
+
+You may include one small supporting accent representing ANIMAL, but only when it fits naturally with ROOM_THEME.
+
+If an animal accent is included, it must depict the exact animal specified by ANIMAL.
+
+Do not include any other animal species, animal toys, animal motifs, or animal icons unless they are:
+
+* Explicitly included in ROOM_THEME
+* Explicitly named in ANIMAL
+* Already visible in the attached source artwork
+
+ARTWORK PLACEMENT
+
+Place the attached artwork inside a simple, slim FRAME_COLOUR picture frame mounted directly on the outside of the child’s bedroom door.
+
+Position the frame:
+
+* Horizontally centred on the door itself
+* On the upper-middle section of the door
+* With its centre approximately at adult eye level
+* Clearly above the door handle
+* With generous space between the frame and the door edges
+* In a location that would be practical and believable in a real family home
+
+Use a realistic A4-sized white paper print inside the frame, proportionate to a standard bedroom door.
+
+The source artwork’s transparent areas must show the clean white paper beneath them. They must not appear black, dark, transparent, or cut out.
+
+An A4 frame must look modestly sized relative to the door. It must not occupy most of the door width or resemble an A3, A2, or oversized poster frame.
+
+The frame must be:
+
+* Straight and level
+* Realistically proportioned
+* Elegant and lightweight in appearance
+* Clearly coloured according to FRAME_COLOUR
+* Mounted flush against the door
+* Supported by a subtle, realistic contact shadow
+* Fully visible and unobstructed
+
+Do not show the frame floating, suspended by a ribbon, leaning against the door, attached to the wall, or hanging from the handle.
+
+Make the framed artwork the primary visual focus while retaining enough hallway context to establish the location.
+
+The illustration and all existing personalised text within the source artwork must remain clear and readable.
+
+Preserve the artwork’s original aspect ratio. If its proportions do not match the frame, add a clean white mount around the complete white paper print. Never stretch, crop, or distort the artwork to fit.
+
+Do not add any other pictures, posters, competing wall art, separate name signs, or additional framed images.
+
+CAMERA AND COMPOSITION
+
+* Square composition
+* Camera positioned in the hallway approximately 1.5 to 2 metres from the door
+* Camera approximately level with the framed artwork
+* Slight three-quarter hallway angle of approximately 5–10 degrees
+* Door kept almost front-facing
+* Hallway floor visible in the foreground
+* Door casing and surrounding hallway wall clearly visible
+* Realistic depth and perspective
+* Vertical architectural lines kept straight
+* No extreme perspective
+* No close-up crop showing only the middle of the door
+* No wide-angle distortion
+* No fisheye effect
+* No tilted camera
+* No dramatic diagonal composition
+
+The door should occupy approximately 60–70% of the image width, leaving enough visible hallway wall and floor to communicate that the photograph was taken from outside the bedroom.
+
+The frame and artwork must remain large enough to be clearly seen in an Etsy listing thumbnail.
+
+LIGHTING
+
+* Soft natural daylight entering from elsewhere in the hallway
+* Warm, balanced interior tones
+* Gentle natural shadows
+* Subtle contact shadows around the door frame and picture frame
+* Minimal glass reflections
+* No glare across the artwork
+* No harsh direct sunlight
+* No artificial spotlight focused on the frame
+* Photorealistic Etsy lifestyle photography
+* Calm, cosy, clean, premium appearance
+
+PRODUCT ACCURACY
+
+This Etsy product is a digital download.
+
+The framed artwork is only a lifestyle mockup showing how the downloaded artwork could look when printed on white paper, framed, and displayed on a child’s bedroom door.
+
+Do not add promotional elements implying that a physical frame, printed poster, or shipped product is supplied.
+
+DO NOT INCLUDE
+
+* A black or dark background inside the printed artwork
+* Black filling in any transparent part of the source PNG
+* Transparency grids or checkerboard patterns
+* People
+* Children or children’s faces
+* Pets
+* An open bedroom door
+* A view from inside the bedroom
+* Beds or bedroom furniture
+* Brand names or logos
+* Copyrighted characters
+* Additional wall art
+* Additional text
+* Labels
+* Door numbers
+* Separate name signs
+* Changes to text already present in the source artwork
+* Watermarks
+* Excessive toys
+* Messy clutter
+* Dark scenes
+* Harsh shadows
+* Warped doors or frames
+* Cropped or distorted artwork
+* Oversized frames that look implausible on the door
+* Overly bright cartoon colours
+* Unrelated decorative details
+* Packaging
+* Parcels
+* Postage labels
+* Shipping boxes
+* Delivery vehicles
+* Wrapped prints
+* A front entrance door
+* A hotel, office, school, nursery-school, or hospital corridor
+* A studio backdrop pretending to be a hallway
+* An underwater environment
+* Excessive sea-themed décor
+* Any unrelated animal species
+
+OUTPUT
+
+* Create one square Etsy listing image.
+* Target dimensions: 3000 × 3000 pixels.
+* Minimum dimensions: 2000 × 2000 pixels.
+* Use an sRGB colour profile.
+* Keep the complete framed artwork within generous safe margins so Etsy cropping does not cut it off.
+* Ensure the hallway foreground, door casing, door handle, surrounding walls, and child-friendly entrance details are visible.
+* Ensure it is immediately obvious that the viewer is standing in a family hallway looking at the outside of a child’s bedroom door.
+* Ensure every transparent area in the source PNG appears as clean white printed paper, never black.
+* Return only the generated image in the chat image viewer.`;
+
+export function buildBedroomDoorImagePrompt(roomTheme: string, listingItem: string) {
+  return BEDROOM_DOOR_IMAGE_PROMPT
+    .replaceAll('{{ROOM_THEME}}', promptVariable(roomTheme))
+    .replaceAll('{{ANIMAL}}', promptVariable(listingItem));
+}
+
+const BESIDE_BED_IMAGE_PROMPT = `ROOM_THEME = "{{ROOM_THEME}}"
+ANIMAL = "{{ANIMAL}}"
+FRAME_COLOUR = "Black"
+
+Use the image attached to this prompt as the source artwork.
+
+Generate one inline ChatGPT image only.
+
+Do not create or attach a downloadable file. Do not return a filename, Markdown link, sandbox link, download link, explanation, or other text. Do not use Python, Code Interpreter, Data Analysis, or file generation.
+
+Return only the generated image in the chat image viewer.
+
+Create one photorealistic square Etsy mockup showing printable children’s artwork framed and hanging on the wall of a child’s bedroom, with a slim display shelf beneath it containing a few tasteful children’s items inspired by ROOM_THEME.
 
 SOURCE ARTWORK
 
@@ -2038,123 +2719,168 @@ Preserve the source artwork exactly as supplied:
 - Do not stretch, distort, or crop it.
 - Ensure the complete artwork remains visible.
 
-SCENE AND DOOR STYLE
+BEDROOM SETTING
 
-Create a calm, premium Scandinavian-style setting focused on the outside of a child’s bedroom door, viewed from the hallway.
+Create a calm, premium Scandinavian-style child’s bedroom.
 
-Use a closed, warm-white or cream painted wooden door with a broad, flat upper section suitable for mounting the picture frame.
+Show a warm-white or soft-cream painted wall with subtle natural texture. The wall must look like a real interior bedroom wall rather than a studio backdrop.
 
-The door must look like a real interior bedroom door:
+Include enough surrounding detail to establish that this is a child’s bedroom while keeping the composition clean and uncluttered.
 
-- Standard, realistic proportions
-- Visible door casing and surrounding wall
-- A simple, realistically positioned door handle
-- Subtle painted wood texture
-- Soft natural light
-- Gentle contact shadows
+Suitable surrounding details include:
 
-Compose the scene so the door occupies most of the image. Include enough of the door edges, casing, and handle to make it immediately clear that the artwork is mounted on a bedroom door.
-
-The entire door does not need to be visible. Prioritise a clear, appealing view of the framed artwork and recognisable door details.
-
-THEME AND SURROUNDINGS
-
-Use the value of ROOM_THEME as the main visual theme for the decorative accents around the bedroom entrance.
-
-The scene must be softly but recognisably inspired by ROOM_THEME without becoming busy.
-
-Use:
-
-- Warm-white or cream walls
-- Pale-oak details where appropriate
-- Soft natural textures
+- A small section of pale natural-wood flooring
+- White or cream skirting boards
+- The edge of a soft nursery rug
+- A partial glimpse of a child’s bed or bedside furniture at one edge
+- Soft natural textiles
+- Pale-oak furniture or decorative details
 - Muted, nursery-friendly colours
-- Two or three subtle decorative accents connected to ROOM_THEME
 
-Theme accents may appear as:
+Do not let furniture or decorations compete with the framed artwork.
 
-- Small, understated decals on the wall beside the door
-- A small themed ornament on a narrow hallway shelf
-- A subtle patterned rug near the doorway
-- A small themed accessory hanging from a wall peg beside the door
+THEME
 
-For a Bugs theme, suitable details include delicate leaf shapes, botanical accents, and a small beetle motif.
+Use ROOM_THEME as the main inspiration for the colours and decorative items.
 
-Keep decorations away from the frame and do not obscure the artwork, door handle, or door edges.
+The theme should be softly but recognisably represented without turning the entire room into a theatrical themed environment.
 
-Keep the scene clean, calm, cosy, realistic, premium, and uncluttered.
+For ROOM_THEME = "Sea Creatures", use a restrained palette such as:
+
+- Soft seafoam green
+- Muted teal
+- Dusty blue
+- Warm cream
+- Pale natural wood
+
+Do not create an underwater scene. The setting must remain a realistic child’s bedroom.
+
+ARTWORK PLACEMENT
+
+Place the attached artwork inside a simple, slim FRAME_COLOUR picture frame hanging directly on the bedroom wall.
+
+Position the frame:
+
+- Horizontally centred within the composition
+- On the upper-middle section of the wall
+- Directly above the display shelf
+- With a believable gap between the bottom of the frame and the shelf
+- Straight and level
+- Fully visible and unobstructed
+- Within generous safe margins
+
+Use a realistic A4-sized print inside the frame.
+
+The framed print must look appropriately sized relative to the shelf and surrounding bedroom furniture. It must not appear oversized.
+
+The frame must be:
+
+- Simple and elegant
+- Lightweight in appearance
+- Clearly coloured according to FRAME_COLOUR
+- Mounted flat against the wall
+- Supported by a subtle, realistic contact shadow
+- Free from excessive reflections
+
+Do not show the frame floating, leaning on the shelf, suspended by a ribbon, or resting against the wall.
+
+Make the framed artwork the primary focus of the image.
+
+Preserve the artwork’s original aspect ratio. If its proportions do not match the frame, add a clean white mount or border. Never stretch, crop, or distort the artwork to fit.
+
+SHELF BENEATH THE PICTURE
+
+Place one slim pale-oak or warm-white picture ledge directly beneath the framed artwork.
+
+The shelf must:
+
+- Be horizontally centred beneath the frame
+- Be slightly wider than the framed artwork
+- Be securely mounted to the wall
+- Have realistic proportions and depth
+- Cast a soft contact shadow against the wall
+- Remain visually secondary to the framed artwork
+- Not touch, overlap, or obscure the frame
+
+Leave a realistic vertical gap of approximately 15–25 cm between the bottom of the frame and the top of the shelf.
+
+Place only three or four small children’s items on the shelf.
+
+The items must be inspired by ROOM_THEME and arranged naturally with varied but balanced spacing.
+
+For ROOM_THEME = "Sea Creatures", suitable shelf items include:
+
+- One small wooden green sea turtle toy
+- One small muted-blue whale or fish ornament
+- One short stack of two nursery books in seafoam, cream, or dusty-blue colours
+- One small shell-shaped night light
+- One small wooden sailing boat
+- One small woven basket in a natural colour
+
+Select only three or four items. Do not include every suggested item.
+
+At least one item should look clearly child-friendly, such as a small wooden toy or nursery book.
+
+Keep all shelf items smaller than the framed artwork and positioned below it.
+
+Do not allow any item to overlap, cover, or distract from the artwork.
+
+Do not place text, readable book titles, logos, branding, or character artwork on the shelf items.
 
 ANIMAL GUIDANCE
 
 ANIMAL identifies the animal featured in the source artwork.
 
-Do not allow ANIMAL to control the whole scene design unless ROOM_THEME explicitly describes an animal-themed setting.
+You may include one small supporting shelf ornament representing ANIMAL when it fits naturally with ROOM_THEME.
 
-You may include one small supporting accent representing ANIMAL, but only when it fits naturally with ROOM_THEME.
+If included, it must depict the exact animal specified by ANIMAL.
 
-If an animal accent is included, it must depict the exact animal specified by ANIMAL.
+Do not include multiple copies of ANIMAL.
 
-Do not include any other animal species, animal toys, animal motifs, or animal icons unless they are:
+Do not include unrelated animal species unless they are naturally part of ROOM_THEME.
 
-- Explicitly included in ROOM_THEME
-- Explicitly named in ANIMAL
-- Already visible in the attached source artwork
+Do not add animal toys, motifs, or illustrations elsewhere in the room unless permitted by ROOM_THEME.
 
-Do not default to a particular animal or add unrelated animal decorations.
+COMPOSITION
 
-ARTWORK PLACEMENT
+Create a polished square Etsy listing composition.
 
-Place the attached artwork inside a simple, slim FRAME_COLOUR picture frame mounted directly on the bedroom door.
+The framed artwork must occupy the upper central area, with the shelf and themed children’s items directly beneath it.
 
-Position the frame:
+Use:
 
-- Horizontally centred on the door itself
-- On the upper-middle section of the door
-- With its centre approximately at adult eye level
-- Clearly above the door handle
-- With generous space between the frame and the door edges
-
-Use a realistic A4-sized print inside the frame, proportionate to a standard bedroom door.
-
-The frame must be:
-
-- Straight and level
-- Realistically proportioned
-- Elegant and lightweight in appearance
-- Clearly coloured according to FRAME_COLOUR
-- Mounted flush against the door with a subtle, realistic contact shadow
-- Fully visible and unobstructed
-
-Do not show the frame floating, suspended by a ribbon, leaning against the door, or hanging from the handle.
-
-Make the framed artwork the primary focus of the image. Frame the photograph closely enough that the illustration and any existing personalised text are easy to see.
-
-Preserve the artwork’s original aspect ratio. If its proportions do not match the frame, add a clean white mount or border. Never stretch, crop, or distort the artwork to fit.
-
-Do not add any other pictures, posters, competing wall art, or separate name signs.
-
-CAMERA AND LIGHTING
-
-- Straight-on photography facing the door
+- A mostly straight-on camera angle
 - Camera positioned approximately level with the framed artwork
-- Door surface parallel to the camera sensor
-- Vertical door edges kept straight
-- No extreme perspective
-- No wide-angle distortion
-- No fisheye effect
-- Soft natural daylight from a nearby hallway window
-- Gentle, natural shadows
-- Minimal glass reflections so the artwork remains clearly visible
-- Photorealistic Etsy product photography
+- Wall surface nearly parallel to the camera sensor
+- Vertical and horizontal lines kept straight
+- Enough surrounding bedroom context to make the scene believable
+- A relatively close composition so the illustration and existing personalised text remain easy to see
+- Balanced negative space around the frame
+- Generous safe margins for Etsy cropping
+
+The framed artwork should remain the largest and clearest decorative element.
+
+The shelf and children’s items should support the presentation without becoming the main subject.
+
+LIGHTING
+
+- Soft natural daylight from a nearby bedroom window
+- Gentle, realistic shadows
+- Warm, balanced interior tones
+- Minimal glass reflections
+- No glare across the artwork
+- No harsh direct sunlight
+- No dramatic spotlighting
+- Photorealistic Etsy lifestyle photography
 - Calm, cosy, clean, premium appearance
 
 PRODUCT ACCURACY
 
 This Etsy product is a digital download.
 
-The framed artwork is only a lifestyle mockup showing how the downloaded artwork could look when printed, framed, and displayed on a child’s bedroom door.
+The framed artwork, shelf, toys, books, ornaments, and bedroom furnishings are lifestyle staging only. They are not included with the digital download.
 
-Do not add promotional elements implying that a physical frame, printed poster, or shipped product is supplied.
+Do not add promotional elements suggesting that a physical frame, shelf, printed poster, toy, or shipped product is supplied.
 
 DO NOT INCLUDE
 
@@ -2163,26 +2889,33 @@ DO NOT INCLUDE
 - Pets
 - Brand names or logos
 - Copyrighted characters
+- Additional framed pictures
 - Additional wall art
-- Additional text, labels, door numbers, or name signs
-- Changes to any text already present in the source artwork
+- Separate name signs
+- Additional text or labels
+- Readable book titles
+- Changes to text already present in the source artwork
 - Watermarks
+- More than one shelf
+- More than four items on the shelf
+- Large toys that compete with the artwork
+- Items positioned in front of the artwork
 - Messy clutter
 - Dark scenes
 - Harsh shadows
-- Warped doors or frames
+- Warped walls, shelves, or frames
 - Cropped or distorted artwork
-- Oversized frames that look implausible on the door
+- Oversized frames
 - Overly bright cartoon colours
-- Unrelated decorative details
 - Packaging
 - Parcels
 - Postage labels
 - Shipping boxes
 - Delivery vehicles
 - Wrapped prints
-- An animal-only setting unless explicitly required by ROOM_THEME
-- Sea, space, farm, jungle, safari, woodland, coastal, underwater, or other themed décor unless explicitly required by ROOM_THEME, ANIMAL, or the attached source artwork
+- An underwater environment
+- Excessive themed decorations
+- Sea, space, farm, jungle, safari, woodland, coastal, or other themed décor unless explicitly required by ROOM_THEME, ANIMAL, or the attached source artwork
 
 OUTPUT
 
@@ -2190,12 +2923,541 @@ OUTPUT
 - Target dimensions: 3000 × 3000 pixels.
 - Minimum dimensions: 2000 × 2000 pixels.
 - Use an sRGB colour profile.
-- Keep the complete framed artwork centred within generous safe margins so Etsy cropping does not cut it off.
-- Ensure the door remains clearly recognisable as a child’s bedroom door.
+- Keep the complete framed artwork centred within generous safe margins.
+- Ensure the artwork remains clear and readable at Etsy thumbnail size.
+- Ensure the shelf is visibly mounted beneath the picture.
+- Include only three or four tasteful children’s items inspired by ROOM_THEME.
+- Keep the framed artwork as the unmistakable primary focus.
 - Return only the generated image in the chat image viewer.`;
 
-export function buildBedroomDoorImagePrompt(roomTheme: string, listingItem: string) {
-  return BEDROOM_DOOR_IMAGE_PROMPT
+export function buildBesideBedImagePrompt(roomTheme: string, listingItem: string) {
+  return BESIDE_BED_IMAGE_PROMPT
+    .replaceAll('{{ROOM_THEME}}', promptVariable(roomTheme))
+    .replaceAll('{{ANIMAL}}', promptVariable(listingItem));
+}
+
+const CUSTOMISED_PLAYROOM_IMAGE_PROMPT = `ROOM_THEME = "{{ROOM_THEME}}"
+ANIMAL = "{{ANIMAL}}"
+FRAME_COLOUR = "Black"
+
+Use the image attached to this prompt as the source artwork.
+
+Generate one inline ChatGPT image only.
+
+Do not create or attach a downloadable file. Do not return a filename, Markdown link, sandbox link, download link, explanation, or other text. Do not use Python, Code Interpreter, Data Analysis, or file generation.
+
+Return only the generated image in the chat image viewer.
+
+Create one photorealistic square Etsy mockup showing printable children’s artwork framed and hanging on the wall of a child’s bedroom, with a small children’s play table positioned beneath it and styled according to ROOM_THEME.
+
+SOURCE ARTWORK
+
+Use the attached image as the artwork displayed in the mockup.
+
+Preserve the source artwork exactly as supplied:
+
+- Do not redraw, alter, recolour, simplify, enhance, replace, expand, or reinterpret it.
+- Do not add anything inside the artwork.
+- Do not remove any existing details.
+- Preserve any existing text exactly, including spelling, punctuation, capitalisation, font appearance, curvature, and placement.
+- Preserve its original aspect ratio.
+- Do not stretch, distort, or crop it.
+- Ensure the complete artwork remains visible.
+
+BEDROOM SETTING
+
+Create a calm, premium Scandinavian-style child’s bedroom.
+
+Show a warm-white or soft-cream painted wall with subtle natural texture. The wall must look like a real bedroom wall rather than a studio backdrop.
+
+Include:
+
+- A visible section of pale natural-wood flooring
+- White or cream skirting boards
+- A soft nursery rug beneath or partly beneath the play table
+- Soft natural textures
+- Muted, nursery-friendly colours
+- Pale-oak furniture details
+- A small amount of realistic bedroom context
+
+The room must feel warm, cosy, welcoming, well maintained, and genuinely suitable for a young child.
+
+Keep the scene uncluttered. Do not allow surrounding furniture or decorations to compete with the framed artwork.
+
+ROOM THEME
+
+Use ROOM_THEME as the inspiration for the colours, play-table styling, and a few small accessories.
+
+The theme must be softly but recognisably represented without turning the room into a theatrical or fantasy environment.
+
+For ROOM_THEME = "Sea Creatures", use a restrained palette such as:
+
+- Soft seafoam green
+- Muted teal
+- Dusty blue
+- Warm cream
+- Pale natural wood
+
+Suitable theme details may include:
+
+- A soft wave-patterned rug
+- Muted blue or seafoam table accessories
+- One or two small wooden sea-creature toys
+- A simple sea-themed activity on the tabletop
+- A subtle shell-shaped or wave-shaped accessory
+
+Do not create an underwater room. Do not add realistic water, coral reefs, ocean scenery, beach scenery, or excessive sea-themed decorations.
+
+ARTWORK PLACEMENT
+
+Place the attached artwork inside a simple, slim FRAME_COLOUR picture frame hanging directly on the bedroom wall.
+
+Position the frame:
+
+- Horizontally centred within the composition
+- On the upper-middle section of the wall
+- Directly above the children’s play table
+- Clearly separated from the table and its contents
+- Straight and level
+- Fully visible and unobstructed
+- Within generous safe margins
+
+Use a realistic A4-sized print inside the frame.
+
+The framed print must look appropriately sized in relation to the child-sized table. It must not appear oversized.
+
+The frame must be:
+
+- Simple and elegant
+- Lightweight in appearance
+- Clearly coloured according to FRAME_COLOUR
+- Mounted flat against the wall
+- Supported by a subtle, realistic contact shadow
+- Free from excessive reflections
+- Completely visible
+
+Do not show the frame floating, leaning on the table, suspended by a ribbon, or resting against the wall.
+
+Make the framed artwork the primary focus of the image.
+
+The illustration and any existing personalised text must remain clear and easy to see.
+
+Preserve the artwork’s original aspect ratio. If its proportions do not match the frame, add a clean white mount or border. Never stretch, crop, or distort the artwork to fit.
+
+CHILDREN’S PLAY TABLE
+
+Place one small child-sized play table beneath the framed artwork.
+
+The play table must:
+
+- Be clearly designed for a young child
+- Be lower and smaller than an adult table or desk
+- Be made from pale oak or warm-white painted wood
+- Have softly rounded corners
+- Have safe, sturdy legs
+- Be centred beneath the framed artwork
+- Be positioned against or close to the wall
+- Remain fully separate from the frame
+- Look realistic and usable
+- Fit naturally within a premium Scandinavian-style bedroom
+
+Include one or two small matching child-sized chairs or stools.
+
+Position the chairs naturally beside or partly tucked beneath the table. Do not allow a chair to obscure the table or framed artwork.
+
+The table itself may include subtle colours or decorative details inspired by ROOM_THEME, but it must remain believable as real children’s furniture.
+
+Do not make the table shaped like an animal, boat, shell, or novelty character.
+
+PLAY-TABLE ACTIVITY
+
+Arrange a simple children’s activity on the tabletop inspired by ROOM_THEME.
+
+For ROOM_THEME = "Sea Creatures", suitable activities include:
+
+- A small wooden sea-creature puzzle with only a few pieces
+- Two or three wooden sea-creature figures
+- A small sheet of paper with a simple childlike ocean drawing
+- A few chunky crayons in muted colours
+- A small wooden stacking toy in seafoam and blue tones
+- A shallow activity tray containing a few sea-themed wooden pieces
+
+Select only one main activity and no more than three or four small tabletop objects.
+
+The tabletop must remain tidy and partly visible.
+
+Do not add readable writing, brand names, logos, copyrighted characters, detailed printed worksheets, or recognisable commercial toys.
+
+ANIMAL GUIDANCE
+
+ANIMAL identifies the animal featured in the source artwork.
+
+You may include one small supporting toy or puzzle piece representing ANIMAL when it fits naturally with ROOM_THEME.
+
+If included, it must depict the exact animal specified by ANIMAL.
+
+Do not include multiple copies of ANIMAL.
+
+Do not include unrelated animal species unless they are naturally permitted by ROOM_THEME.
+
+The supporting animal item must remain small and secondary. It must not compete with the animal shown in the framed artwork.
+
+COMPOSITION
+
+Create a polished square Etsy listing composition.
+
+The framed artwork must occupy the upper central area of the image.
+
+The child-sized play table must sit beneath it and help establish that the artwork is displayed in a real child’s bedroom.
+
+Use:
+
+- A mostly straight-on camera angle
+- Camera positioned approximately level with the framed artwork
+- Wall surface nearly parallel to the camera sensor
+- Vertical and horizontal lines kept straight
+- Enough floor visible to show the scale of the play table
+- A relatively close composition so the artwork remains easy to see
+- Balanced negative space around the frame
+- Generous safe margins for Etsy cropping
+- Realistic proportions between the artwork, wall, table, chairs, and room
+
+The framed artwork must remain the largest and clearest decorative element.
+
+The play table and activity should provide child-friendly context without becoming the main subject.
+
+Do not let the table, chairs, or objects overlap or cover any part of the frame.
+
+LIGHTING
+
+- Soft natural daylight from a nearby bedroom window
+- Gentle, realistic shadows
+- Warm, balanced interior tones
+- Minimal glass reflections
+- No glare across the artwork
+- No harsh direct sunlight
+- No dramatic spotlighting
+- Photorealistic Etsy lifestyle photography
+- Calm, cosy, clean, premium appearance
+
+PRODUCT ACCURACY
+
+This Etsy product is a digital download.
+
+The framed artwork, printed poster, frame, play table, chairs, toys, activity items, rug, and bedroom furnishings are lifestyle staging only. They are not included with the digital download.
+
+Do not add promotional elements suggesting that any physical product is supplied.
+
+DO NOT INCLUDE
+
+- People
+- Children or children’s faces
+- Pets
+- Brand names or logos
+- Copyrighted characters
+- Additional framed pictures
+- Additional wall art
+- Separate name signs
+- Additional text or labels
+- Readable book titles
+- Changes to text already present in the source artwork
+- Watermarks
+- Adult-sized desks or chairs
+- School classroom furniture
+- More than one play table
+- More than two chairs
+- More than four small tabletop objects
+- Large toys that compete with the artwork
+- Toys positioned in front of the frame
+- Excessive crayons, puzzle pieces, or craft materials
+- Food or drinks
+- Messy clutter
+- Dark scenes
+- Harsh shadows
+- Warped walls, tables, chairs, or frames
+- Cropped or distorted artwork
+- Oversized frames
+- Overly bright cartoon colours
+- Packaging
+- Parcels
+- Postage labels
+- Shipping boxes
+- Delivery vehicles
+- Wrapped prints
+- An underwater environment
+- Excessive themed decorations
+- Sea, space, farm, jungle, safari, woodland, coastal, or other themed décor unless explicitly required by ROOM_THEME, ANIMAL, or the attached source artwork
+
+OUTPUT
+
+- Create one square Etsy listing image.
+- Target dimensions: 3000 × 3000 pixels.
+- Minimum dimensions: 2000 × 2000 pixels.
+- Use an sRGB colour profile.
+- Keep the complete framed artwork centred within generous safe margins.
+- Ensure the artwork remains clear and readable at Etsy thumbnail size.
+- Ensure the child-sized play table is visibly positioned beneath the picture.
+- Style the table and activity according to ROOM_THEME.
+- Keep the framed artwork as the unmistakable primary focus.
+- Return only the generated image in the chat image viewer.`;
+
+export function buildCustomisedPlayroomImagePrompt(roomTheme: string, listingItem: string) {
+  return CUSTOMISED_PLAYROOM_IMAGE_PROMPT
+    .replaceAll('{{ROOM_THEME}}', promptVariable(roomTheme))
+    .replaceAll('{{ANIMAL}}', promptVariable(listingItem));
+}
+
+const CUSTOMISED_SHELVE_IMAGE_PROMPT = `ROOM_THEME = "{{ROOM_THEME}}"
+ANIMAL = "{{ANIMAL}}"
+FRAME_COLOUR = "Black"
+
+Use the image attached to this prompt as the source artwork.
+
+Generate one inline ChatGPT image only.
+
+Do not create or attach a downloadable file. Do not return a filename, Markdown link, sandbox link, download link, explanation, or other text. Do not use Python, Code Interpreter, Data Analysis, or file generation.
+
+Return only the generated image in the chat image viewer.
+
+Create one photorealistic square Etsy mockup showing printable children’s artwork framed and hanging on a plain wall, with exactly one simple shelf beneath it and exactly two small decorative items inspired by ROOM_THEME.
+
+SOURCE ARTWORK
+
+Use the attached image as the artwork displayed in the mockup.
+
+Preserve the source artwork exactly as supplied:
+
+- Do not redraw, alter, recolour, simplify, enhance, replace, expand, or reinterpret it.
+- Do not add anything inside the artwork.
+- Do not remove any existing details.
+- Preserve any existing text exactly, including spelling, punctuation, capitalisation, font appearance, curvature, and placement.
+- Preserve its original aspect ratio.
+- Do not stretch, distort, or crop it.
+- Ensure the complete artwork remains visible.
+
+PLAIN WALL SETTING
+
+Use one clean, plain interior wall suitable for a premium Scandinavian-style child’s bedroom.
+
+The wall must be:
+
+- Smooth and uncluttered
+- Free from patterns, murals, wallpaper, decals, stickers, stripes, panels, or decorative mouldings
+- Painted in one soft, muted colour inspired by ROOM_THEME
+- Realistic, with only a very subtle painted-wall texture
+- Calm, warm, and nursery-friendly
+
+For ROOM_THEME = "Sea Creatures", use a soft muted seafoam, pale blue-green, very light dusty blue, or warm off-white wall.
+
+ROOM_THEME should influence only:
+
+- The subtle wall colour
+- The colours of the two shelf items
+- The subject or design of the two shelf items
+
+Do not turn the wall or room into a literal themed environment.
+
+Do not create an underwater scene, ocean mural, beach setting, coral reef, fantasy background, or heavily decorated nursery.
+
+ARTWORK PLACEMENT
+
+Place the attached artwork inside a simple, slim FRAME_COLOUR picture frame hanging directly on the wall.
+
+Position the frame:
+
+- Horizontally centred in the composition
+- On the upper-middle section of the wall
+- Directly above the shelf
+- Straight and level
+- Fully visible and unobstructed
+- Within generous safe margins
+- With balanced plain wall space around it
+
+Use a realistic A4-sized print inside the frame.
+
+The framed print must be realistically proportioned and must not appear oversized.
+
+The frame must be:
+
+- Simple and elegant
+- Lightweight in appearance
+- Clearly coloured according to FRAME_COLOUR
+- Mounted flat against the wall
+- Supported by a subtle, realistic contact shadow
+- Free from excessive reflections
+- Completely visible
+
+Do not show the frame floating, leaning on the shelf, suspended by a ribbon, or resting against the wall.
+
+Make the framed artwork the unmistakable primary focus of the image.
+
+The illustration and any existing personalised text must remain clear and easy to see.
+
+Preserve the artwork’s original aspect ratio. If its proportions do not match the frame, add a clean white mount or border. Never stretch, crop, or distort the artwork to fit.
+
+SINGLE SHELF
+
+Place exactly one slim floating shelf directly beneath the framed artwork.
+
+The shelf must:
+
+- Be made from pale natural oak or painted warm white
+- Be horizontally centred beneath the frame
+- Be slightly wider than the framed artwork
+- Have a simple Scandinavian design
+- Have realistic thickness and depth
+- Be securely mounted to the wall
+- Cast a soft, realistic contact shadow
+- Remain visually secondary to the framed artwork
+- Not touch, overlap, or obscure the frame
+
+Leave a realistic vertical gap of approximately 15–25 cm between the bottom of the frame and the top of the shelf.
+
+Do not include any additional shelves, cabinets, tables, desks, picture ledges, bookcases, or storage units.
+
+SHELF ITEMS
+
+Place exactly two small decorative children’s items on the shelf.
+
+Both items must be tasteful, simple, child-friendly, and inspired by ROOM_THEME.
+
+Suitable item types include:
+
+- One small wooden animal ornament
+- One small wooden toy
+- One small night light
+- One small neutral nursery ornament
+- One small theme-inspired decorative object
+- One short stack of two closed nursery books treated as a single grouped item
+
+For ROOM_THEME = "Sea Creatures", suitable choices include:
+
+- One small wooden green sea turtle ornament
+- One small shell-shaped night light
+- One small wooden whale ornament
+- One small wooden sailing boat
+- One short stack of two muted blue and seafoam nursery books
+
+Choose exactly two of these item types.
+
+Arrange one item towards the left side of the shelf and one towards the right, leaving some empty shelf space between them.
+
+The two objects must:
+
+- Remain smaller than the framed artwork
+- Be clearly separate from each other
+- Be fully supported by the shelf
+- Have muted, coordinated colours
+- Look realistic rather than cartoonish
+- Remain secondary to the artwork
+- Contain no readable text, logos, branding, or copyrighted characters
+
+If one shelf item depicts an animal, it should preferably depict the exact ANIMAL specified.
+
+Do not include unrelated animal species unless they are naturally part of ROOM_THEME.
+
+Do not add plants, flowers, vases, lamps, clocks, bunting, garlands, blocks, baskets, or other filler objects unless they are selected as one of the two permitted items and clearly suit ROOM_THEME.
+
+COMPOSITION
+
+Create a clean, balanced square Etsy listing composition.
+
+Use:
+
+- A straight-on camera angle
+- Camera positioned approximately level with the framed artwork
+- Wall surface parallel to the camera sensor
+- Vertical and horizontal lines kept straight
+- The frame in the upper central area
+- The single shelf directly beneath it
+- Large areas of calm, uncluttered wall space
+- A relatively close composition so the artwork remains easy to see
+- Generous safe margins for Etsy cropping
+- Realistic proportions between the frame, shelf, and decorative objects
+
+The frame and artwork must be the primary visual focus.
+
+The shelf and its two items should provide subtle themed context without becoming the main subject.
+
+Do not include visible flooring, skirting boards, doors, windows, beds, chairs, tables, rugs, or other furniture. The composition should consist only of the plain wall, framed artwork, one shelf, and two shelf items.
+
+LIGHTING
+
+- Soft natural daylight
+- Gentle and realistic shadows
+- Warm, balanced interior tones
+- Minimal glass reflections
+- No glare across the artwork
+- No harsh direct sunlight
+- No dramatic spotlighting
+- Photorealistic Etsy product photography
+- Calm, clean, cosy, premium appearance
+
+PRODUCT ACCURACY
+
+This Etsy product is a digital download.
+
+The frame, printed poster, shelf, and decorative objects are lifestyle staging only. They are not included with the digital download.
+
+Do not add promotional elements suggesting that any physical product is supplied.
+
+DO NOT INCLUDE
+
+- People
+- Children or children’s faces
+- Pets
+- Furniture
+- Visible flooring
+- Skirting boards
+- Doors or windows
+- Plants or flowers
+- More than one shelf
+- More than two shelf items
+- Additional framed pictures
+- Additional wall art
+- Wall decals
+- Wallpaper
+- Murals
+- Patterned walls
+- Separate name signs
+- Additional text or labels
+- Readable book titles
+- Brand names or logos
+- Copyrighted characters
+- Changes to text already present in the source artwork
+- Watermarks
+- Messy clutter
+- Dark scenes
+- Harsh shadows
+- Warped walls, shelves, or frames
+- Cropped or distorted artwork
+- Oversized frames
+- Overly bright cartoon colours
+- Packaging
+- Parcels
+- Postage labels
+- Shipping boxes
+- Delivery vehicles
+- Wrapped prints
+- A literal underwater, jungle, farm, space, safari, woodland, or fantasy environment
+- Unrelated themed objects
+
+OUTPUT
+
+- Create one square Etsy listing image.
+- Target dimensions: 3000 × 3000 pixels.
+- Minimum dimensions: 2000 × 2000 pixels.
+- Use an sRGB colour profile.
+- Keep the complete framed artwork within generous safe margins.
+- Ensure the artwork remains clear and readable at Etsy thumbnail size.
+- Show exactly one shelf beneath the picture.
+- Show exactly two small shelf items inspired by ROOM_THEME.
+- Keep the wall plain and uncluttered.
+- Keep the framed artwork as the unmistakable primary focus.
+- Return only the generated image in the chat image viewer.`;
+
+export function buildCustomisedShelveImagePrompt(roomTheme: string, listingItem: string) {
+  return CUSTOMISED_SHELVE_IMAGE_PROMPT
     .replaceAll('{{ROOM_THEME}}', promptVariable(roomTheme))
     .replaceAll('{{ANIMAL}}', promptVariable(listingItem));
 }

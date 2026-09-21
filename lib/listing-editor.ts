@@ -12,7 +12,7 @@ import { ETSY_PRODUCT_FRAMES, ETSY_PRODUCT_SIZES, saveListingSku } from '@/lib/l
 import { prisma } from '@/lib/prisma';
 import { getNextPrintSize } from '@/lib/print-sizes';
 import { ETSY_MAX_DOWNLOAD_FILES, ETSY_MAX_FILE_SIZE_BYTES } from '@/lib/etsy-download-limits';
-import { ETSY_MAX_LISTING_IMAGES, LISTING_EDITOR_MAX_IMAGES } from '@/lib/listing-image-limits';
+import { hasRequiredListingImages, LISTING_EDITOR_MAX_IMAGES } from '@/lib/listing-image-limits';
 import { DEFAULT_PERSONALISATION_FONT_ID, getPersonalisationFont } from '@/lib/personalisation-fonts';
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from '@/lib/s3-listing-storage';
 import { PRICE_OPTIONS } from '@/lib/set-prices-core';
@@ -52,6 +52,9 @@ export type ListingEditorData = {
     title: string;
     localDirectoryName: string | null;
     description: string;
+    digitalTitle: string;
+    digitalDescription: string;
+    digitalQuantity: number | null;
     listingDescription: string;
     listingItem: string;
     listingItemInherited: boolean;
@@ -110,8 +113,12 @@ export type ListingEditorData = {
     config: {
       listOnEtsy: boolean;
       digitalDownload: boolean;
+      printsFrames: boolean;
       customTop: boolean;
       customBottom: boolean;
+      customiseDigitalDownloads: boolean;
+      customisePrints: boolean;
+      downloadSectionId: number | null;
       returnPolicyId: string | null;
     };
     sizes: Array<{ key: string; label: string; enabled: boolean }>;
@@ -152,6 +159,9 @@ export type ListingEditorData = {
 export type SaveListingDetailsInput = ListingEditorContext & {
   title?: string;
   description?: string;
+  digitalTitle?: string;
+  digitalDescription?: string;
+  digitalQuantity?: number | null;
   listingDescription?: string;
   status?: string;
   quantity?: number | null;
@@ -433,18 +443,21 @@ async function mapEditorData(
     && data.listing.dropboxSyncedAt !== null
     && data.listing.dropboxRevision === data.listing.downloadsRevision
     && (!groupedDropboxNeedsPdf || hasDropboxInstructionPdf);
-  const activeImages = data.listing.images.slice(0, ETSY_MAX_LISTING_IMAGES);
   const todoItems = getListingTodoItems({
     hasListingDescription: normalize(data.listing.listingDescription).length > 0,
     hasThumbnail: normalize(data.listing.thumbnailFileName).length > 0,
-    hasTenImages: activeImages.length === 10 && activeImages.every((image) => normalize(image.localFileName).length > 0),
+    hasRequiredImages: hasRequiredListingImages(data.listing.images),
     hasCurrentZips: zippedFilesAreCurrent,
     hasCurrentDropbox: dropboxIsCurrent,
     hasEtsyProducts: data.listing.productConfig !== null && data.listing.products.length > 0,
+    hasDownloadSection: data.listing.productConfig?.downloadSectionId != null,
     hasTags: data.listing.tags.length > 0,
     hasTitle: normalize(data.listing.title).length > 0,
     hasEtsyDescription: normalize(data.listing.description).length > 0,
     hasQuantity: (data.listing.quantity ?? 0) > 0,
+    hasDigitalTitle: normalize(data.listing.digitalTitle).length > 0,
+    hasDigitalDescription: normalize(data.listing.digitalDescription).length > 0,
+    hasDigitalQuantity: (data.listing.digitalQuantity ?? 0) > 0,
     hasPrimaryColour: normalize(data.listing.primaryColour).length > 0,
   });
   let dropboxMessage: string | null = null;
@@ -479,6 +492,9 @@ async function mapEditorData(
       title: data.listing.title,
       localDirectoryName: data.listing.localDirectoryName,
       description: data.listing.description ?? '',
+      digitalTitle: data.listing.digitalTitle ?? '',
+      digitalDescription: data.listing.digitalDescription ?? '',
+      digitalQuantity: data.listing.digitalQuantity,
       listingDescription: data.listing.listingDescription ?? '',
       listingItem: data.listing.listingItem ?? defaultListingItem,
       listingItemInherited: data.listing.listingItem === null,
@@ -586,8 +602,12 @@ async function mapEditorData(
       config: {
         listOnEtsy: data.listing.productConfig?.listOnEtsy ?? true,
         digitalDownload: data.listing.productConfig?.digitalDownload ?? false,
+        printsFrames: data.listing.productConfig?.printsFrames ?? true,
         customTop: data.listing.productConfig?.customTop ?? true,
         customBottom: data.listing.productConfig?.customBottom ?? true,
+        customiseDigitalDownloads: data.listing.productConfig?.customiseDigitalDownloads ?? false,
+        customisePrints: data.listing.productConfig?.customisePrints ?? true,
+        downloadSectionId: data.listing.productConfig?.downloadSectionId ?? null,
         returnPolicyId: data.listing.productConfig?.returnPolicyId ?? importedReturnPolicyId,
       },
       sizes: ETSY_PRODUCT_SIZES.map((size) => ({
@@ -740,6 +760,18 @@ export async function saveListingDetails(input: SaveListingDetailsInput) {
   const data = await getListingForContext(input);
   const supplied = (key: keyof SaveListingDetailsInput) => Object.prototype.hasOwnProperty.call(input, key);
 
+  if (supplied('digitalTitle') && Array.from(normalize(input.digitalTitle)).length > 255) {
+    throw new Error('The Digital Download title cannot be longer than 255 characters.');
+  }
+  if (supplied('quantity') && input.quantity !== null && input.quantity !== undefined
+    && (!Number.isInteger(input.quantity) || input.quantity < 0)) {
+    throw new Error('Enter a valid Print quantity.');
+  }
+  if (supplied('digitalQuantity') && input.digitalQuantity !== null && input.digitalQuantity !== undefined
+    && (!Number.isInteger(input.digitalQuantity) || input.digitalQuantity < 0)) {
+    throw new Error('Enter a valid Digital Download quantity.');
+  }
+
   if (supplied('etsySku') && normalize(input.etsySku) !== data.listing.productConfig?.sku) {
     await saveListingSku(input, normalize(input.etsySku));
   }
@@ -751,6 +783,9 @@ export async function saveListingDetails(input: SaveListingDetailsInput) {
     data: {
       ...(supplied('title') ? { title: normalize(input.title) } : {}),
       ...(supplied('description') ? { description: normalize(input.description) || null } : {}),
+      ...(supplied('digitalTitle') ? { digitalTitle: normalize(input.digitalTitle) || null } : {}),
+      ...(supplied('digitalDescription') ? { digitalDescription: normalize(input.digitalDescription) || null } : {}),
+      ...(supplied('digitalQuantity') ? { digitalQuantity: input.digitalQuantity } : {}),
       ...(supplied('status') ? { state: normalize(input.status) || null } : {}),
       ...(supplied('quantity') ? { quantity: input.quantity } : {}),
       ...(supplied('priceAmount') ? { priceAmount: input.priceAmount } : {}),

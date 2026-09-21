@@ -15,8 +15,12 @@ function validInput() {
     listingId: '4',
     listOnEtsy: true,
     digitalDownload: true,
+    printsFrames: true,
     customTop: true,
     customBottom: true,
+    customiseDigitalDownloads: false,
+    customisePrints: true,
+    downloadSectionId: 123456,
     returnPolicyId: '12345',
     sizes: Object.fromEntries(ETSY_PRODUCT_SIZES.map(({ key }) => [key, true])),
     frames: Object.fromEntries(ETSY_PRODUCT_FRAMES.map(({ key }) => [key, key !== 'no_frame'])),
@@ -30,8 +34,11 @@ describe('listing Etsy product configuration', () => {
     expect(digital).toMatchObject({
       listOnEtsy: true,
       digitalDownload: true,
+      printsFrames: true,
       customTop: true,
       customBottom: true,
+      customiseDigitalDownloads: false,
+      customisePrints: true,
       skus: {},
     });
     expect(Object.values(digital.sizes).every(Boolean)).toBe(true);
@@ -41,8 +48,11 @@ describe('listing Etsy product configuration', () => {
     expect(physical).toMatchObject({
       listOnEtsy: true,
       digitalDownload: false,
+      printsFrames: true,
       customTop: true,
       customBottom: true,
+      customiseDigitalDownloads: false,
+      customisePrints: true,
       frames: { no_frame: false, black: true, white: true, oak: true },
     });
     expect(Object.values(physical.sizes).every(Boolean)).toBe(true);
@@ -75,6 +85,46 @@ describe('listing Etsy product configuration', () => {
       ...validInput(),
       returnPolicyId: 'not-an-id',
     })).toThrow('Choose a valid Etsy return policy.');
+  });
+
+  it('validates the digital-download customisation setting', () => {
+    expect(validateListingProductsInput(validInput()).customiseDigitalDownloads).toBe(false);
+    expect(validateListingProductsInput({ ...validInput(), customiseDigitalDownloads: true }).customiseDigitalDownloads).toBe(true);
+    expect(() => validateListingProductsInput({
+      ...validInput(),
+      customiseDigitalDownloads: undefined as never,
+    })).toThrow('Customise digital downloads must be true or false.');
+  });
+
+  it('defaults print customisation to on and validates explicit changes', () => {
+    expect(validateListingProductsInput({ ...validInput(), customisePrints: undefined }).customisePrints).toBe(true);
+    expect(validateListingProductsInput({ ...validInput(), customisePrints: false }).customisePrints).toBe(false);
+    expect(() => validateListingProductsInput({ ...validInput(), customisePrints: 'off' as never }))
+      .toThrow('Customise prints must be true or false.');
+  });
+
+  it('defaults Prints / Frames to on and validates explicit changes', () => {
+    const input = validInput();
+    expect(validateListingProductsInput({ ...input, printsFrames: undefined }).printsFrames).toBe(true);
+    expect(validateListingProductsInput({ ...input, printsFrames: false }).printsFrames).toBe(false);
+    expect(() => validateListingProductsInput({ ...input, printsFrames: 'off' as never }))
+      .toThrow('Prints / Frames must be true or false.');
+  });
+
+  it('keeps the digital product but excludes physical products when Prints / Frames is off', () => {
+    const products = buildListingProductDefinitions(
+      { numberOfItems: 1, includeAllItems: false },
+      validateListingProductsInput({ ...validInput(), printsFrames: false })
+    );
+    expect(products.map((product) => product.productKey)).toEqual(['digital']);
+  });
+
+  it('requires a valid numeric Etsy download section when one is selected', () => {
+    expect(validateListingProductsInput(validInput()).downloadSectionId).toBe(123456);
+    expect(() => validateListingProductsInput({ ...validInput(), downloadSectionId: -1 }))
+      .toThrow('Choose a valid Etsy download section.');
+    expect(() => validateListingProductsInput({ ...validInput(), downloadSectionId: 1.5 }))
+      .toThrow('Choose a valid Etsy download section.');
   });
 
   it('creates one digital row and one generic framed row per selected size', () => {

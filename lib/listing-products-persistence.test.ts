@@ -44,6 +44,7 @@ describe('multi-listing product type reconciliation', () => {
         findUnique: vi.fn().mockResolvedValue({
           id: 79,
           etsyId: '1234',
+          etsyDownloadId: '5678',
           title: 'Donkey set',
           localDirectoryName: 'Donkey-set',
           numberOfItems: 3,
@@ -52,8 +53,12 @@ describe('multi-listing product type reconciliation', () => {
           productConfig: {
             listOnEtsy: false,
             digitalDownload: true,
+            printsFrames: false,
             customTop: false,
             customBottom: false,
+            customiseDigitalDownloads: true,
+            customisePrints: false,
+            downloadSectionId: 123456,
             returnPolicyId: null,
             sku: null,
           },
@@ -90,8 +95,12 @@ describe('multi-listing product type reconciliation', () => {
       update: {
         listOnEtsy: true,
         digitalDownload: true,
+        printsFrames: true,
         customTop: true,
         customBottom: true,
+        customiseDigitalDownloads: false,
+        customisePrints: true,
+        downloadSectionId: 123456,
         returnPolicyId: null,
         sku: 'DONKEY-SET',
       },
@@ -101,7 +110,7 @@ describe('multi-listing product type reconciliation', () => {
     expect(productUpsert).toHaveBeenCalledTimes(1);
     expect(productUpsert).toHaveBeenCalledWith(expect.objectContaining({
       where: { listingId_productKey: { listingId: 79, productKey: 'digital' } },
-      update: expect.objectContaining({ sku: 'DG-DONKEY-SET-79', productType: 'digital' }),
+      update: expect.objectContaining({ sku: 'DG-DONKEY-SET-79', productType: 'digital', etsyListingId: '5678' }),
     }));
     const update = productUpsert.mock.calls[0][0].update;
     expect(update).not.toHaveProperty('etsyProductId');

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildDigitalDownloadGeneratePrompt } from '@/lib/digital-download-generate-prompt';
 import { buildDetailsGeneratePrompt } from '@/lib/details-generate-prompt';
-import { buildBedroomDoorImagePrompt, buildBedroomImagePrompt, buildDigitalDownloadIncludedImagePrompt, buildFramesImagePrompt, buildHowToPrintIncludedImagePrompt, buildListingImagePrompt, buildNoFrameIncludedImagePrompt, buildPerfectGiftImagePrompt, buildPersonalUseIncludedImagePrompt, buildPlayroomImagePrompt, buildSizesImagePrompt } from '@/lib/listing-prompts';
+import { buildAspectRatiosImagePrompt, buildBedroomDoorImagePrompt, buildBedroomImagePrompt, buildBesideBedImagePrompt, buildCustomisedPlayroomImagePrompt, buildCustomisedShelveImagePrompt, buildDigitalDownloadIncludedImagePrompt, buildFramesImagePrompt, buildHowToPrintIncludedImagePrompt, buildListingImagePrompt, buildNoFrameIncludedImagePrompt, buildPerfectGiftImagePrompt, buildPersonalUseIncludedImagePrompt, buildPlayroomImagePrompt, buildSizesImagePrompt, buildThreeFramesImagePrompt } from '@/lib/listing-prompts';
 
 describe('listing prompts', () => {
   it('inserts the effective room theme into both prompt values', () => {
@@ -19,24 +19,35 @@ describe('listing prompts', () => {
   });
 
   it('builds the bedroom prompt from the effective room theme and listing item', () => {
-    const prompt = buildBedroomImagePrompt('  Bugs  ', ' Ant ');
-    expect(prompt).toContain('ROOM_THEME = "Bugs"');
-    expect(prompt).toContain('ANIMAL = "Ant"');
+    const prompt = buildBedroomImagePrompt('  Sea Creatures  ', ' Green Sea Turtle ');
+    expect(prompt).toContain('ROOM_THEME = "Sea Creatures"');
+    expect(prompt).toContain('ANIMAL = "Green Sea Turtle"');
     expect(prompt).toContain('FRAME_COLOUR = "Natural Oak"');
-    expect(prompt).toContain('Place the attached artwork in a simple `FRAME_COLOUR` picture frame above the bed.');
+    expect(prompt).toContain('PRINT_SIZE = "A3"');
+    expect(prompt).toContain('A4 = 210 mm wide × 297 mm high.');
+    expect(prompt).toContain('A3: 33% of the bed’s width.');
+    expect(prompt).toContain('Place the attached artwork in a simple FRAME_COLOUR picture frame on the wall above the bed.');
+    expect(prompt).toContain('The overall mockup must remain square; only the framed paper uses portrait A-series proportions.');
     expect(prompt).not.toContain('{{ROOM_THEME}}');
     expect(prompt).not.toContain('{{ANIMAL}}');
     expect(prompt).not.toContain('{{FRAME_COLOUR}}');
+    expect(prompt).not.toContain('{{PRINT_SIZE}}');
   });
 
   it('builds the Bedroom door prompt with listing variables and door-specific instructions', () => {
     const prompt = buildBedroomDoorImagePrompt('  Bugs  ', ' Ant ');
     expect(prompt).toContain('ROOM_THEME = "Bugs"');
     expect(prompt).toContain('ANIMAL = "Ant"');
-    expect(prompt).toContain('FRAME_COLOUR = "Natural Oak"');
-    expect(prompt).toContain('Preserve any existing text exactly, including spelling, punctuation, capitalisation, font appearance, curvature, and placement.');
-    expect(prompt).toContain('mounted directly on the bedroom door');
-    expect(prompt).toContain('Use a realistic A4-sized print inside the frame');
+    expect(prompt).toContain('FRAME_COLOUR = "Black"');
+    expect(prompt).toContain('Preserve all existing text exactly, including spelling, punctuation, capitalisation, font appearance, curvature, colour, and placement.');
+    expect(prompt).toContain('The source artwork has a transparent background.');
+    expect(prompt).toContain('Do not reproduce or interpret transparent areas as black.');
+    expect(prompt).toContain('clearly photographed from the hallway');
+    expect(prompt).toContain('mounted directly on the outside of the child’s bedroom door');
+    expect(prompt).toContain('Use a realistic A4-sized white paper print inside the frame');
+    expect(prompt).toContain('The door should occupy approximately 60–70% of the image width');
+    expect(prompt).toContain('Ensure it is immediately obvious that the viewer is standing in a family hallway');
+    expect(prompt).toContain('Ensure every transparent area in the source PNG appears as clean white printed paper, never black.');
     expect(prompt).toContain('This Etsy product is a digital download.');
     expect(prompt).not.toContain('{{ROOM_THEME}}');
     expect(prompt).not.toContain('{{ANIMAL}}');
@@ -46,17 +57,59 @@ describe('listing prompts', () => {
     expect(escaped).toContain('ANIMAL = "Rory\\\\Ant"');
   });
 
+  it('builds the Beside bed prompt with listing variables and shelf instructions', () => {
+    const prompt = buildBesideBedImagePrompt('Sea Creatures', 'Green Sea Turtle');
+    expect(prompt).toContain('ROOM_THEME = "Sea Creatures"');
+    expect(prompt).toContain('ANIMAL = "Green Sea Turtle"');
+    expect(prompt).toContain('FRAME_COLOUR = "Black"');
+    expect(prompt).toContain('SHELF BENEATH THE PICTURE');
+    expect(prompt).toContain('Leave a realistic vertical gap of approximately 15–25 cm');
+    expect(prompt).toContain('Include only three or four tasteful children’s items inspired by ROOM_THEME.');
+    expect(prompt).not.toContain('{{ROOM_THEME}}');
+    expect(prompt).not.toContain('{{ANIMAL}}');
+  });
+
+  it('builds the Customised playroom prompt with listing variables and play-table instructions', () => {
+    const prompt = buildCustomisedPlayroomImagePrompt('Sea Creatures', 'Green Sea Turtle');
+    expect(prompt).toContain('ROOM_THEME = "Sea Creatures"');
+    expect(prompt).toContain('ANIMAL = "Green Sea Turtle"');
+    expect(prompt).toContain('FRAME_COLOUR = "Black"');
+    expect(prompt).toContain('CHILDREN’S PLAY TABLE');
+    expect(prompt).toContain('PLAY-TABLE ACTIVITY');
+    expect(prompt).toContain('no more than three or four small tabletop objects');
+    expect(prompt).toContain('Style the table and activity according to ROOM_THEME.');
+    expect(prompt).not.toContain('{{ROOM_THEME}}');
+    expect(prompt).not.toContain('{{ANIMAL}}');
+  });
+
+  it('builds the Customised Shelve Image prompt with exactly one shelf and two items', () => {
+    const prompt = buildCustomisedShelveImagePrompt('Sea Creatures', 'Green Sea Turtle');
+    expect(prompt).toContain('ROOM_THEME = "Sea Creatures"');
+    expect(prompt).toContain('ANIMAL = "Green Sea Turtle"');
+    expect(prompt).toContain('FRAME_COLOUR = "Black"');
+    expect(prompt).toContain('SINGLE SHELF');
+    expect(prompt).toContain('Place exactly two small decorative children’s items on the shelf.');
+    expect(prompt).toContain('Show exactly one shelf beneath the picture.');
+    expect(prompt).toContain('Show exactly two small shelf items inspired by ROOM_THEME.');
+    expect(prompt).not.toContain('{{ROOM_THEME}}');
+    expect(prompt).not.toContain('{{ANIMAL}}');
+  });
+
   it('builds the supplied playroom prompt with the same variable substitutions', () => {
     const prompt = buildPlayroomImagePrompt('Sea Creatures', 'Dolphin');
     expect(prompt).toContain('ROOM_THEME = "Sea Creatures"');
     expect(prompt).toContain('ANIMAL = "Dolphin"');
     expect(prompt).toContain('FRAME_COLOUR = "Natural Oak"');
+    expect(prompt).toContain('PRINT_SIZE = "A3"');
     expect(prompt).toContain('PLAYROOM STYLE');
-    expect(prompt).toContain('above the main play area');
+    expect(prompt).toContain('A3: 37% of the storage unit’s width.');
+    expect(prompt).toContain('above the low toy-storage unit in the main play area');
     expect(prompt).toContain('SPECIAL GUIDANCE FOR WOODLAND BUGS');
+    expect(prompt).toContain('The overall mockup must remain square; only the framed paper uses portrait A-series proportions.');
     expect(prompt).not.toContain('{{ROOM_THEME}}');
     expect(prompt).not.toContain('{{ANIMAL}}');
     expect(prompt).not.toContain('{{FRAME_COLOUR}}');
+    expect(prompt).not.toContain('{{PRINT_SIZE}}');
   });
 
   it('builds the Perfect Gift prompt with listing variables and required display text', () => {
@@ -64,9 +117,15 @@ describe('listing prompts', () => {
     expect(prompt).toContain('ROOM_THEME = "Woodland bugs"');
     expect(prompt).toContain('ANIMAL = "Ant"');
     expect(prompt).toContain('FRAME_COLOUR = "Natural Oak"');
+    expect(prompt).toContain('PRINT_SIZE = "A3"');
+    expect(prompt).toContain('PRINT SIZE AND PROPORTIONS');
+    expect(prompt).toContain('A3 = 297 mm wide × 420 mm high.');
+    expect(prompt).toContain('The overall Etsy mockup must remain square. Only the print within the scene uses A3 or A2 portrait proportions.');
     expect(prompt).toContain('Perfect Gift\nfor Little Animal Lovers');
     expect(prompt).toContain('Nursery - Bedroom - Playroom');
+    expect(prompt).toContain('The text is a listing overlay, not part of the source artwork.');
     expect(prompt).not.toContain('{{ROOM_THEME}}');
+    expect(prompt).not.toContain('{{PRINT_SIZE}}');
   });
 
   it('builds the Frames prompt with listing variables and all frame options', () => {
@@ -83,6 +142,30 @@ describe('listing prompts', () => {
     expect(prompt).not.toContain('{{REFERENCE_IMAGE}}');
   });
 
+  it('builds the 3 Frames comparison prompt with the listing theme and animal', () => {
+    const prompt = buildThreeFramesImagePrompt('  Woodland "bugs"  ', ' Rory\\Ant ');
+    expect(prompt).toContain('ROOM_THEME = "Woodland \\"bugs\\""');
+    expect(prompt).toContain('ANIMAL = "Rory\\\\Ant"');
+    expect(prompt).toContain('FRAME_COLOURS = "Black, White, Natural Wood"');
+    expect(prompt).toContain('SOURCE_IMAGE_FILE = "Copied thumbnail image"');
+    expect(prompt).toContain('1. Unframed Print');
+    expect(prompt).toContain('4. Natural Wood Frame');
+    expect(prompt).toContain('Treat transparent areas as empty space rather than as a black background.');
+    expect(prompt).toContain('Use one consistent, plain, pale warm-greige background across the complete 2 × 2 grid.');
+    expect(prompt).toContain('approximately equivalent to `#DED9D0`');
+    expect(prompt).toContain('The artwork itself already conveys the specified room theme.');
+    expect(prompt).toContain('Show exactly one unframed print and exactly three framed prints.');
+    expect(prompt).not.toContain('Dark Brown Frame');
+    expect(prompt).not.toContain('Sea Creatures theme');
+    expect(prompt).not.toContain('ROOM\\_THEME');
+    expect(prompt).not.toContain('FRAME\\_COLOURS');
+    expect(prompt).not.toContain('SOURCE\\_IMAGE\\_FILE');
+    expect(prompt).not.toContain('{{ROOM_THEME}}');
+    expect(prompt).not.toContain('{{ANIMAL}}');
+    expect(prompt).not.toContain('{{FRAME_COLOURS}}');
+    expect(prompt).not.toContain('{{SOURCE_IMAGE_FILE}}');
+  });
+
   it('builds the Sizes prompt with listing variables and accurate size guidance', () => {
     const prompt = buildSizesImagePrompt('Woodland bugs', 'Ant');
     expect(prompt).toContain('ROOM_THEME = "Woodland bugs"');
@@ -93,6 +176,20 @@ describe('listing prompts', () => {
     expect(prompt).not.toContain('{{ROOM_THEME}}');
     expect(prompt).not.toContain('{{ANIMAL}}');
     expect(prompt).not.toContain('{{FRAME_COLOUR}}');
+  });
+
+  it('builds the Aspect ratios graphic prompt with the five supplied ratio categories', () => {
+    const prompt = buildAspectRatiosImagePrompt();
+    expect(prompt).toContain('1. ISO A-SERIES');
+    expect(prompt).toContain('2. 2:3 RATIO');
+    expect(prompt).toContain('3. 3:4 RATIO');
+    expect(prompt).toContain('4. 4:5 RATIO');
+    expect(prompt).toContain('5. 11:14 RATIO');
+    expect(prompt).toContain('A1 — 594 × 841 mm');
+    expect(prompt).toContain('24 × 36"');
+    expect(prompt).toContain('NO PHYSICAL ITEM WILL BE SHIPPED');
+    expect(prompt).toContain('Do not include 5:7 or any other ratio.');
+    expect(prompt).not.toMatch(/\{\{[^}]+\}\}/);
   });
 
   it('builds the No Frame Included prompt with listing variables and frame colours', () => {

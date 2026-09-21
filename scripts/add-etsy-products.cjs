@@ -364,7 +364,7 @@ async function verifyConfigurationBackfill() {
 async function backfillMissingProducts() {
   const [listings, configs, sizeRows, frameRows, existingProducts] = await Promise.all([
     prisma.$queryRawUnsafe(`
-      SELECT id, etsyId, title, localDirectoryName, numberOfItems, includeAllItems
+      SELECT id, etsyPrintId AS etsyId, title, localDirectoryName, numberOfItems, includeAllItems
         FROM etsy_listings
        ORDER BY id
     `),
@@ -468,7 +468,7 @@ async function seedDefaults(state) {
       UPDATE etsy_listings
       SET etsyProductType = 'physical',
           taxonomyId = 121,
-          productsChanged = CASE WHEN etsyId IS NULL THEN productsChanged ELSE TRUE END
+          productsChanged = CASE WHEN etsyPrintId IS NULL THEN productsChanged ELSE TRUE END
     `);
   }
   if (state.downloadsRevisionAdded) {
@@ -532,11 +532,11 @@ async function seedDefaults(state) {
 }
 
 async function main() {
-  const beforeListings = await prisma.$queryRawUnsafe('SELECT id, etsyId FROM etsy_listings ORDER BY id');
+  const beforeListings = await prisma.$queryRawUnsafe('SELECT id, etsyPrintId AS etsyId FROM etsy_listings ORDER BY id');
   const backups = await createSafetyBackups();
   const state = await ensureSchema();
   const backfill = await seedDefaults(state);
-  const afterListings = await prisma.$queryRawUnsafe('SELECT id, etsyId FROM etsy_listings ORDER BY id');
+  const afterListings = await prisma.$queryRawUnsafe('SELECT id, etsyPrintId AS etsyId FROM etsy_listings ORDER BY id');
   const beforeIdentity = beforeListings.map((row) => `${row.id}:${row.etsyId ?? ''}`);
   const afterIdentity = afterListings.map((row) => `${row.id}:${row.etsyId ?? ''}`);
   if (JSON.stringify(beforeIdentity) !== JSON.stringify(afterIdentity)) {
@@ -545,7 +545,7 @@ async function main() {
   const counts = await prisma.$queryRawUnsafe(`
     SELECT
       (SELECT COUNT(*) FROM etsy_listings) AS listings,
-      (SELECT COUNT(*) FROM etsy_listings WHERE etsyId IS NOT NULL) AS etsyListings,
+      (SELECT COUNT(*) FROM etsy_listings WHERE etsyPrintId IS NOT NULL) AS etsyListings,
       (SELECT COUNT(*) FROM etsy_listing_product_configs) AS configs,
       (SELECT COUNT(*) FROM etsy_listing_size_options) AS sizes,
       (SELECT COUNT(*) FROM etsy_listing_frame_options) AS frames,

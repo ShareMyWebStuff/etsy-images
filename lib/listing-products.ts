@@ -35,8 +35,12 @@ export type ListingProductsContext = {
 export type SaveListingProductsInput = ListingProductsContext & {
   listOnEtsy: boolean;
   digitalDownload: boolean;
+  printsFrames?: boolean;
   customTop: boolean;
   customBottom: boolean;
+  customiseDigitalDownloads: boolean;
+  customisePrints?: boolean;
+  downloadSectionId?: number | null;
   returnPolicyId?: string | null;
   sizes: Record<string, boolean>;
   frames: Record<string, boolean>;
@@ -55,8 +59,12 @@ export type ListingProductDefinition = {
 type NormalizedListingProducts = {
   listOnEtsy: boolean;
   digitalDownload: boolean;
+  printsFrames: boolean;
   customTop: boolean;
   customBottom: boolean;
+  customiseDigitalDownloads: boolean;
+  customisePrints: boolean;
+  downloadSectionId: number | null;
   returnPolicyId: string | null;
   sizes: Record<EtsyProductSizeKey, boolean>;
   frames: Record<EtsyProductFrameKey, boolean>;
@@ -71,6 +79,7 @@ export type ListingProductDefaultsOptions = {
 type ProductListing = {
   id: number;
   etsyId: string | null;
+  etsyDownloadId: string | null;
   title: string;
   localDirectoryName: string | null;
   numberOfItems: number | null;
@@ -93,8 +102,12 @@ export function buildListingProductTypeDefaults(
   return {
     listOnEtsy: true,
     digitalDownload: etsyProductType === 'digital',
+    printsFrames: true,
     customTop: true,
     customBottom: true,
+    customiseDigitalDownloads: false,
+    customisePrints: true,
+    downloadSectionId: null,
     returnPolicyId: null,
     sizes: Object.fromEntries(SIZE_KEYS.map((key) => [key, true])) as Record<EtsyProductSizeKey, boolean>,
     frames: Object.fromEntries(ETSY_PRODUCT_FRAMES.map(({ key, defaultEnabled }) => [
@@ -141,6 +154,10 @@ export function validateListingProductsInput(input: SaveListingProductsInput): N
     throw new Error('Choose a valid Etsy return policy.');
   }
   const returnPolicyId = input.returnPolicyId?.trim() ?? '';
+  if (input.downloadSectionId !== undefined && input.downloadSectionId !== null
+    && (!Number.isSafeInteger(input.downloadSectionId) || input.downloadSectionId <= 0 || input.downloadSectionId > 2_147_483_647)) {
+    throw new Error('Choose a valid Etsy download section.');
+  }
 
   if (input.skus !== undefined) {
     if (!isPlainRecord(input.skus)) throw new Error('SKUs must be submitted by product key.');
@@ -156,8 +173,12 @@ export function validateListingProductsInput(input: SaveListingProductsInput): N
   return {
     listOnEtsy: requireBoolean(input.listOnEtsy, 'List on Etsy'),
     digitalDownload: requireBoolean(input.digitalDownload, 'Digital Download'),
+    printsFrames: input.printsFrames === undefined ? true : requireBoolean(input.printsFrames, 'Prints / Frames'),
     customTop: requireBoolean(input.customTop, 'Top customisation'),
     customBottom: requireBoolean(input.customBottom, 'Bottom customisation'),
+    customiseDigitalDownloads: requireBoolean(input.customiseDigitalDownloads, 'Customise digital downloads'),
+    customisePrints: input.customisePrints === undefined ? true : requireBoolean(input.customisePrints, 'Customise prints'),
+    downloadSectionId: input.downloadSectionId ?? null,
     returnPolicyId: returnPolicyId === ''
       ? null
       : /^\d+$/.test(returnPolicyId)
@@ -171,7 +192,7 @@ export function validateListingProductsInput(input: SaveListingProductsInput): N
 
 export function buildListingProductDefinitions(
   listing: Pick<ProductListing, 'numberOfItems' | 'includeAllItems'>,
-  config: Pick<NormalizedListingProducts, 'digitalDownload' | 'sizes' | 'frames'>
+  config: Pick<NormalizedListingProducts, 'digitalDownload' | 'printsFrames' | 'sizes' | 'frames'>
 ): ListingProductDefinition[] {
   const products: ListingProductDefinition[] = [];
   let position = 0;
@@ -190,6 +211,8 @@ export function buildListingProductDefinitions(
       position: position++,
     });
   }
+
+  if (!config.printsFrames) return products;
 
   const framedEnabled = config.frames.black || config.frames.white || config.frames.oak;
   for (const { key: sizeKey } of ETSY_PRODUCT_SIZES) {
@@ -299,16 +322,24 @@ async function persistListingProducts(
       listingId: listing.id,
       listOnEtsy: config.listOnEtsy,
       digitalDownload: config.digitalDownload,
+      printsFrames: config.printsFrames,
       customTop: config.customTop,
       customBottom: config.customBottom,
+      customiseDigitalDownloads: config.customiseDigitalDownloads,
+      customisePrints: config.customisePrints,
+      downloadSectionId: config.downloadSectionId,
       returnPolicyId: config.returnPolicyId,
       sku: listingSku,
     },
     update: {
       listOnEtsy: config.listOnEtsy,
       digitalDownload: config.digitalDownload,
+      printsFrames: config.printsFrames,
       customTop: config.customTop,
       customBottom: config.customBottom,
+      customiseDigitalDownloads: config.customiseDigitalDownloads,
+      customisePrints: config.customisePrints,
+      downloadSectionId: config.downloadSectionId,
       returnPolicyId: config.returnPolicyId,
       sku: listingSku,
     },
@@ -372,7 +403,7 @@ async function persistListingProducts(
         sku: product.sku,
         priceKey: product.priceKey,
         position: product.position,
-        etsyListingId: listing.etsyId,
+        etsyListingId: product.productType === 'digital' ? listing.etsyDownloadId : listing.etsyId,
         etsyProductId: existing?.etsyProductId ?? null,
         etsyOfferingId: existing?.etsyOfferingId ?? null,
       },
@@ -383,7 +414,7 @@ async function persistListingProducts(
         sku: product.sku,
         priceKey: product.priceKey,
         position: product.position,
-        etsyListingId: listing.etsyId,
+        etsyListingId: product.productType === 'digital' ? listing.etsyDownloadId : listing.etsyId,
       },
     });
   }
@@ -437,6 +468,7 @@ async function loadListingForContext(tx: Prisma.TransactionClient, context: List
     select: {
       id: true,
       etsyId: true,
+      etsyDownloadId: true,
       title: true,
       localDirectoryName: true,
       numberOfItems: true,
@@ -454,6 +486,18 @@ export async function saveListingProducts(input: SaveListingProductsInput) {
   try {
     await prisma.$transaction(async (tx) => {
       const listing = await loadListingForContext(tx, input);
+      if (config.downloadSectionId !== null) {
+        const section = await tx.etsyDownloadSection.findUnique({
+          where: {
+            etsyShopId_etsyShopSectionId: {
+              etsyShopId: BigInt(input.shopId),
+              etsyShopSectionId: config.downloadSectionId,
+            },
+          },
+          select: { id: true },
+        });
+        if (!section) throw new Error('Choose a Download Section from this Etsy shop.');
+      }
       await persistListingProducts(tx, listing, config);
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   } catch (error) {
@@ -488,8 +532,12 @@ export async function saveListingSku(context: ListingProductsContext, value: str
       await persistListingProducts(tx, { ...listing, productConfig: { sku } }, {
         listOnEtsy: configuration.productConfig.listOnEtsy,
         digitalDownload: configuration.productConfig.digitalDownload,
+        printsFrames: configuration.productConfig.printsFrames,
         customTop: configuration.productConfig.customTop,
         customBottom: configuration.productConfig.customBottom,
+        customiseDigitalDownloads: configuration.productConfig.customiseDigitalDownloads,
+        customisePrints: configuration.productConfig.customisePrints,
+        downloadSectionId: configuration.productConfig.downloadSectionId,
         returnPolicyId: configuration.productConfig.returnPolicyId,
         sizes: Object.fromEntries(SIZE_KEYS.map((key) => [
           key,
@@ -521,6 +569,7 @@ export async function ensureListingProductDefaultsInTransaction(
     select: {
       id: true,
       etsyId: true,
+      etsyDownloadId: true,
       title: true,
       localDirectoryName: true,
       numberOfItems: true,
@@ -551,14 +600,18 @@ export async function ensureListingProductDefaultsInTransaction(
     throw new Error('The requested Etsy product defaults do not match the listing product type.');
   }
   const defaults: NormalizedListingProducts = options?.resetToProductType
-    ? buildListingProductTypeDefaults(options.resetToProductType)
+    ? { ...buildListingProductTypeDefaults(options.resetToProductType), downloadSectionId: listing.productConfig?.downloadSectionId ?? null }
     : {
         listOnEtsy: listing.productConfig?.listOnEtsy ?? true,
         digitalDownload: listing.productConfig?.digitalDownload
           ?? options?.digitalDownload
           ?? listing.etsyProductType === 'digital',
+        printsFrames: listing.productConfig?.printsFrames ?? true,
         customTop: listing.productConfig?.customTop ?? true,
         customBottom: listing.productConfig?.customBottom ?? true,
+        customiseDigitalDownloads: listing.productConfig?.customiseDigitalDownloads ?? false,
+        customisePrints: listing.productConfig?.customisePrints ?? true,
+        downloadSectionId: listing.productConfig?.downloadSectionId ?? null,
         returnPolicyId: listing.productConfig?.returnPolicyId ?? null,
         sizes: Object.fromEntries(SIZE_KEYS.map((key) => [key, existingSizes.get(key) ?? true])) as Record<EtsyProductSizeKey, boolean>,
         frames: Object.fromEntries(ETSY_PRODUCT_FRAMES.map(({ key, defaultEnabled }) => [
@@ -582,7 +635,7 @@ export async function ensureListingProductDefaultsInTransaction(
         && current.frameKey === expected.frameKey
         && current.priceKey === expected.priceKey
         && current.position === expected.position
-        && current.etsyListingId === listing.etsyId;
+        && current.etsyListingId === (expected.productType === 'digital' ? listing.etsyDownloadId : listing.etsyId);
     });
 
   // Etsy refreshes run repeatedly. Existing complete product configuration must remain

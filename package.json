@@ -11,6 +11,13 @@
     "db:pinterest": "node scripts/add-pinterest-module.cjs",
     "db:set-prices": "node scripts/add-set-prices.cjs",
     "db:etsy-products": "node scripts/add-etsy-products.cjs",
+    "db:customise-digital-downloads": "node scripts/add-customise-digital-downloads.cjs",
+    "db:customise-prints": "node scripts/add-customise-prints.cjs",
+    "db:prints-frames": "node scripts/add-prints-frames.cjs",
+    "db:etsy-listing-ids": "node scripts/add-etsy-listing-id-columns.cjs",
+    "db:etsy-download-image-id": "node scripts/add-etsy-download-image-id.cjs",
+    "db:download-section": "node scripts/add-download-section-id.cjs",
+    "db:digital-listing-details": "node scripts/add-digital-listing-details.cjs",
     "test:pinterest": "node scripts/test-pinterest.cjs",
     "test:set-prices": "vitest run",
     "db:reset": "prisma db push --force-reset"

@@ -8,7 +8,7 @@ async function main() {
     JOIN etsy_listings_bk backup
       ON backup.shopId = current.shopId
      AND backup.localDirectoryName = current.localDirectoryName
-    WHERE current.etsyId IS NULL AND backup.etsyId IS NOT NULL
+    WHERE current.etsyPrintId IS NULL AND backup.etsyId IS NOT NULL
   `);
   if (candidates.length !== 1) throw new Error(`Expected one lost Etsy link but found ${candidates.length}.`);
   const { currentId, backupId } = candidates[0];
@@ -17,7 +17,7 @@ async function main() {
     await tx.$executeRawUnsafe(`
       UPDATE etsy_listings current
       JOIN etsy_listings_bk backup ON backup.id = ?
-      SET current.etsyId = backup.etsyId,
+      SET current.etsyPrintId = backup.etsyId,
           current.state = backup.state,
           current.url = backup.url,
           current.rawJson = backup.rawJson,

@@ -35,11 +35,21 @@ model MyCategory {
 
 model EtsyListing {
   id                        Int                          @id @default(autoincrement())
-  etsyId                    String?                      @unique
+  // Print listing ID: Prisma keeps the legacy property name for existing callers.
+  etsyId                    String?                      @unique(map: "etsy_listings_etsyId_key") @map("etsyPrintId")
+  etsyDownloadId            String?                      @unique
+  etsyDownloadState         String?
+  etsyDownloadUrl           String?                      @db.Text
+  etsyDownloadRawJson       Json?
+  etsyDownloadShopSectionId Int?
+  etsyDownloadLastSyncedAt  DateTime?
   shopId                    String
   userId                    String?
   title                     String
   description               String?                      @db.Text
+  digitalTitle              String?                      @db.VarChar(255)
+  digitalDescription        String?                      @db.Text
+  digitalQuantity           Int?
   listingDescription        String?                      @db.VarChar(1000)
   listingItem               String?                      @db.VarChar(100)
   roomTheme                 String?                      @db.VarChar(200)
@@ -124,19 +134,36 @@ model EtsyListing {
 }
 
 model EtsyListingProductConfig {
-  id              Int         @id @default(autoincrement())
-  listingId       Int         @unique
-  listOnEtsy      Boolean     @default(true)
-  digitalDownload Boolean     @default(false)
-  customTop       Boolean     @default(true)
-  customBottom    Boolean     @default(true)
-  returnPolicyId  String?     @db.VarChar(64)
-  sku             String?     @db.VarChar(32)
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  listing         EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  id                        Int         @id @default(autoincrement())
+  listingId                 Int         @unique
+  listOnEtsy                Boolean     @default(true)
+  digitalDownload           Boolean     @default(false)
+  printsFrames              Boolean     @default(true)
+  customTop                 Boolean     @default(true)
+  customBottom              Boolean     @default(true)
+  customiseDigitalDownloads Boolean     @default(false)
+  customisePrints           Boolean     @default(true)
+  downloadSectionId         Int?
+  returnPolicyId            String?     @db.VarChar(64)
+  sku                       String?     @db.VarChar(32)
+  createdAt                 DateTime    @default(now())
+  updatedAt                 DateTime    @updatedAt
+  listing                   EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
   @@map("etsy_listing_product_configs")
+}
+
+model EtsyDownloadSection {
+  id                Int      @id @default(autoincrement())
+  etsyShopId        BigInt
+  etsyShopSectionId Int
+  title             String   @db.VarChar(191)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([etsyShopId, etsyShopSectionId])
+  @@index([etsyShopId])
+  @@map("etsy_download_sections")
 }
 
 model EtsyListingSizeOption {
@@ -489,6 +516,7 @@ model EtsyListingImage {
   id               Int            @id @default(autoincrement())
   listingId        Int
   etsyImageId      String?
+  etsyDownloadImageId String?
   localFileName    String?
   originalFileName String?
   rank             Int?
@@ -502,6 +530,7 @@ model EtsyListingImage {
   pinterestPins    PinterestPin[]
 
   @@unique([listingId, etsyImageId])
+  @@unique([listingId, etsyDownloadImageId])
   @@map("etsy_listing_images")
 }
 

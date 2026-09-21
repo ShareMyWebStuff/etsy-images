@@ -1,5 +1,6 @@
 import { inspectListingZipStorage, isDropboxInstructionPdfFile } from '@/lib/dropbox-bundle';
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';
+import { hasRequiredListingImages } from '@/lib/listing-image-limits';
 import { isListingComplete } from '@/lib/listing-completeness';
 import { prisma } from '@/lib/prisma';
 
@@ -129,10 +130,15 @@ export async function getSubSectionListingsPageData(
     select: {
       id: true,
       etsyId: true,
+      etsyDownloadId: true,
+      etsyDownloadState: true,
       title: true,
       localDirectoryName: true,
       state: true,
       description: true,
+      digitalTitle: true,
+      digitalDescription: true,
+      digitalQuantity: true,
       listingDescription: true,
       primaryColour: true,
       secondaryColour: true,
@@ -148,7 +154,7 @@ export async function getSubSectionListingsPageData(
       },
       files: { select: { rawJson: true } },
       zippedFiles: { select: { fileName: true, sizeBytes: true } },
-      productConfig: { select: { id: true } },
+      productConfig: { select: { id: true, downloadSectionId: true } },
       products: { select: { id: true } },
       dropboxBundle: { select: { id: true, sharedUrl: true } },
       dropboxFiles: {
@@ -188,9 +194,7 @@ export async function getSubSectionListingsPageData(
     },
     listings: await Promise.all(listings.map(async (listing) => {
       const hasDetailsTitle = listing.title.trim().length > 0;
-      const activeImages = listing.images.slice(0, 10);
-      const hasTenUploadedImages = activeImages.length === 10
-        && activeImages.every((image) => (image.localFileName?.trim().length ?? 0) > 0);
+      const hasRequiredImages = hasRequiredListingImages(listing.images);
       const hasThumbnail = (listing.thumbnailFileName?.trim().length ?? 0) > 0;
       const listingPath = getListingDirectoryPath(
         shopName,
@@ -208,28 +212,37 @@ export async function getSubSectionListingsPageData(
       const isComplete = isListingComplete({
         hasListingDescription: (listing.listingDescription?.trim().length ?? 0) > 0,
         hasThumbnail,
-        hasTenImages: hasTenUploadedImages,
+        hasRequiredImages,
         hasCurrentZips,
         hasCurrentDropbox,
         hasEtsyProducts,
+        hasDownloadSection: listing.productConfig?.downloadSectionId != null,
         hasTags: listing.tags.length > 0,
         hasTitle: hasDetailsTitle,
         hasEtsyDescription: (listing.description?.trim().length ?? 0) > 0,
         hasQuantity: (listing.quantity ?? 0) > 0,
+        hasDigitalTitle: (listing.digitalTitle?.trim().length ?? 0) > 0,
+        hasDigitalDescription: (listing.digitalDescription?.trim().length ?? 0) > 0,
+        hasDigitalQuantity: (listing.digitalQuantity ?? 0) > 0,
         hasPrimaryColour: (listing.primaryColour?.trim().length ?? 0) > 0,
       });
-      const isPublished = listing.state === 'active' || listing.state === 'published';
+      const isPublished = listing.state === 'active' || listing.state === 'published'
+        || listing.etsyDownloadState === 'active' || listing.etsyDownloadState === 'published';
 
       return {
         id: String(listing.id),
         listingName: listing.localDirectoryName ?? listing.title,
         sourceSectionName: listing.sourceSection?.title ?? null,
-        status: !hasThumbnail ? 'incomplete' : isPublished ? listing.state! : isComplete ? 'complete' : 'incomplete',
+        status: !hasThumbnail
+          ? 'incomplete'
+          : isPublished
+            ? (listing.state === 'active' || listing.state === 'published' ? listing.state : listing.etsyDownloadState!)
+            : isComplete ? 'complete' : 'incomplete',
         isComplete,
         price: formatPrice(listing.priceAmount, listing.priceDivisor, listing.priceCurrencyCode),
         hasPrice: listing.priceAmount !== null && listing.priceDivisor !== null && listing.priceDivisor > 0,
         quantity: listing.quantity,
-        hasEtsyListingId: listing.etsyId !== null,
+        hasEtsyListingId: listing.etsyId !== null || listing.etsyDownloadId !== null,
       };
     })),
   };

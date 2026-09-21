@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSubSectionListingsPageData } from '@/lib/listing-table';
-import { pushListing } from '@/lib/local-listings';
+import { syncListingToEtsy } from '@/lib/local-listings';
 
 type PushListingRequest = {
   shopId?: string;
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing listingId.' }, { status: 400 });
     }
 
-    await pushListing(body.shopId, body.sectionId, body.subSectionId, body.listingId);
+    await syncListingToEtsy(body.shopId, body.sectionId, body.subSectionId, body.listingId);
     const data = await getSubSectionListingsPageData(body.shopId, body.sectionId, body.subSectionId);
 
     return NextResponse.json({ data });

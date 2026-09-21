@@ -54,9 +54,14 @@ async function auditLegacyBackupData() {
       // The migration deliberately re-categorises existing listings as Giclée Prints.
       .filter((column) => !(sourceTable === 'etsy_listings' && column === 'taxonomyId'));
     const projection = comparableColumns.map(quoteIdentifier).join(', ');
+    const currentProjection = comparableColumns.map((column) =>
+      sourceTable === 'etsy_listings' && column === 'etsyId'
+        ? `${quoteIdentifier('etsyPrintId')} AS ${quoteIdentifier('etsyId')}`
+        : quoteIdentifier(column)
+    ).join(', ');
     const [backupRows, sourceRows] = await Promise.all([
       prisma.$queryRawUnsafe(`SELECT ${projection} FROM ${quoteIdentifier(backupTable)}`),
-      prisma.$queryRawUnsafe(`SELECT ${projection} FROM ${quoteIdentifier(sourceTable)}`),
+      prisma.$queryRawUnsafe(`SELECT ${currentProjection} FROM ${quoteIdentifier(sourceTable)}`),
     ]);
     rowsChecked += backupRows.length;
 

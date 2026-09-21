@@ -15,7 +15,7 @@ const themes = new Map([
   ['Woodland Wall Art', 'Woodland'],
   ['Farm Animal Wall Art', 'Farm Animals'],
   ['Jungle & Safari Wall Art', 'Jungle & Safari'],
-  ['See Creatures Wall Art', 'Sea Creatures'],
+  ['Sea Creatures Wall Art', 'Sea Creatures'],
 ]);
 
 async function main() {

@@ -99,6 +99,53 @@ async function getShopByEtsyShopId(shopId: string) {
   return shop;
 }
 
+export type EtsyDownloadSectionOption = { id: number; title: string };
+
+async function getRemoteEtsyShopSections(shop: LocalShop): Promise<EtsyDownloadSectionOption[]> {
+  const response = await fetchEtsySections<EtsyCollectionResponse<EtsyShopSectionResponse>>(shop.etsyShopId);
+  return (response.results ?? [])
+    .map((section) => ({ id: Number(section.shop_section_id), title: section.title?.trim() ?? '' }))
+    .filter((section) => Number.isSafeInteger(section.id) && section.id > 0 && section.id <= 2_147_483_647 && section.title);
+}
+
+export async function getEtsyDownloadSections(shopId: string): Promise<EtsyDownloadSectionOption[]> {
+  const shop = await getShopByEtsyShopId(shopId);
+  const [registered, remote] = await Promise.all([
+    prisma.etsyDownloadSection.findMany({ where: { etsyShopId: shop.etsyShopId }, select: { etsyShopSectionId: true } }),
+    getRemoteEtsyShopSections(shop),
+  ]);
+  const registeredIds = new Set(registered.map((section) => section.etsyShopSectionId));
+  return remote
+    .filter((section) => registeredIds.has(section.id))
+    .sort((first, second) => first.title.localeCompare(second.title));
+}
+
+export async function createEtsyDownloadSection(shopId: string, title: string): Promise<EtsyDownloadSectionOption> {
+  const shop = await getShopByEtsyShopId(shopId);
+  const trimmedTitle = title.trim();
+  if (!trimmedTitle) throw new Error('Enter a download section name.');
+  const existing = await getEtsyDownloadSections(shopId);
+  if (existing.some((section) => normalizeForCompare(section.title) === normalizeForCompare(trimmedTitle))) {
+    throw new Error(`A download section named "${trimmedTitle}" already exists. Select it from the list.`);
+  }
+  const remoteSections = await getRemoteEtsyShopSections(shop);
+  const matchingRemote = remoteSections.find((section) => normalizeForCompare(section.title) === normalizeForCompare(trimmedTitle));
+  const created = matchingRemote ?? await fetchEtsySections<EtsyShopSectionResponse>(shop.etsyShopId, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ title: trimmedTitle }),
+  });
+  const id = Number('id' in created ? created.id : created.shop_section_id);
+  if (!Number.isSafeInteger(id) || id <= 0 || id > 2_147_483_647) throw new Error('Etsy did not return a valid shop section id.');
+  const section = { id, title: created.title?.trim() || trimmedTitle };
+  await prisma.etsyDownloadSection.upsert({
+    where: { etsyShopId_etsyShopSectionId: { etsyShopId: shop.etsyShopId, etsyShopSectionId: section.id } },
+    create: { etsyShopId: shop.etsyShopId, etsyShopSectionId: section.id, title: section.title },
+    update: { title: section.title },
+  });
+  return section;
+}
+
 async function getExistingSectionTitles(shop: LocalShop) {
   const sections = await prisma.etsyShopSection.findMany({
     where: {

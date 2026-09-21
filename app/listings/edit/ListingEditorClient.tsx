@@ -14,13 +14,14 @@ import type { CollectionKind, ListingEditorData, UploadKind } from '@/lib/listin
 import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
 import { getNextPrintSize } from '@/lib/print-sizes';
 import { ETSY_MAX_DOWNLOAD_FILES, ETSY_MAX_FILE_SIZE_BYTES } from '@/lib/etsy-download-limits';
-import { LISTING_EDITOR_MAX_IMAGES } from '@/lib/listing-image-limits';
-import { buildBedroomDoorImagePrompt, buildBedroomImagePrompt, buildDigitalDownloadIncludedImagePrompt, buildFramesImagePrompt, buildHowToPrintIncludedImagePrompt, buildListingImagePrompt, buildNoFrameIncludedImagePrompt, buildPerfectGiftImagePrompt, buildPersonalUseIncludedImagePrompt, buildPlayroomImagePrompt, buildSizesImagePrompt } from '@/lib/listing-prompts';
+import { LISTING_EDITOR_MAX_IMAGES, LISTING_IMAGE_GUIDE } from '@/lib/listing-image-limits';
+import { buildAspectRatiosImagePrompt, buildBedroomDoorImagePrompt, buildBedroomImagePrompt, buildBesideBedImagePrompt, buildCustomisedPlayroomImagePrompt, buildCustomisedShelveImagePrompt, buildDigitalDownloadIncludedImagePrompt, buildFramesImagePrompt, buildHowToPrintIncludedImagePrompt, buildListingImagePrompt, buildNoFrameIncludedImagePrompt, buildPerfectGiftImagePrompt, buildPersonalUseIncludedImagePrompt, buildPlayroomImagePrompt, buildSizesImagePrompt, buildThreeFramesImagePrompt } from '@/lib/listing-prompts';
 import { buildDigitalDownloadGeneratePrompt } from '@/lib/digital-download-generate-prompt';
 import { buildDetailsGeneratePrompt } from '@/lib/details-generate-prompt';
-import { buildThumbnailGeneratePrompt, missingThumbnailGeneratePromptFields } from '@/lib/thumbnail-generate-prompt';
+import { buildDownloadDetailsPrompt, missingDownloadDetailsPromptFields } from '@/lib/download-details-prompt';
+import { buildThumbnailGeneratePrompt, buildThumbnailIllustrationPrompt, buildThumbnailPrintMasterPrompt, missingThumbnailGeneratePromptFields, missingThumbnailIllustrationPromptFields } from '@/lib/thumbnail-generate-prompt';
 import { loadBundledPersonalisationFont, prepareClipboardImage, type PreparedClipboardImage } from '@/lib/browser-personalisation';
-import { prepareImagePersonalisationPrompt, type PersonalisationPromptMode } from '@/lib/image-personalisation-prompt';
+import { buildCameronsImagePrompt, buildGuysImagePrompt, buildIslasImagePrompt, buildVickiesImagePrompt, PERSONALISATION_SOURCE_HEIGHT_PX, PERSONALISATION_SOURCE_WIDTH_PX, prepareImagePersonalisationPrompt, type PersonalisationPromptMode } from '@/lib/image-personalisation-prompt';
 import { DEFAULT_PERSONALISATION_FONT_ID, getPersonalisationFont, PERSONALISATION_FONTS } from '@/lib/personalisation-fonts';
 
 type ListingEditorClientProps = {
@@ -34,8 +35,12 @@ type WorkflowTab = NonNullable<ListingEditorClientProps['initialTab']>;
 type EtsyProductsForm = {
   listOnEtsy: boolean;
   digitalDownload: boolean;
+  printsFrames: boolean;
   customTop: boolean;
   customBottom: boolean;
+  customiseDigitalDownloads: boolean;
+  customisePrints: boolean;
+  downloadSectionId: number | null;
   returnPolicyId: string;
   sizes: Record<string, boolean>;
   frames: Record<string, boolean>;
@@ -47,6 +52,8 @@ type EtsyReturnPolicy = {
   acceptsReturns: boolean;
   acceptsExchanges: boolean;
 };
+
+type EtsyDownloadSection = { id: number; title: string };
 
 type EditorResponse = {
   data?: ListingEditorData | null;
@@ -99,19 +106,6 @@ function SortableListingImage({ image, index, disabled, imageUrl, onDelete, onPr
 const textAreaClassName =
   'min-h-36 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-const singleDownloadImageGuide = [
-  'Listing image',
-  'Bedroom',
-  'Playroom',
-  'Perfect gift',
-  'Frames',
-  'Sizes',
-  'No Frames Included',
-  'Digital Download',
-  'How to print',
-  'Personal Use Only',
-];
-
 function toNumberOrNull(value: string) {
   if (!value.trim()) {
     return null;
@@ -131,8 +125,11 @@ function createDetailsForm(listing: ListingEditorData['listing'] | undefined) {
   return {
     title: listing?.title ?? '',
     description: listing?.description ?? '',
+    digitalTitle: listing?.digitalTitle ?? '',
+    digitalDescription: listing?.digitalDescription ?? '',
+    digitalQuantity: listing?.digitalQuantity?.toString() ?? '',
     status: listing?.status ?? '',
-    quantity: listing?.quantity?.toString() ?? '999',
+    quantity: listing?.quantity?.toString() ?? '',
     priceAmount: listing?.priceAmount === null || listing?.priceAmount === undefined
       ? '4.17'
       : formatPriceForInput(listing.priceAmount, listing.priceDivisor),
@@ -178,8 +175,12 @@ function createEtsyProductsForm(data: ListingEditorData | null | undefined): Ets
   return {
     listOnEtsy: data?.etsyProducts.config.listOnEtsy ?? true,
     digitalDownload: data?.etsyProducts.config.digitalDownload ?? false,
+    printsFrames: data?.etsyProducts.config.printsFrames ?? true,
     customTop: data?.etsyProducts.config.customTop ?? true,
     customBottom: data?.etsyProducts.config.customBottom ?? true,
+    customiseDigitalDownloads: data?.etsyProducts.config.customiseDigitalDownloads ?? false,
+    customisePrints: data?.etsyProducts.config.customisePrints ?? true,
+    downloadSectionId: data?.etsyProducts.config.downloadSectionId ?? null,
     returnPolicyId: data?.etsyProducts.config.returnPolicyId ?? '',
     sizes: Object.fromEntries(data?.etsyProducts.sizes.map((size) => [size.key, size.enabled]) ?? []),
     frames: Object.fromEntries(data?.etsyProducts.frames.map((frame) => [frame.key, frame.enabled]) ?? []),
@@ -228,6 +229,12 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   const [returnPolicies, setReturnPolicies] = useState<EtsyReturnPolicy[]>([]);
   const [returnPoliciesLoading, setReturnPoliciesLoading] = useState(false);
   const [returnPoliciesError, setReturnPoliciesError] = useState<string | null>(null);
+  const [downloadSections, setDownloadSections] = useState<EtsyDownloadSection[]>([]);
+  const [downloadSectionsLoading, setDownloadSectionsLoading] = useState(false);
+  const [downloadSectionsError, setDownloadSectionsError] = useState<string | null>(null);
+  const [createDownloadSectionOpen, setCreateDownloadSectionOpen] = useState(false);
+  const [newDownloadSectionName, setNewDownloadSectionName] = useState('');
+  const [createDownloadSectionError, setCreateDownloadSectionError] = useState<string | null>(null);
   const [listingDescription, setListingDescription] = useState(initialData?.listing.listingDescription ?? '');
   const [listingItem, setListingItem] = useState(initialData?.listing.listingItem ?? '');
   const [roomTheme, setRoomTheme] = useState(initialData?.listing.roomTheme ?? '');
@@ -236,6 +243,9 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
   const [form, setForm] = useState(() => createDetailsForm(initialData?.listing));
+  const [activeDetailsVariant, setActiveDetailsVariant] = useState<'print' | 'digital'>(
+    initialData?.listing.listingType === 'digital' ? 'digital' : 'print'
+  );
 
   useEffect(() => {
     const shopId = data?.context.shopId;
@@ -270,6 +280,26 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       .finally(() => { if (!controller.signal.aborted) setReturnPoliciesLoading(false); });
     return () => controller.abort();
   }, [data?.context.shopId, data?.listing.listingType]);
+
+  useEffect(() => {
+    const shopId = data?.context.shopId;
+    if (!shopId || activeTab !== 'etsy-products') return;
+    const controller = new AbortController();
+    setDownloadSectionsLoading(true);
+    setDownloadSectionsError(null);
+    fetch(`/api/shops/listings/editor/download-sections?shopId=${encodeURIComponent(shopId)}`, { signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json() as { sections?: EtsyDownloadSection[]; error?: string };
+        if (!response.ok) throw new Error(payload.error ?? 'Unable to load Etsy download sections.');
+        setDownloadSections(payload.sections ?? []);
+      })
+      .catch((caughtError) => {
+        if (caughtError instanceof DOMException && caughtError.name === 'AbortError') return;
+        setDownloadSectionsError(caughtError instanceof Error ? caughtError.message : 'Unable to load Etsy download sections.');
+      })
+      .finally(() => { if (!controller.signal.aborted) setDownloadSectionsLoading(false); });
+    return () => controller.abort();
+  }, [data?.context.shopId, activeTab]);
 
   if (!data) {
     return (
@@ -310,6 +340,35 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     sectionName: data.section.sectionName,
   };
   const missingThumbnailPromptFields = missingThumbnailGeneratePromptFields(thumbnailGeneratePromptInput);
+  const thumbnailIllustrationPromptInput = {
+    animal: data.listing.listingItem,
+    listingDescription: data.listing.listingDescription,
+    collectionTheme: data.listing.roomTheme,
+    sectionName: data.section.sectionName,
+  };
+  const missingThumbnailIllustrationFields = missingThumbnailIllustrationPromptFields(thumbnailIllustrationPromptInput);
+  const downloadDetailsFrameColours = data.etsyProducts.frames
+    .filter((frame) => frame.key !== 'no_frame' && etsyProductsForm.frames[frame.key])
+    .map((frame) => frame.key === 'oak' ? 'Natural Oak' : frame.label);
+  const downloadDetailsImage = data.files.find((file) => file.widthPixels && file.heightPixels);
+  const downloadDetailsPromptValues = {
+    animalName: data.listing.listingItem,
+    animalDescription: data.listing.listingDescription,
+    roomTheme: data.listing.roomTheme,
+    frameColour: downloadDetailsFrameColours.includes('Natural Oak')
+      ? 'Natural Oak'
+      : downloadDetailsFrameColours[0] ?? 'Natural Oak',
+    orientation: (downloadDetailsImage?.widthPixels ?? 0) > (downloadDetailsImage?.heightPixels ?? 0)
+      ? 'landscape'
+      : 'portrait',
+    fileType: 'jpeg',
+    frameColours: downloadDetailsFrameColours.join(', ') || 'Natural Oak',
+    filesIncluded: data.files.map((file) => file.originalFileName ?? file.fileName).join(', '),
+    recommendedPaper: data.materials.map((material) => material.value).join(', ')
+      || 'Heavyweight matte photo paper, approximately 200–250 gsm',
+    licenceType: 'Personal use only',
+  };
+  const missingDownloadDetailsFields = missingDownloadDetailsPromptFields(downloadDetailsPromptValues);
 
   function getImageUrl(assetId: string) {
     return `/api/shops/listings/editor/assets?${new URLSearchParams({ ...context, kind: 'image', assetId })}`;
@@ -399,14 +458,13 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     setPromptClipboardStatus(null);
     setPromptCopying('text');
     try {
-      const sourceImage = await getPersonalisationSourceImage();
       const prepared = await prepareImagePersonalisationPrompt({
         mode,
         headerText: personalisationPromptSettings.headerText,
         footerText: personalisationPromptSettings.footerText,
         font: selectedPersonalisationFont,
-        sourceWidth: sourceImage.width,
-        sourceHeight: sourceImage.height,
+        sourceWidth: PERSONALISATION_SOURCE_WIDTH_PX,
+        sourceHeight: PERSONALISATION_SOURCE_HEIGHT_PX,
         loadFont: loadBundledPersonalisationFont,
       });
       if (preparationId !== personalisationPreparationId.current) return;
@@ -490,7 +548,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     }));
   }
 
-  async function loadTextFile(field: 'title' | 'description', event: ChangeEvent<HTMLInputElement>) {
+  async function loadTextFile(field: 'title' | 'description' | 'digitalTitle' | 'digitalDescription', event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
     event.target.value = '';
 
@@ -505,7 +563,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
 
     try {
       const contents = await file.text();
-      updateForm(field, field === 'title' ? contents.trim() : contents);
+      updateForm(field, field === 'title' || field === 'digitalTitle' ? contents.trim() : contents);
       setError(null);
     } catch {
       setError(`Unable to read ${file.name}.`);
@@ -609,6 +667,9 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           title: form.title,
           description: form.description,
           quantity: toNumberOrNull(form.quantity),
+          digitalTitle: form.digitalTitle,
+          digitalDescription: form.digitalDescription,
+          digitalQuantity: toNumberOrNull(form.digitalQuantity),
           primaryColour: form.primaryColour,
           secondaryColour: form.secondaryColour,
           etsySku: form.etsySku,
@@ -705,6 +766,35 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       await parseResponse(response, 'Unable to save Etsy products.');
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to save Etsy products.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function createDownloadSection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!newDownloadSectionName.trim()) {
+      setCreateDownloadSectionError('Enter a section name.');
+      return;
+    }
+    setCreateDownloadSectionError(null);
+    setBusyKey('create-download-section');
+    try {
+      const response = await fetch('/api/shops/listings/editor/download-sections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shopId: context.shopId, title: newDownloadSectionName.trim() }),
+      });
+      const payload = await response.json() as { section?: EtsyDownloadSection; error?: string };
+      if (!response.ok || !payload.section) throw new Error(payload.error ?? 'Unable to create Etsy download section.');
+      const section = payload.section;
+      setDownloadSections((current) => [...current.filter((item) => item.id !== section.id), section]
+        .sort((first, second) => first.title.localeCompare(second.title)));
+      setEtsyProductsForm((current) => ({ ...current, downloadSectionId: section.id }));
+      setNewDownloadSectionName('');
+      setCreateDownloadSectionOpen(false);
+    } catch (caughtError) {
+      setCreateDownloadSectionError(caughtError instanceof Error ? caughtError.message : 'Unable to create Etsy download section.');
     } finally {
       setBusyKey(null);
     }
@@ -1142,16 +1232,17 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           <div>
             <h3 className="text-lg font-semibold">Photo and video</h3>
             <p className="text-sm text-muted-foreground">Show off different angles, available options, or details of your listing.</p>
-            {data?.listing.numberOfItems === 1 && !data.listing.includeAllItems ? (
-              <div className="mt-3 grid w-fit grid-cols-[max-content_max-content] gap-x-6 text-sm">
-                <ol className="list-inside list-decimal">
-                  {singleDownloadImageGuide.slice(0, 6).map((item) => <li key={item}>{item}</li>)}
-                </ol>
-                <ol start={7} className="list-inside list-decimal">
-                  {singleDownloadImageGuide.slice(6).map((item) => <li key={item}>{item}</li>)}
-                </ol>
-              </div>
-            ) : null}
+            <div className="mt-3 grid w-fit grid-cols-[max-content_max-content_max-content] gap-x-6 text-sm">
+              <ol className="list-inside list-decimal">
+                {LISTING_IMAGE_GUIDE.slice(0, 7).map((item) => <li key={item}>{item}</li>)}
+              </ol>
+              <ol start={8} className="list-inside list-decimal">
+                {LISTING_IMAGE_GUIDE.slice(7, 11).map((item) => <li key={item}>{item}</li>)}
+              </ol>
+              <ol start={12} className="list-inside list-decimal">
+                {LISTING_IMAGE_GUIDE.slice(11).map((item) => <li key={item}>{item}</li>)}
+              </ol>
+            </div>
           </div>
           <div>
             <p className="mb-4 font-semibold">Add up to {LISTING_EDITOR_MAX_IMAGES} photos.</p>
@@ -1618,13 +1709,49 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
             setEtsyProductsForm((current) => ({ ...current, listOnEtsy: checked }))
           )}
         </div>
-        <div className="grid gap-5 md:grid-cols-3">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
           <section className="rounded-lg border p-4">
-            <h4 className="mb-2 font-semibold">Size</h4>
+            <h4 className="mb-2 font-semibold">Downloads</h4>
             {checkbox(etsyProductsForm.digitalDownload, 'Digital Download', (checked) =>
               setEtsyProductsForm((current) => ({ ...current, digitalDownload: checked }))
             )}
             <div className="my-2 border-t" />
+            <label htmlFor="download-section" className="block text-sm font-medium">Download Section</label>
+            <div className="mt-2 flex gap-2">
+              <select
+                id="download-section"
+                className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm"
+                value={etsyProductsForm.downloadSectionId ?? ''}
+                onChange={(event) => setEtsyProductsForm((current) => ({
+                  ...current,
+                  downloadSectionId: event.target.value ? Number(event.target.value) : null,
+                }))}
+                disabled={busyKey !== null || downloadSectionsLoading}
+              >
+                <option value="">{downloadSectionsLoading ? 'Loading Etsy sections...' : 'Choose a section'}</option>
+                {etsyProductsForm.downloadSectionId !== null
+                  && !downloadSections.some((section) => section.id === etsyProductsForm.downloadSectionId)
+                  ? <option value={etsyProductsForm.downloadSectionId}>Section #{etsyProductsForm.downloadSectionId} (not found)</option>
+                  : null}
+                {downloadSections.map((section) => <option key={section.id} value={section.id}>{section.title}</option>)}
+              </select>
+              <Button type="button" size="icon" variant="outline" onClick={() => setCreateDownloadSectionOpen(true)} disabled={busyKey !== null} aria-label="Create download section" title="Create download section">
+                <Plus className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </div>
+            {downloadSectionsError ? <p className="mt-2 text-xs text-destructive">{downloadSectionsError}</p> : null}
+            {!downloadSectionsLoading && !downloadSectionsError && downloadSections.length === 0 ? (
+              <p className="mt-2 text-xs text-muted-foreground">No Download Sections yet. Use + to create one.</p>
+            ) : null}
+            {etsyProductsForm.downloadSectionId === null ? <p className="mt-2 text-xs text-amber-700">Required to complete this listing.</p> : null}
+          </section>
+          <section className="rounded-lg border p-4">
+            <h4 className="mb-2 font-semibold">Prints / Frames</h4>
+            {checkbox(etsyProductsForm.printsFrames, 'Prints / Frames', (checked) =>
+              setEtsyProductsForm((current) => ({ ...current, printsFrames: checked }))
+            )}
+            <div className="my-2 border-t" />
+            <h5 className="mb-2 text-sm font-semibold">Sizes</h5>
             {data.etsyProducts.sizes.map((size) => checkbox(
               etsyProductsForm.sizes[size.key] ?? false,
               size.label,
@@ -1655,6 +1782,13 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
             )}
             {checkbox(etsyProductsForm.customBottom, 'Bottom of image', (checked) =>
               setEtsyProductsForm((current) => ({ ...current, customBottom: checked }))
+            )}
+            <div className="my-2 border-t" />
+            {checkbox(etsyProductsForm.customiseDigitalDownloads, 'Customise digital downloads', (checked) =>
+              setEtsyProductsForm((current) => ({ ...current, customiseDigitalDownloads: checked }))
+            )}
+            {checkbox(etsyProductsForm.customisePrints, 'Customise prints', (checked) =>
+              setEtsyProductsForm((current) => ({ ...current, customisePrints: checked }))
             )}
           </section>
         </div>
@@ -1816,6 +1950,37 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     );
   }
 
+  function downloadPromptThumbnail() {
+    const thumbnail = data?.thumbnail;
+    if (!thumbnail) {
+      setPromptClipboardStatus('Upload a thumbnail before downloading the prompt image.');
+      return;
+    }
+
+    const download = document.createElement('a');
+    download.href = getThumbnailUrl();
+    download.download = thumbnail.originalFileName?.trim() || thumbnail.fileName || 'thumbnail.png';
+    document.body.appendChild(download);
+    download.click();
+    download.remove();
+    setPromptClipboardStatus(`${download.download} is downloading to your browser’s Downloads folder.`);
+  }
+
+  function renderPromptThumbnailDownloadButton(promptLabel: string) {
+    return (
+      <Button
+        type="button"
+        size="icon"
+        variant="outline"
+        onClick={downloadPromptThumbnail}
+        aria-label={`Download thumbnail image for ${promptLabel}`}
+        title="Download thumbnail image"
+      >
+        <Download className="h-4 w-4" aria-hidden="true" />
+      </Button>
+    );
+  }
+
   function renderPersonalisationPromptRow(mode: PersonalisationPromptMode, label: string) {
     const rowId = `images-personalisation-${mode}`;
     return (
@@ -1846,6 +2011,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
             >
               <ImageIcon className="h-4 w-4" aria-hidden="true" />
             </Button>
+            {renderPromptThumbnailDownloadButton(`${label} prompt`)}
           </div>
         </TableCell>
       </TableRow>
@@ -1920,10 +2086,35 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           {activeTab === 'todo' ? renderTodo() : null}
           {activeTab === 'details' ? (
             <form className="grid gap-4" onSubmit={saveDetails}>
+                <div role="tablist" aria-label="Etsy listing details" className="flex w-fit gap-1 rounded-md border p-1">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeDetailsVariant === 'print'}
+                    onClick={() => setActiveDetailsVariant('print')}
+                    className={`rounded px-4 py-2 text-sm font-medium ${activeDetailsVariant === 'print' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+                  >
+                    Print
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeDetailsVariant === 'digital'}
+                    onClick={() => setActiveDetailsVariant('digital')}
+                    className={`rounded px-4 py-2 text-sm font-medium ${activeDetailsVariant === 'digital' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+                  >
+                    Digital Download
+                  </button>
+                </div>
+                <p className="text-sm text-muted-foreground">Enter a separate Etsy title, description and quantity for each listing type.</p>
                 <div className="grid gap-2 text-sm font-medium">
                   <span>Title</span>
                   <span className="flex items-center gap-2">
-                    <Input value={form.title} onChange={(event) => updateForm('title', event.target.value)} />
+                    <Input
+                      maxLength={255}
+                      value={activeDetailsVariant === 'print' ? form.title : form.digitalTitle}
+                      onChange={(event) => updateForm(activeDetailsVariant === 'print' ? 'title' : 'digitalTitle', event.target.value)}
+                    />
                     <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-md border border-input px-4 py-2 font-medium hover:bg-accent">
                       <Upload className="h-4 w-4" aria-hidden="true" />
                       Load text
@@ -1931,7 +2122,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         type="file"
                         className="sr-only"
                         accept=".txt,text/plain"
-                        onChange={(event) => loadTextFile('title', event)}
+                        onChange={(event) => loadTextFile(activeDetailsVariant === 'print' ? 'title' : 'digitalTitle', event)}
                       />
                     </label>
                   </span>
@@ -1939,7 +2130,11 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 <div className="grid gap-2 text-sm font-medium">
                   <span>Etsy Description</span>
                   <span className="flex items-start gap-2">
-                    <textarea value={form.description} onChange={(event) => updateForm('description', event.target.value)} className={textAreaClassName} />
+                    <textarea
+                      value={activeDetailsVariant === 'print' ? form.description : form.digitalDescription}
+                      onChange={(event) => updateForm(activeDetailsVariant === 'print' ? 'description' : 'digitalDescription', event.target.value)}
+                      className={textAreaClassName}
+                    />
                     <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-md border border-input px-4 py-2 font-medium hover:bg-accent">
                       <Upload className="h-4 w-4" aria-hidden="true" />
                       Load text
@@ -1947,25 +2142,30 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         type="file"
                         className="sr-only"
                         accept=".txt,text/plain"
-                        onChange={(event) => loadTextFile('description', event)}
+                        onChange={(event) => loadTextFile(activeDetailsVariant === 'print' ? 'description' : 'digitalDescription', event)}
                       />
                     </label>
                   </span>
                 </div>
-                <label className="grid max-w-md gap-2 text-sm font-medium">
-                  Etsy SKU
+                <label className="grid gap-2 text-sm font-medium">
+                  Quantity
                   <Input
-                    value={form.etsySku}
-                    maxLength={32}
-                    onChange={(event) => updateForm('etsySku', event.target.value)}
-                    placeholder="Enter one SKU for this listing"
+                    type="number"
+                    min="0"
+                    value={activeDetailsVariant === 'print' ? form.quantity : form.digitalQuantity}
+                    onChange={(event) => updateForm(activeDetailsVariant === 'print' ? 'quantity' : 'digitalQuantity', event.target.value)}
                   />
-                  <span className="text-xs font-normal text-muted-foreground">The same SKU is sent for every size and frame variation when syncing to Etsy.</span>
                 </label>
-                <div className="grid gap-4">
-                  <label className="grid gap-2 text-sm font-medium">
-                    Quantity
-                    <Input type="number" value={form.quantity} onChange={(event) => updateForm('quantity', event.target.value)} />
+                <div className="border-t pt-4">
+                  <label className="grid max-w-md gap-2 text-sm font-medium">
+                    Etsy SKU
+                    <Input
+                      value={form.etsySku}
+                      maxLength={32}
+                      onChange={(event) => updateForm('etsySku', event.target.value)}
+                      placeholder="Enter one SKU for this listing"
+                    />
+                    <span className="text-xs font-normal text-muted-foreground">The same SKU is sent for every size and frame variation when syncing to Etsy.</span>
                   </label>
                 </div>
                 <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
@@ -2144,13 +2344,17 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               </div>
             </div>
           ) : null}
-          <div className="overflow-x-auto rounded-md border">
-              <Table>
-                <TableHeader>
+          <div className="rounded-md border">
+              {/* 2.5rem header plus twelve 2.75rem prompt rows. */}
+              <Table
+                containerClassName="max-h-[35.5rem]"
+                className="min-w-[42rem] [&_tbody_tr]:h-11 [&_tbody_td]:whitespace-nowrap [&_tbody_td]:px-3 [&_tbody_td]:py-1 [&_tbody_button]:h-8 [&_tbody_button]:w-8"
+              >
+                <TableHeader className="sticky top-0 z-10 bg-card shadow-sm [&_th]:h-10">
                   <TableRow>
                     <TableHead>Tab</TableHead>
                     <TableHead>Prompt</TableHead>
-                    <TableHead className="w-32">Clipboard</TableHead>
+                    <TableHead className="w-40">Clipboard</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -2160,19 +2364,47 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                       Generate image
                     </TableCell>
                     <TableCell>
-                      <span title={missingThumbnailPromptFields.length > 0 ? `Fill in ${missingThumbnailPromptFields.join(', ')} first` : 'Copy Generate image prompt'}>
+                      <div className="flex items-center gap-2">
+                        <span title={missingThumbnailPromptFields.length > 0 ? `Fill in ${missingThumbnailPromptFields.join(', ')} first` : 'Copy Generate image prompt'}>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            onClick={() => copyPromptText(buildThumbnailGeneratePrompt(thumbnailGeneratePromptInput), 'Thumbnail Generate image prompt')}
+                            disabled={promptCopying !== null || missingThumbnailPromptFields.length > 0}
+                            aria-label="Copy Thumbnail Generate image prompt"
+                            title="Copy Generate image prompt"
+                          >
+                            <FileText className="h-4 w-4" aria-hidden="true" />
+                          </Button>
+                        </span>
+                        <span title={missingThumbnailIllustrationFields.length > 0 ? `Fill in ${missingThumbnailIllustrationFields.join(', ')} first` : 'Copy Thumbnail prompt 1'}>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
+                            onClick={() => copyPromptText(buildThumbnailIllustrationPrompt(thumbnailIllustrationPromptInput), 'Thumbnail prompt 1')}
+                            disabled={promptCopying !== null || missingThumbnailIllustrationFields.length > 0}
+                            aria-label="Copy Thumbnail prompt 1"
+                            title="Copy Thumbnail prompt 1"
+                            className="font-semibold"
+                          >
+                            1
+                          </Button>
+                        </span>
                         <Button
                           type="button"
                           size="icon"
                           variant="outline"
-                          onClick={() => copyPromptText(buildThumbnailGeneratePrompt(thumbnailGeneratePromptInput), 'Thumbnail Generate image prompt')}
-                          disabled={promptCopying !== null || missingThumbnailPromptFields.length > 0}
-                          aria-label="Copy Thumbnail Generate image prompt"
-                          title="Copy Generate image prompt"
+                          onClick={() => copyPromptText(buildThumbnailPrintMasterPrompt(), 'Thumbnail prompt 2')}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Thumbnail prompt 2"
+                          title="Copy Thumbnail prompt 2"
+                          className="font-semibold"
                         >
-                          <FileText className="h-4 w-4" aria-hidden="true" />
+                          2
                         </Button>
-                      </span>
+                      </div>
                     </TableCell>
                   </TableRow>
                   {data.thumbnail ? (
@@ -2204,6 +2436,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         >
                           <ImageIcon className="h-4 w-4" aria-hidden="true" />
                         </Button>
+                        {renderPromptThumbnailDownloadButton('Listing Image prompt')}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2237,6 +2470,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         >
                           <ImageIcon className="h-4 w-4" aria-hidden="true" />
                         </Button>
+                        {renderPromptThumbnailDownloadButton('Bedroom prompt')}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2270,6 +2504,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         >
                           <ImageIcon className="h-4 w-4" aria-hidden="true" />
                         </Button>
+                        {renderPromptThumbnailDownloadButton('Playroom prompt')}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2303,12 +2538,13 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         >
                           <ImageIcon className="h-4 w-4" aria-hidden="true" />
                         </Button>
+                        {renderPromptThumbnailDownloadButton('Perfect Gift prompt')}
                       </div>
                     </TableCell>
                   </TableRow>
                   <TableRow {...promptRowProps('images-frames')}>
                     <TableCell className="font-medium">Images</TableCell>
-                    <TableCell>Frames</TableCell>
+                    <TableCell>4 Frames</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <Button
@@ -2317,11 +2553,11 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                           variant="outline"
                           onClick={() => copyPromptText(
                             buildFramesImagePrompt(data.listing.roomTheme, data.listing.listingItem),
-                            'Frames prompt'
+                            '4 Frames prompt'
                           )}
                           disabled={promptCopying !== null}
-                          aria-label="Copy Frames prompt"
-                          title="Copy Frames prompt"
+                          aria-label="Copy 4 Frames prompt"
+                          title="Copy 4 Frames prompt"
                         >
                           <FileText className="h-4 w-4" aria-hidden="true" />
                         </Button>
@@ -2331,11 +2567,46 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                           variant="outline"
                           onClick={copyPromptThumbnail}
                           disabled={promptCopying !== null}
-                          aria-label="Copy thumbnail image for Frames prompt"
+                          aria-label="Copy thumbnail image for 4 Frames prompt"
                           title="Copy thumbnail image"
                         >
                           <ImageIcon className="h-4 w-4" aria-hidden="true" />
                         </Button>
+                        {renderPromptThumbnailDownloadButton('4 Frames prompt')}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-three-frames')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>3 Frames</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildThreeFramesImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            '3 Frames prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy 3 Frames prompt"
+                          title="Copy 3 Frames prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for 3 Frames prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        {renderPromptThumbnailDownloadButton('3 Frames prompt')}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2369,6 +2640,160 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         >
                           <ImageIcon className="h-4 w-4" aria-hidden="true" />
                         </Button>
+                        {renderPromptThumbnailDownloadButton('Sizes prompt')}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-aspect-ratios')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Aspect ratios</TableCell>
+                    <TableCell>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="outline"
+                        onClick={() => copyPromptText(buildAspectRatiosImagePrompt(), 'Aspect ratios prompt')}
+                        disabled={promptCopying !== null}
+                        aria-label="Copy Aspect ratios prompt"
+                        title="Copy Aspect ratios prompt"
+                      >
+                        <FileText className="h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-camerons-image')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Camerons image</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildCameronsImagePrompt(selectedPersonalisationFont),
+                            'Camerons image prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Camerons image prompt"
+                          title="Copy Camerons image prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Camerons image prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        {renderPromptThumbnailDownloadButton('Camerons image prompt')}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-guys-image')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Guys image</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildGuysImagePrompt(selectedPersonalisationFont),
+                            'Guys image prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Guys image prompt"
+                          title="Copy Guys image prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Guys image prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        {renderPromptThumbnailDownloadButton('Guys image prompt')}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-vickies-image')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Vickies image</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildVickiesImagePrompt(selectedPersonalisationFont),
+                            'Vickies image prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Vickies image prompt"
+                          title="Copy Vickies image prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Vickies image prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        {renderPromptThumbnailDownloadButton('Vickies image prompt')}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-islas-image')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Islas image</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildIslasImagePrompt(selectedPersonalisationFont),
+                            'Islas image prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Islas image prompt"
+                          title="Copy Islas image prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Islas image prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        {renderPromptThumbnailDownloadButton('Islas image prompt')}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2402,6 +2827,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         >
                           <ImageIcon className="h-4 w-4" aria-hidden="true" />
                         </Button>
+                        {renderPromptThumbnailDownloadButton('No Frame Included prompt')}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2435,6 +2861,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         >
                           <ImageIcon className="h-4 w-4" aria-hidden="true" />
                         </Button>
+                        {renderPromptThumbnailDownloadButton('Digital Download Included prompt')}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2468,6 +2895,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         >
                           <ImageIcon className="h-4 w-4" aria-hidden="true" />
                         </Button>
+                        {renderPromptThumbnailDownloadButton('How to Print Included prompt')}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2501,6 +2929,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         >
                           <ImageIcon className="h-4 w-4" aria-hidden="true" />
                         </Button>
+                        {renderPromptThumbnailDownloadButton('Personal Use Included prompt')}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2537,22 +2966,153 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         >
                           <ImageIcon className="h-4 w-4" aria-hidden="true" />
                         </Button>
+                        {renderPromptThumbnailDownloadButton('Bedroom door prompt')}
                       </div>
                     </TableCell>
                   </TableRow>
-                  <TableRow {...promptRowProps('details-generate')}>
-                    <TableCell className="font-medium">Details</TableCell>
-                    <TableCell>Generate details tab info</TableCell>
+                  <TableRow {...promptRowProps('images-beside-bed')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Beside bed</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <Button
                           type="button"
                           size="icon"
                           variant="outline"
-                          onClick={() => copyPromptText(getDetailsGeneratePrompt(), 'Details prompt')}
+                          onClick={() => copyPromptText(
+                            buildBesideBedImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'Beside bed prompt'
+                          )}
                           disabled={promptCopying !== null}
-                          aria-label="Copy Details prompt"
-                          title="Copy Details prompt"
+                          aria-label="Copy Beside bed prompt"
+                          title="Copy Beside bed prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Beside bed prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        {renderPromptThumbnailDownloadButton('Beside bed prompt')}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-customised-playroom')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Customised playroom</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildCustomisedPlayroomImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'Customised playroom prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Customised playroom prompt"
+                          title="Copy Customised playroom prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Customised playroom prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        {renderPromptThumbnailDownloadButton('Customised playroom prompt')}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('images-customised-shelve-image')}>
+                    <TableCell className="font-medium">Images</TableCell>
+                    <TableCell>Customised Shelve Image</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(
+                            buildCustomisedShelveImagePrompt(data.listing.roomTheme, data.listing.listingItem),
+                            'Customised Shelve Image prompt'
+                          )}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Customised Shelve Image prompt"
+                          title="Copy Customised Shelve Image prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={copyPromptThumbnail}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy thumbnail image for Customised Shelve Image prompt"
+                          title="Copy thumbnail image"
+                        >
+                          <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                        {renderPromptThumbnailDownloadButton('Customised Shelve Image prompt')}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('details-generate')}>
+                    <TableCell className="font-medium">Details</TableCell>
+                    <TableCell>Print info</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(getDetailsGeneratePrompt(), 'Print info prompt')}
+                          disabled={promptCopying !== null}
+                          aria-label="Copy Print info prompt"
+                          title="Copy Print info prompt"
+                        >
+                          <FileText className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  <TableRow {...promptRowProps('details-download-info')}>
+                    <TableCell className="font-medium">Details</TableCell>
+                    <TableCell>
+                      Download info
+                      {missingDownloadDetailsFields.length > 0 ? (
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          Fill in {missingDownloadDetailsFields.join(', ')} first.
+                        </span>
+                      ) : null}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() => copyPromptText(buildDownloadDetailsPrompt(downloadDetailsPromptValues), 'Download info prompt')}
+                          disabled={promptCopying !== null || missingDownloadDetailsFields.length > 0}
+                          aria-label="Copy Download info prompt"
+                          title={missingDownloadDetailsFields.length > 0
+                            ? `Fill in ${missingDownloadDetailsFields.join(', ')} first`
+                            : 'Copy Download info prompt'}
                         >
                           <FileText className="h-4 w-4" aria-hidden="true" />
                         </Button>
@@ -2589,6 +3149,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         >
                           <ImageIcon className="h-4 w-4" aria-hidden="true" />
                         </Button>
+                        {renderPromptThumbnailDownloadButton('Digital Downloads Generate prompt')}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -2600,6 +3161,31 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           {promptClipboardStatus ? (
             <p className="text-sm text-muted-foreground" role="status">{promptClipboardStatus}</p>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createDownloadSectionOpen} onOpenChange={(open) => {
+        if (busyKey !== 'create-download-section') {
+          setCreateDownloadSectionOpen(open);
+          if (!open) setCreateDownloadSectionError(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Download Section</DialogTitle>
+            <DialogDescription>Create a new section in your Etsy shop. It will be selected here; click Save to apply it to this listing.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={createDownloadSection} className="grid gap-4">
+            <label className="grid gap-2 text-sm font-medium">
+              Section name
+              <Input value={newDownloadSectionName} onChange={(event) => setNewDownloadSectionName(event.target.value)} disabled={busyKey === 'create-download-section'} autoFocus />
+            </label>
+            {createDownloadSectionError ? <p className="text-sm text-destructive" role="alert">{createDownloadSectionError}</p> : null}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setCreateDownloadSectionOpen(false)} disabled={busyKey === 'create-download-section'}>Cancel</Button>
+              <Button type="submit" disabled={busyKey === 'create-download-section'}>{busyKey === 'create-download-section' ? 'Creating...' : 'Create'}</Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
 

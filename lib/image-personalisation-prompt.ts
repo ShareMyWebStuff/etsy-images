@@ -1,5 +1,8 @@
 import type { PersonalisationFont } from '@/lib/personalisation-fonts';
 
+export const PERSONALISATION_SOURCE_WIDTH_PX = 1446;
+export const PERSONALISATION_SOURCE_HEIGHT_PX = 2048;
+
 export type PersonalisationPromptMode = 'top' | 'bottom' | 'both';
 
 type PreparePersonalisationPromptInput = {
@@ -33,6 +36,7 @@ export function buildImagePersonalisationPrompt(input: {
   font: PersonalisationFont;
   sourceWidth: number;
   sourceHeight: number;
+  textTransform?: 'UPPERCASE' | 'NONE';
 }) {
   return `HEADER_TEXT = ${JSON.stringify(input.headerText)}
 FOOTER_TEXT = ${JSON.stringify(input.footerText)}
@@ -42,7 +46,7 @@ FONT_WEIGHT = ${input.font.weight}
 FONT_WIDTH = 100
 FONT_FILE_NAME = ${JSON.stringify(input.font.downloadFileName)}
 
-TEXT_TRANSFORM = "UPPERCASE"
+TEXT_TRANSFORM = ${JSON.stringify(input.textTransform ?? 'UPPERCASE')}
 TARGET_TEXT_WIDTH_PERCENT = 65
 MAX_FONT_SIZE_PERCENT = 18
 
@@ -176,6 +180,50 @@ OUTPUT
 - Report the font family and filename, selected weight, calculated shared font size in pixels, text colour hex code and image dimensions.
 - Confirm the header follows a smooth upward arch and the footer follows a smooth downward arch, each with a curve rise or fall of CURVE_RISE_PERCENT_OF_LINE_WIDTH percent of its uncurved advance width.
 - Confirm that the artwork was not moved, resized or recreated.`;
+}
+
+export function buildCameronsImagePrompt(font: PersonalisationFont) {
+  return buildImagePersonalisationPrompt({
+    headerText: "Cameron's",
+    footerText: 'Room',
+    font,
+    sourceWidth: PERSONALISATION_SOURCE_WIDTH_PX,
+    sourceHeight: PERSONALISATION_SOURCE_HEIGHT_PX,
+    textTransform: 'NONE',
+  });
+}
+
+export function buildGuysImagePrompt(font: PersonalisationFont) {
+  return buildImagePersonalisationPrompt({
+    headerText: "Guy's Bedroom",
+    footerText: '',
+    font,
+    sourceWidth: PERSONALISATION_SOURCE_WIDTH_PX,
+    sourceHeight: PERSONALISATION_SOURCE_HEIGHT_PX,
+    textTransform: 'UPPERCASE',
+  });
+}
+
+export function buildVickiesImagePrompt(font: PersonalisationFont) {
+  return buildImagePersonalisationPrompt({
+    headerText: '',
+    footerText: "Vickie's Playroom",
+    font,
+    sourceWidth: PERSONALISATION_SOURCE_WIDTH_PX,
+    sourceHeight: PERSONALISATION_SOURCE_HEIGHT_PX,
+    textTransform: 'NONE',
+  });
+}
+
+export function buildIslasImagePrompt(font: PersonalisationFont) {
+  return buildImagePersonalisationPrompt({
+    headerText: "Isla's bedroom",
+    footerText: 'Keep out',
+    font,
+    sourceWidth: PERSONALISATION_SOURCE_WIDTH_PX,
+    sourceHeight: PERSONALISATION_SOURCE_HEIGHT_PX,
+    textTransform: 'NONE',
+  });
 }
 
 export async function prepareImagePersonalisationPrompt(input: PreparePersonalisationPromptInput): Promise<PreparedPersonalisationPrompt> {
