@@ -18,6 +18,7 @@
     "db:etsy-download-image-id": "node scripts/add-etsy-download-image-id.cjs",
     "db:download-section": "node scripts/add-download-section-id.cjs",
     "db:digital-listing-details": "node scripts/add-digital-listing-details.cjs",
+    "db:accounts": "node scripts/add-accounts.cjs",
     "test:pinterest": "node scripts/test-pinterest.cjs",
     "test:set-prices": "vitest run",
     "db:reset": "prisma db push --force-reset"

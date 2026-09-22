@@ -13,6 +13,7 @@ import { getEtsyKeystring, getValidEtsyAccessToken } from '@/lib/etsy-oauth';
 import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
 import { getEtsyListingDetails } from '@/lib/etsy-listing-details';
 import { selectEtsySyncImages, type EtsySyncVariant } from '@/lib/etsy-sync-images';
+import { derivePhysicalAttributeLabels, syncEtsyPhysicalListingAttributes } from '@/lib/etsy-physical-attributes';
 import {
   buildEtsyInventoryPlan,
   buildPersonalizationQuestions,
@@ -108,6 +109,7 @@ async function getListingContext(shopId: string, sectionId: string, subSectionId
       id: true,
       title: true,
       etsyShopSectionId: true,
+      roomTheme: true,
       numberOfDownloads: true,
       includeAllDownloads: true,
     },
@@ -1924,6 +1926,19 @@ export async function syncListingToEtsy(shopId: string, sectionId: string, subSe
         primaryColour: listing.primaryColour,
         secondaryColour: listing.secondaryColour,
       }, etsyShopId);
+      await syncEtsyPhysicalListingAttributes({
+        variant,
+        shopId: etsyShopId,
+        listingId: remoteId,
+        taxonomyId,
+        labels: derivePhysicalAttributeLabels({
+          frameOptions: listing.frameOptions,
+          artwork: listing.files,
+          roomTheme: listing.roomTheme ?? context.section.roomTheme,
+          sectionTitle: context.section.title,
+          listingTitle: listing.title,
+        }),
+      }, (pathname, init) => fetchEtsyListingMutation<unknown>(pathname, init));
     }
 
     const chosenImages = selectEtsySyncImages(listing.images, variant, settings);

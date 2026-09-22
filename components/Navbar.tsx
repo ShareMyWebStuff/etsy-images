@@ -57,6 +57,7 @@ const navGroups = [
   {
     title: 'Admin',
     items: [
+      { label: 'Accounts', href: '/admin/accounts' },
       { label: 'Set Prices', href: '/admin/set-prices' },
       { label: 'Backup', href: '/admin/backup' },
       { label: 'Edit Listing', href: '/admin/edit-listing' },

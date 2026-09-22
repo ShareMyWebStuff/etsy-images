@@ -334,19 +334,170 @@ model EtsyListingDropboxBundle {
 }
 
 model EtsyShop {
-  id           Int               @id @default(autoincrement())
-  etsyShopId   BigInt            @unique
-  userId       BigInt
-  shopName     String?
-  title        String?
-  announcement String?           @db.Text
-  url          String?           @db.Text
-  downloadedAt DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
-  sections     EtsyShopSection[]
+  id                    Int                         @id @default(autoincrement())
+  etsyShopId            BigInt                      @unique
+  userId                BigInt
+  shopName              String?
+  title                 String?
+  announcement          String?                     @db.Text
+  url                   String?                     @db.Text
+  downloadedAt          DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+  sections              EtsyShopSection[]
+  financialEntries      FinancialEntry[]
+  accountingReceipts    EtsyReceipt[]
+  accountingTransactions EtsyTransaction[]
+  accountingLedgerEntries EtsyPaymentLedgerEntry[]
+  accountingSyncState   EtsyAccountingSyncState?
 
   @@index([userId])
   @@map("etsy_shops")
+}
+
+enum FinancialEntryType {
+  INCOME
+  EXPENSE
+}
+
+enum FinancialEntrySource {
+  ETSY
+  MANUAL
+}
+
+enum EtsyAccountingSyncStatus {
+  IDLE
+  RUNNING
+  FAILED
+}
+
+model FinancialEntry {
+  id                    Int                  @id @default(autoincrement())
+  entryDate             DateTime
+  type                  FinancialEntryType
+  amountMinorUnits      Int
+  currencyCode          String               @db.VarChar(3)
+  description           String               @db.VarChar(500)
+  category              String               @db.VarChar(100)
+  source                FinancialEntrySource
+  etsyShopId            BigInt?
+  etsyReceiptId         BigInt?
+  etsyTransactionId     BigInt?
+  etsyLedgerEntryId     BigInt?
+  externalReference     String?              @db.VarChar(191)
+  dedupeKey             String               @unique @db.VarChar(191)
+  rawJson               Json?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  shop                  EtsyShop?            @relation(fields: [etsyShopId], references: [etsyShopId], onDelete: SetNull)
+  etsyReceipt           EtsyReceipt?         @relation("ReceiptFinancialEntry")
+  etsyLedgerEntry       EtsyPaymentLedgerEntry? @relation("LedgerFinancialEntry")
+
+  @@index([entryDate])
+  @@index([type, entryDate])
+  @@index([source, entryDate])
+  @@index([category, entryDate])
+  @@index([etsyShopId])
+  @@map("financial_entries")
+}
+
+model EtsyReceipt {
+  id                    Int             @id @default(autoincrement())
+  etsyShopId            BigInt
+  etsyReceiptId         BigInt
+  status                String?         @db.VarChar(50)
+  isPaid                Boolean?
+  isCanceled            Boolean?
+  grandTotalAmount      Int?
+  grandTotalDivisor     Int?
+  currencyCode          String?         @db.VarChar(3)
+  createdAtEtsy         DateTime?
+  updatedAtEtsy         DateTime?
+  rawJson               Json
+  financialEntryId      Int?            @unique
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  shop                  EtsyShop        @relation(fields: [etsyShopId], references: [etsyShopId], onDelete: Cascade)
+  financialEntry        FinancialEntry? @relation("ReceiptFinancialEntry", fields: [financialEntryId], references: [id], onDelete: SetNull)
+  transactions          EtsyTransaction[]
+
+  @@unique([etsyShopId, etsyReceiptId], map: "etsy_receipts_shop_receipt_key")
+  @@index([createdAtEtsy])
+  @@index([updatedAtEtsy])
+  @@map("etsy_receipts")
+}
+
+model EtsyTransaction {
+  id                    Int          @id @default(autoincrement())
+  receiptId             Int
+  etsyShopId            BigInt
+  etsyReceiptId         BigInt
+  etsyTransactionId     BigInt
+  etsyListingId         BigInt?
+  title                 String?      @db.VarChar(500)
+  quantity              Int?
+  priceAmount           Int?
+  priceDivisor          Int?
+  currencyCode          String?      @db.VarChar(3)
+  createdAtEtsy         DateTime?
+  paidAtEtsy            DateTime?
+  rawJson               Json
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  receipt               EtsyReceipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  shop                  EtsyShop     @relation(fields: [etsyShopId], references: [etsyShopId], onDelete: Cascade)
+
+  @@unique([etsyShopId, etsyTransactionId], map: "etsy_transactions_shop_transaction_key")
+  @@index([receiptId])
+  @@index([etsyReceiptId])
+  @@index([createdAtEtsy])
+  @@map("etsy_transactions")
+}
+
+model EtsyPaymentLedgerEntry {
+  id                    Int             @id @default(autoincrement())
+  etsyShopId            BigInt
+  etsyLedgerEntryId     BigInt
+  etsyLedgerId          BigInt?
+  sequenceNumber        Int?
+  amountMinorUnits      Int?
+  currencyCode          String?         @db.VarChar(3)
+  balanceMinorUnits     Int?
+  description           String?         @db.VarChar(500)
+  ledgerType            String?         @db.VarChar(100)
+  referenceType         String?         @db.VarChar(100)
+  referenceId           String?         @db.VarChar(191)
+  parentEntryId         BigInt?
+  createdAtEtsy         DateTime?
+  rawJson               Json
+  financialEntryId      Int?            @unique
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  shop                  EtsyShop        @relation(fields: [etsyShopId], references: [etsyShopId], onDelete: Cascade, map: "etsy_payment_ledger_entries_shop_fkey")
+  financialEntry        FinancialEntry? @relation("LedgerFinancialEntry", fields: [financialEntryId], references: [id], onDelete: SetNull, map: "etsy_payment_ledger_entries_financial_fkey")
+
+  @@unique([etsyShopId, etsyLedgerEntryId], map: "etsy_ledger_entries_shop_entry_key")
+  @@index([createdAtEtsy])
+  @@index([ledgerType])
+  @@map("etsy_payment_ledger_entries")
+}
+
+model EtsyAccountingSyncState {
+  id                         Int                       @id @default(autoincrement())
+  etsyShopId                 BigInt                    @unique
+  fullSyncCompleted          Boolean                   @default(false)
+  lastSuccessfulReceiptSyncAt DateTime?
+  lastSuccessfulLedgerSyncAt DateTime?
+  overlapSeconds             Int                       @default(172800)
+  status                     EtsyAccountingSyncStatus @default(IDLE)
+  syncStartedAt              DateTime?
+  lastSuccessfulSyncAt       DateTime?
+  lastError                  String?                   @db.Text
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @updatedAt
+  shop                       EtsyShop                  @relation(fields: [etsyShopId], references: [etsyShopId], onDelete: Cascade, map: "etsy_accounting_sync_states_shop_fkey")
+
+  @@index([status])
+  @@map("etsy_accounting_sync_states")
 }
 
 model EtsyShopSection {

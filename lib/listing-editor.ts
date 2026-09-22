@@ -39,6 +39,7 @@ export type ListingEditorData = {
     id: string;
     sectionName: string;
     roomTheme: string;
+    hasEtsySection: boolean;
   };
   subSection: {
     id: string;
@@ -293,6 +294,7 @@ async function getListingForContext(context: ListingEditorContext) {
       id: true,
       title: true,
       roomTheme: true,
+      etsyShopSectionId: true,
     },
   });
 
@@ -479,6 +481,7 @@ async function mapEditorData(
       id: String(data.section.id),
       sectionName: data.section.title,
       roomTheme: data.section.roomTheme ?? '',
+      hasEtsySection: data.section.etsyShopSectionId !== null,
     },
     subSection: {
       id: String(data.subSection.id),

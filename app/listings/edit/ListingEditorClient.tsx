@@ -4,7 +4,7 @@ import { ChangeEvent, FormEvent, MouseEvent, useEffect, useRef, useState } from 
 import { closestCenter, DndContext, DragEndEvent, DragOverlay, DragStartEvent, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, rectSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { AlertTriangle, CheckCircle2, Download, FileText, ImageIcon, Plus, Sparkles, Trash2, Upload, X, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, FileText, ImageIcon, Plus, RefreshCw, Sparkles, Trash2, Upload, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -214,6 +214,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   const personalisationSourceImage = useRef<PreparedClipboardImage | null>(null);
   const [activeImageId, setActiveImageId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [etsyResyncMessage, setEtsyResyncMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [simpleInputs, setSimpleInputs] = useState({ tag: '', material: '', style: '' });
@@ -331,6 +332,10 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   };
   const personalisationPromptSettingsChanged = JSON.stringify(personalisationPromptSettings)
     !== JSON.stringify(savedPersonalisationPromptSettings);
+  const canResyncToEtsy = data.todoItems.length === 0
+    && data.etsyProducts.config.listOnEtsy
+    && (data.etsyProducts.config.printsFrames || data.etsyProducts.config.digitalDownload)
+    && (!data.etsyProducts.config.printsFrames || data.section.hasEtsySection);
   const selectedPersonalisationFont = getPersonalisationFont(personalisationPromptSettings.fontId)
     ?? getPersonalisationFont(DEFAULT_PERSONALISATION_FONT_ID)!;
   const thumbnailGeneratePromptInput = {
@@ -766,6 +771,27 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       await parseResponse(response, 'Unable to save Etsy products.');
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to save Etsy products.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function resyncWithEtsy() {
+    setError(null);
+    setEtsyResyncMessage(null);
+    setBusyKey('etsy-resync');
+
+    try {
+      const response = await fetch('/api/shops/listings/editor/etsy-resync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(context),
+      });
+      const nextData = await parseResponse(response, 'Unable to resync the listing with Etsy.');
+      if (nextData) setForm(createDetailsForm(nextData.listing));
+      setEtsyResyncMessage('The listing has been resynced with Etsy.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to resync the listing with Etsy.');
     } finally {
       setBusyKey(null);
     }
@@ -2021,23 +2047,36 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   return (
     <div className="grid gap-4">
       {error ? <p className="text-sm font-medium text-destructive">{error}</p> : null}
+      {etsyResyncMessage ? (
+        <p className="flex items-center gap-2 text-sm font-medium text-green-700">
+          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+          {etsyResyncMessage}
+        </p>
+      ) : null}
 
       <Card>
         <CardHeader className="pb-0">
           <div className="mb-4 flex items-center justify-between gap-4">
             <CardTitle>{data.listing.localDirectoryName ?? data.listing.title}</CardTitle>
-            <Button
-              type="button"
-              variant="outline"
-              className="shrink-0"
-              onClick={() => {
-                setPromptClipboardStatus(null);
-                setPromptsOpen(true);
-              }}
-            >
-              <Sparkles className="h-4 w-4" aria-hidden="true" />
-              Prompts
-            </Button>
+            <div className="flex shrink-0 items-center gap-2">
+              {canResyncToEtsy ? (
+                <Button type="button" onClick={resyncWithEtsy} disabled={busyKey !== null}>
+                  <RefreshCw className={`h-4 w-4 ${busyKey === 'etsy-resync' ? 'animate-spin' : ''}`} aria-hidden="true" />
+                  {busyKey === 'etsy-resync' ? 'Resyncing...' : 'Etsy Resync'}
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setPromptClipboardStatus(null);
+                  setPromptsOpen(true);
+                }}
+              >
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+                Prompts
+              </Button>
+            </div>
           </div>
           {data.pendingChanges.length > 0 ? (
             <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-amber-700">

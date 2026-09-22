@@ -3,6 +3,10 @@ import { createPkcePair, createState, getEtsyAuthorizationUrl, getRedirectUri } 
 
 export async function GET(request: Request) {
   try {
+    const requestedReturnTo = new URL(request.url).searchParams.get('returnTo');
+    const returnTo = requestedReturnTo?.startsWith('/') && !requestedReturnTo.startsWith('//')
+      ? requestedReturnTo
+      : '/sync-to-etsy';
     const state = createState();
     const { verifier, challenge } = createPkcePair();
     const response = NextResponse.redirect(
@@ -24,6 +28,7 @@ export async function GET(request: Request) {
     response.cookies.set('etsy_oauth_state', state, cookieOptions);
     response.cookies.set('etsy_code_verifier', verifier, cookieOptions);
     response.cookies.set('etsy_redirect_uri', getRedirectUri(request), cookieOptions);
+    response.cookies.set('etsy_oauth_return_to', returnTo, cookieOptions);
 
     return response;
   } catch (error) {

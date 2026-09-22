@@ -8,7 +8,10 @@ export type EtsyTokens = {
   token_type: 'Bearer';
   expires_in: number;
   expires_at: number;
+  scope?: string;
 };
+
+export const ETSY_OAUTH_SCOPES = ['listings_r', 'listings_w', 'listings_d', 'shops_r', 'shops_w', 'transactions_r'] as const;
 
 const tokenFilePath = path.join(process.cwd(), '.etsy-tokens.json');
 
@@ -51,7 +54,7 @@ export function getEtsyAuthorizationUrl(params: {
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('client_id', getEtsyKeystring());
   url.searchParams.set('redirect_uri', getRedirectUri(params.request));
-  url.searchParams.set('scope', 'listings_r listings_w listings_d shops_r shops_w');
+  url.searchParams.set('scope', ETSY_OAUTH_SCOPES.join(' '));
   url.searchParams.set('state', params.state);
   url.searchParams.set('code_challenge', params.codeChallenge);
   url.searchParams.set('code_challenge_method', 'S256');
@@ -100,7 +103,8 @@ export async function refreshTokens(refreshToken: string) {
     refresh_token: refreshToken,
   });
 
-  return saveTokens(await postTokenRequest(body));
+  const [tokens, previous] = await Promise.all([postTokenRequest(body), readSavedTokens()]);
+  return saveTokens({ ...tokens, scope: tokens.scope ?? previous?.scope });
 }
 
 export async function saveTokens(tokens: Omit<EtsyTokens, 'expires_at'>) {
@@ -146,4 +150,30 @@ export async function getValidEtsyAccessToken() {
 
   const refreshedTokens = await refreshTokens(savedTokens.refresh_token);
   return refreshedTokens.access_token;
+}
+
+function parseScopes(value: string | null | undefined) {
+  return new Set((value ?? '').split(/\s+/).map((scope) => scope.trim()).filter(Boolean));
+}
+
+export async function getEtsyOAuthConnectionStatus() {
+  const envAccessToken = process.env.ETSY_ACCESS_TOKEN;
+  if (envAccessToken) {
+    const scopes = parseScopes(process.env.ETSY_ACCESS_TOKEN_SCOPES);
+    return { connected: true, scopes: [...scopes], hasTransactionsScope: scopes.has('transactions_r') };
+  }
+  const tokens = await readSavedTokens();
+  const scopes = parseScopes(tokens?.scope);
+  return { connected: tokens !== null, scopes: [...scopes], hasTransactionsScope: scopes.has('transactions_r') };
+}
+
+export async function getEtsyAccountingAccessToken() {
+  const status = await getEtsyOAuthConnectionStatus();
+  if (!status.connected) {
+    throw new Error('Connect Etsy before importing accounts data.');
+  }
+  if (!status.hasTransactionsScope) {
+    throw new Error('Etsy authorization is missing transactions_r. Reconnect Etsy from the Accounts page to approve sales and payment-account access.');
+  }
+  return getValidEtsyAccessToken();
 }

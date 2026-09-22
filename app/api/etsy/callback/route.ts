@@ -46,10 +46,15 @@ export async function GET(request: Request) {
       redirectUri,
     });
 
-    const response = NextResponse.redirect(new URL('/sync-to-etsy?etsy=connected', request.url));
+    const returnTo = cookieMap.get('etsy_oauth_return_to');
+    const safeReturnTo = returnTo?.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/sync-to-etsy';
+    const destination = new URL(safeReturnTo, request.url);
+    destination.searchParams.set('etsy', 'connected');
+    const response = NextResponse.redirect(destination);
     response.cookies.delete('etsy_oauth_state');
     response.cookies.delete('etsy_code_verifier');
     response.cookies.delete('etsy_redirect_uri');
+    response.cookies.delete('etsy_oauth_return_to');
 
     return response;
   } catch (caughtError) {
