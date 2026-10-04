@@ -76,6 +76,28 @@ async function fetchEtsyAccountingJson<T>(path: string, accessToken: string): Pr
   return JSON.parse(responseText) as T;
 }
 
+async function mutateEtsyReceipt<T>(path: string, accessToken: string, body: URLSearchParams): Promise<T> {
+  const response = await fetch(`https://openapi.etsy.com/v3/application${path}`, {
+    method: 'PUT',
+    signal: AbortSignal.timeout(30_000),
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'x-api-key': getEtsyApiKeyHeader(),
+    },
+    body,
+  });
+  const responseText = await response.text();
+  if (!response.ok) {
+    const scopeHint = response.status === 403
+      ? ' Reconnect Etsy and approve transaction write access.'
+      : '';
+    throw new Error(`Etsy order API returned ${response.status} ${response.statusText}${responseText ? `: ${responseText}` : ''}${scopeHint}`);
+  }
+  return JSON.parse(responseText) as T;
+}
+
 export async function fetchAllEtsyPages<T>(loadPage: PageLoader<T>, limit = PAGE_SIZE) {
   const all: T[] = [];
   for (let offset = 0; ; offset += limit) {
@@ -114,6 +136,30 @@ export async function getEtsyReceiptTransactions(params: { accessToken: string; 
     params.accessToken,
   );
   return Array.isArray(payload.results) ? payload.results : [];
+}
+
+export async function getEtsyReceipt(params: { accessToken: string; shopId: string; receiptId: string }) {
+  return fetchEtsyAccountingJson<EtsyReceiptResponse>(
+    `/shops/${encodeURIComponent(params.shopId)}/receipts/${encodeURIComponent(params.receiptId)}?legacy=false`,
+    params.accessToken,
+  );
+}
+
+/**
+ * Etsy has no "processing" receipt state. This confirms that the paid order is
+ * still unshipped before fulfilment starts without notifying the buyer that it
+ * has shipped.
+ */
+export async function acknowledgeEtsyReceiptForProcessing(params: {
+  accessToken: string;
+  shopId: string;
+  receiptId: string;
+}) {
+  return mutateEtsyReceipt<EtsyReceiptResponse>(
+    `/shops/${encodeURIComponent(params.shopId)}/receipts/${encodeURIComponent(params.receiptId)}?legacy=false`,
+    params.accessToken,
+    new URLSearchParams({ was_paid: 'true', was_shipped: 'false' }),
+  );
 }
 
 export async function* getEtsyLedgerEntryWindows(params: {

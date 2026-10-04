@@ -17,7 +17,7 @@ async function main() {
   );
   if (Number(rows[0]?.count ?? 0) === 0) {
     await prisma.$executeRawUnsafe(
-      'ALTER TABLE etsy_listing_product_configs ADD COLUMN downloadSectionId INT NULL AFTER customiseDigitalDownloads'
+      'ALTER TABLE etsy_listing_product_configs ADD COLUMN downloadSectionId INT NULL AFTER customisePrints'
     );
     console.log('Added nullable downloadSectionId column.');
   } else {

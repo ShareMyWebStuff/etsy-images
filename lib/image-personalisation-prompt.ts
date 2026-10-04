@@ -182,46 +182,54 @@ OUTPUT
 - Confirm that the artwork was not moved, resized or recreated.`;
 }
 
-export function buildCameronsImagePrompt(font: PersonalisationFont) {
+type PersonalisationSourceDimensions = {
+  sourceWidth?: number;
+  sourceHeight?: number;
+};
+
+function sourceDimensions(dimensions?: PersonalisationSourceDimensions) {
+  return {
+    sourceWidth: dimensions?.sourceWidth ?? PERSONALISATION_SOURCE_WIDTH_PX,
+    sourceHeight: dimensions?.sourceHeight ?? PERSONALISATION_SOURCE_HEIGHT_PX,
+  };
+}
+
+export function buildCameronsImagePrompt(font: PersonalisationFont, dimensions?: PersonalisationSourceDimensions) {
   return buildImagePersonalisationPrompt({
     headerText: "Cameron's",
     footerText: 'Room',
     font,
-    sourceWidth: PERSONALISATION_SOURCE_WIDTH_PX,
-    sourceHeight: PERSONALISATION_SOURCE_HEIGHT_PX,
+    ...sourceDimensions(dimensions),
     textTransform: 'NONE',
   });
 }
 
-export function buildGuysImagePrompt(font: PersonalisationFont) {
+export function buildGuysImagePrompt(font: PersonalisationFont, dimensions?: PersonalisationSourceDimensions) {
   return buildImagePersonalisationPrompt({
     headerText: "Guy's Bedroom",
     footerText: '',
     font,
-    sourceWidth: PERSONALISATION_SOURCE_WIDTH_PX,
-    sourceHeight: PERSONALISATION_SOURCE_HEIGHT_PX,
+    ...sourceDimensions(dimensions),
     textTransform: 'UPPERCASE',
   });
 }
 
-export function buildVickiesImagePrompt(font: PersonalisationFont) {
+export function buildVickiesImagePrompt(font: PersonalisationFont, dimensions?: PersonalisationSourceDimensions) {
   return buildImagePersonalisationPrompt({
     headerText: '',
     footerText: "Vickie's Playroom",
     font,
-    sourceWidth: PERSONALISATION_SOURCE_WIDTH_PX,
-    sourceHeight: PERSONALISATION_SOURCE_HEIGHT_PX,
+    ...sourceDimensions(dimensions),
     textTransform: 'NONE',
   });
 }
 
-export function buildIslasImagePrompt(font: PersonalisationFont) {
+export function buildIslasImagePrompt(font: PersonalisationFont, dimensions?: PersonalisationSourceDimensions) {
   return buildImagePersonalisationPrompt({
     headerText: "Isla's bedroom",
     footerText: 'Keep out',
     font,
-    sourceWidth: PERSONALISATION_SOURCE_WIDTH_PX,
-    sourceHeight: PERSONALISATION_SOURCE_HEIGHT_PX,
+    ...sourceDimensions(dimensions),
     textTransform: 'NONE',
   });
 }

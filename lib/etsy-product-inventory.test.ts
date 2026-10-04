@@ -36,16 +36,49 @@ describe('Etsy product inventory', () => {
       sku: 'PF-DONKEY-20X28-NF', amountPence: 3999,
     }], ['no_frame'], 10);
     expect(plan.body.products[0].property_values.map((value) => value.values[0])).toEqual(['20 x 28', 'No Frame']);
-    const both = buildPersonalizationQuestions(true, true);
-    expect(both).toHaveLength(2);
+    const both = buildPersonalizationQuestions(true, true, true);
+    expect(both).toHaveLength(3);
     expect(both.map((question) => question.question_text)).toEqual([
-      'Text for the top of the image',
-      'Text for the bottom of the image',
+      'Font Style',
+      'Top Text',
+      'Bottom Text',
     ]);
-    expect(both.every((question) => question.add_on_price === 0)).toBe(true);
-    expect(buildPersonalizationQuestions(true, false)[0].add_on_price).toBe(0);
-    expect(buildPersonalizationQuestions(false, true)[0].add_on_price).toBe(0);
-    expect(buildPersonalizationQuestions(false, false)).toEqual([]);
+    expect(both[0]).toMatchObject({
+      question_type: 'dropdown',
+      required: true,
+      options: [
+        { label: 'No Customisation' },
+        { label: 'Nunito' },
+        { label: 'Fredoka' },
+        { label: 'Quicksand' },
+        { label: 'Patrick Hand' },
+        { label: 'Caveat' },
+        { label: 'Sacramento' },
+      ],
+    });
+    expect(both.slice(1).every((question) => 'add_on_price' in question && question.add_on_price === 0)).toBe(true);
+    expect(both.slice(1).every((question) => 'max_allowed_characters' in question && question.max_allowed_characters === 40)).toBe(true);
+    expect(buildPersonalizationQuestions(true, true, false).map(({ question_text }) => question_text)).toEqual(['Font Style', 'Top Text']);
+    expect(buildPersonalizationQuestions(true, false, true).map(({ question_text }) => question_text)).toEqual(['Font Style', 'Bottom Text']);
+    expect(buildPersonalizationQuestions(false, true, true)).toEqual([]);
+  });
+
+  it('maps the added 5 x 7 and 12 x 18 sizes to Etsy variation labels', () => {
+    const plan = buildEtsyInventoryPlan([
+      {
+        key: '5x7:no_frame', productType: 'unframed', sizeKey: '5x7', frameKey: 'no_frame',
+        sku: 'PF-TURTLE-5X7', amountPence: 1299,
+      },
+      {
+        key: '12x18:no_frame', productType: 'unframed', sizeKey: '12x18', frameKey: 'no_frame',
+        sku: 'PF-TURTLE-12X18', amountPence: 2699,
+      },
+    ], ['no_frame'], 10);
+
+    expect(plan.body.products.map((product) => product.property_values[0].values[0])).toEqual([
+      '5 x 7',
+      '12 x 18',
+    ]);
   });
 
   it('keeps the priced digital product as a concrete option in a physical listing with downloads', () => {

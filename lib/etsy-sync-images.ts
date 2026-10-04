@@ -4,7 +4,6 @@ export type EtsySyncImageSettings = {
   customTop: boolean;
   customBottom: boolean;
   customisePrints: boolean;
-  customiseDigitalDownloads: boolean;
 };
 
 /** The positions here are the numbered slots in the listing editor, not Etsy ranks. */
@@ -13,9 +12,7 @@ export function selectEtsySyncImages<T extends { rank: number | null }>(
   variant: EtsySyncVariant,
   settings: EtsySyncImageSettings,
 ): T[] {
-  const canCustomise = variant === 'print'
-    ? settings.customisePrints
-    : settings.customiseDigitalDownloads;
+  const canCustomise = variant === 'print' && settings.customisePrints;
   const top = canCustomise && settings.customTop;
   const bottom = canCustomise && settings.customBottom;
 

@@ -22,7 +22,7 @@ type NavGroup = {
   }>;
 };
 
-const navGroups = [
+export const NAV_GROUPS = [
   {
     title: 'Local',
     items: [
@@ -35,6 +35,7 @@ const navGroups = [
   {
     title: 'Etsy',
     items: [
+      { label: 'Orders', href: '/etsy/orders' },
       { label: 'Sync to Etsy', href: '/sync-to-etsy' },
       { label: 'Publish to Etsy', href: '/publish-to-etsy' },
       { label: 'Compare', href: '/compare' },
@@ -52,6 +53,14 @@ const navGroups = [
       { label: 'Analytics', href: '/pinterest/analytics' },
       { label: 'Trends', href: '/pinterest/trends' },
       { label: 'AI Campaign', href: '/pinterest/ai-campaign' },
+    ],
+  },
+  {
+    title: 'PrintShrimp',
+    items: [
+      { label: 'Sync to PrintShrimp', href: '/sync-to-printshrimp' },
+      { label: 'Orders', href: '/printshrimp/orders' },
+      { label: 'Resend Item', href: '/printshrimp/resend' },
     ],
   },
   {
@@ -79,14 +88,14 @@ export function Navbar() {
 
         <NavigationMenu viewport={false}>
           <NavigationMenuList>
-            {navGroups.map((group, index) => (
+            {NAV_GROUPS.map((group, index) => (
               <NavigationMenuItem key={group.title}>
                 <NavigationMenuTrigger className={group.items.some((item) => pathname === item.href || pathname.startsWith(`${item.href}/`)) ? 'bg-accent text-accent-foreground' : undefined}>
                   {group.title}
                 </NavigationMenuTrigger>
                 <NavigationMenuContent
                   className={`absolute top-full mt-2 w-auto overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md ${
-                    index === 0 ? 'left-0' : index === navGroups.length - 1 ? 'left-auto right-0' : 'left-1/2 -translate-x-1/2'
+                    index === 0 ? 'left-0' : index === NAV_GROUPS.length - 1 ? 'left-auto right-0' : 'left-1/2 -translate-x-1/2'
                   }`}
                 >
                   <ul className="grid w-56 gap-1 p-2">

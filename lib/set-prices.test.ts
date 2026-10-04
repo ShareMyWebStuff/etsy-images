@@ -24,9 +24,11 @@ describe('Set Prices initialisation', () => {
     await ensureDefaultPrices(fakeClient);
     await ensureDefaultPrices(fakeClient);
 
-    expect(stored.size).toBe(26);
+    expect(stored.size).toBe(44);
     expect(stored.get('digital_1')).toBe(777);
     expect(stored.get('framed_24x36')).toBe(10999);
+    expect(stored.get('unframed_a1')).toBe(3499);
+    expect(stored.get('framed_a1')).toBe(9999);
     expect(stored.get('customisation_fee')).toBe(499);
     expect(createMany).toHaveBeenCalledTimes(2);
     expect(createMany.mock.calls.every(([args]) => args.skipDuplicates)).toBe(true);

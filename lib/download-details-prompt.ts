@@ -161,28 +161,29 @@ Do not use repetitive keyword stuffing.
 Paste this exact technical inventory and dual sizing block into the description:
 
 📦 WHAT YOU WILL RECEIVE 📦
-After purchase, you will download a PDF containing a secure link to your high-resolution files. You will receive 5 professional-quality JPEG files (300 DPI, RGB profile) perfectly cropped for over 20 standard frame sizes:
+After purchase, you will download a PDF containing a secure link to your high-resolution files. You will receive 6 professional-quality JPEG files (300 DPI, RGB profile) prepared for the supported standard frame sizes:
 
 📐 SIZES INCLUDED (Print up to these maximum sizes):
 
 • ISO A-Series (7016 x 9933 px)
-Fits standard international sizes: A1, A2, A3, A4, A5, and 5x7"
+Fits standard international sizes: A1, A2, A3, A4 and A5
 
 • 2:3 Ratio (7200 x 10800 px)
-Inches: 4x6 | 6x9 | 8x12 | 10x15 | 12x18 | 14x21 | 16x24 | 24x36
-Centimeters: 10x15 | 15x23 | 20x30 | 25x38 | 30x46 | 36x53 | 41x61 | 61x91 cm
+Inches: 4x6 | 6x9 | 8x12 | 10x15 | 12x18 | 16x24 | 20x30 | 24x36
 
 • 3:4 Ratio (5400 x 7200 px)
 Inches: 6x8 | 9x12 | 12x16 | 15x20 | 18x24
-Centimeters: 15x20 | 22x30 | 30x40 | 38x50 | 45x60 cm
+Centimeters: 30x40 cm
 
 • 4:5 Ratio (4800 x 6000 px)
-Inches: 4x5 | 8x10 | 16x20
-Centimeters: 10x12 | 20x25 | 40x50 cm
+Inches: 4x5 | 8x10 | 12x15 | 16x20
 
-• 11:14 Ratio (6600 x 8400 px)
-Inches: 11x14 | 22x28
-Centimeters: 28x35 | 55x71 cm
+• 11:14 Ratio (3300 x 4200 px)
+Inches: 11x14
+
+• 5:7 Ratio (6000 x 8400 px)
+Inches: 5x7 | 10x14 | 15x21 | 20x28
+Centimeters: 50x70 cm
 
 All files are 300 DPI JPEG files.
 

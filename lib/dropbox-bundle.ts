@@ -10,6 +10,7 @@ type ListingContext = { shopId: string; sectionId: string; subSectionId: string;
 
 type DropboxUploadFile = {
   fileName: string;
+  relativePath: string;
   storagePath: string;
   sizeBytes: number;
 };
@@ -123,7 +124,7 @@ async function withGroupedZipLock<T>(listingId: number, action: () => Promise<T>
   }
 }
 
-async function getDropboxAccessToken() {
+export async function getDropboxAccessToken() {
   const appKey = process.env.DROPBOX_APP_KEY;
   const appSecret = process.env.DROPBOX_APP_SECRET;
   const refreshToken = process.env.DROPBOX_REFRESH_TOKEN;
@@ -144,6 +145,7 @@ async function getDropboxAccessToken() {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }),
+      signal: AbortSignal.timeout(30_000),
     });
     const payload = await response.json() as { access_token?: string; expires_in?: number; error_description?: string; error?: string };
     if (!response.ok || !payload.access_token) {
@@ -191,7 +193,7 @@ function safeName(value: string) {
 
 function assertSafeFileName(fileName: string) {
   if (!fileName || fileName !== path.basename(fileName) || fileName.includes('/') || fileName.includes('\\')) {
-    throw new Error(`Invalid ZIP filename: ${fileName || '(empty)'}`);
+    throw new Error(`Invalid filename: ${fileName || '(empty)'}`);
   }
   return fileName;
 }
@@ -202,6 +204,10 @@ function isNotFoundError(error: unknown) {
 
 function isDropboxNotFoundError(error: unknown) {
   return error instanceof DropboxRpcError && JSON.stringify(error.payload).toLocaleLowerCase().includes('not_found');
+}
+
+export function isDropboxPathNotFoundError(error: unknown) {
+  return isDropboxNotFoundError(error);
 }
 
 function validateDropboxFolderPath(folderPath: string) {
@@ -274,52 +280,108 @@ async function writeZip(targetPath: string, files: Array<{ path: string; name: s
   await writeFile(targetPath, Buffer.concat(chunks));
 }
 
-async function createZipBuffer(files: Array<{ path: string; name: string }>) {
-  const archive = new ZipArchive({ zlib: { level: 9 } });
-  const chunks: Buffer[] = [];
-  const completed = new Promise<void>((resolve, reject) => {
-    archive.on('data', (chunk: Buffer) => chunks.push(chunk));
-    archive.on('end', resolve);
-    archive.on('error', reject);
-  });
-  for (const file of files) archive.append(await readFile(file.path), { name: file.name });
-  await archive.finalize();
-  await completed;
-  return Buffer.concat(chunks);
-}
-
-async function createDigitalDownloadsZip(
+async function resolveDropboxUploadFiles(
   listing: Awaited<ReturnType<typeof loadBundleListing>>['listing'],
   listingPath: string,
-) {
+): Promise<DropboxUploadFile[]> {
+  if (listing.dropboxFiles.length > 0) {
+    const groups = multiZipDetails(listing, listingPath);
+    const files: DropboxUploadFile[] = [];
+    const seenPaths = new Set<string>();
+
+    for (const group of groups) {
+      const folderName = `${String(group.groupNumber).padStart(2, '0')}-${safeName(group.sourceDirectoryName)}`;
+      for (const file of group.files) {
+        const storageName = assertSafeFileName(file.localFileName);
+        const fileName = assertSafeFileName(file.originalFileName ?? file.localFileName);
+        const relativePath = `${folderName}/${fileName}`;
+        const normalizedPath = relativePath.toLocaleLowerCase();
+        if (seenPaths.has(normalizedPath)) {
+          throw new DropboxBundleStateError(`Dropbox contains more than one source file named ${fileName} for ${group.sourceDirectoryName}.`);
+        }
+        seenPaths.add(normalizedPath);
+        files.push({
+          fileName,
+          relativePath,
+          storagePath: path.join(listingPath, 'dropboxDownloads', storageName),
+          sizeBytes: 0,
+        });
+      }
+    }
+
+    // Multi-animal listings keep their shared print guide outside the per-animal
+    // source groups. Include it at the root of the Dropbox folder when present.
+    const printGuidePath = path.join(listingPath, 'downloads', 'HowToPrintGuide.txt');
+    try {
+      const printGuideStats = await stat(printGuidePath);
+      if (printGuideStats.isFile() && printGuideStats.size > 0) {
+        files.push({
+          fileName: 'HowToPrintGuide.txt',
+          relativePath: 'HowToPrintGuide.txt',
+          storagePath: printGuidePath,
+          sizeBytes: printGuideStats.size,
+        });
+      }
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+
+    for (const file of files) {
+      if (file.sizeBytes > 0) continue;
+      let fileStats: Awaited<ReturnType<typeof stat>>;
+      try {
+        fileStats = await stat(file.storagePath);
+      } catch (error) {
+        if (isNotFoundError(error)) {
+          throw new DropboxBundleStateError(`Dropbox source file ${file.fileName} is missing from storage.`);
+        }
+        throw error;
+      }
+      if (!fileStats.isFile() || fileStats.size <= 0) {
+        throw new DropboxBundleStateError(`Dropbox source file ${file.fileName} is empty or invalid.`);
+      }
+      file.sizeBytes = fileStats.size;
+    }
+    return files;
+  }
+
   // The generated link PDF is the Etsy delivery mechanism, not part of the
-  // artwork bundle that the link points to.
+  // artwork collection that the link points to.
   const downloads = listing.files.filter((file) => !isDropboxInstructionPdfFile(file));
   if (downloads.length === 0) {
     throw new DropboxBundleStateError('Add at least one file to Digital Downloads before creating Dropbox.');
   }
 
   const seenNames = new Set<string>();
-  const files = downloads.map((file) => {
+  const files: DropboxUploadFile[] = [];
+  for (const file of downloads) {
     const storageName = file.localFileName;
     // The local name is an internal storage key such as file_2.jpg. Preserve
-    // the customer-facing name displayed by Digital Downloads in the ZIP.
-    const archiveName = assertSafeFileName(file.originalFileName ?? file.localFileName ?? file.filename ?? '');
-    if (!storageName) throw new DropboxBundleStateError(`Digital download ${archiveName} is missing from storage.`);
-    const normalizedName = archiveName.toLocaleLowerCase();
+    // the customer-facing name displayed by Digital Downloads in Dropbox.
+    const fileName = assertSafeFileName(file.originalFileName ?? file.localFileName ?? file.filename ?? '');
+    if (!storageName) throw new DropboxBundleStateError(`Digital download ${fileName} is missing from storage.`);
+    assertSafeFileName(storageName);
+    const normalizedName = fileName.toLocaleLowerCase();
     if (seenNames.has(normalizedName)) {
-      throw new DropboxBundleStateError(`Digital Downloads contains more than one file named ${archiveName}.`);
+      throw new DropboxBundleStateError(`Digital Downloads contains more than one file named ${fileName}.`);
     }
     seenNames.add(normalizedName);
-    return { path: path.join(listingPath, 'downloads', storageName), name: archiveName };
-  });
-
-  const contents = await createZipBuffer(files);
-  if (contents.length === 0) throw new Error('The Digital Downloads ZIP is empty.');
-  return {
-    fileName: `${safeName(listing.localDirectoryName ?? listing.title)}.zip`,
-    contents,
-  };
+    const storagePath = path.join(listingPath, 'downloads', storageName);
+    let fileStats: Awaited<ReturnType<typeof stat>>;
+    try {
+      fileStats = await stat(storagePath);
+    } catch (error) {
+      if (isNotFoundError(error)) {
+        throw new DropboxBundleStateError(`Digital download ${fileName} is missing from storage.`);
+      }
+      throw error;
+    }
+    if (!fileStats.isFile() || fileStats.size <= 0) {
+      throw new DropboxBundleStateError(`Digital download ${fileName} is empty or invalid.`);
+    }
+    files.push({ fileName, relativePath: fileName, storagePath, sizeBytes: fileStats.size });
+  }
+  return files;
 }
 
 async function unlinkIfPresent(storagePath: string) {
@@ -700,11 +762,11 @@ async function ensureDropboxFolder(token: string, folderPath: string) {
   }
 }
 
-async function listDropboxFolder(token: string, folderPath: string) {
+async function listDropboxFolder(token: string, folderPath: string, recursive = false) {
   const entries: DropboxEntry[] = [];
   let page = await dropboxRpc('files/list_folder', token, {
     path: folderPath,
-    recursive: false,
+    recursive,
     include_deleted: false,
   });
   while (true) {
@@ -715,25 +777,62 @@ async function listDropboxFolder(token: string, folderPath: string) {
   return entries;
 }
 
-function isManagedDropboxFile(fileName: string) {
-  const normalized = fileName.toLocaleLowerCase();
-  return normalized.endsWith('.zip')
-    || normalized === 'howtoprintguide.txt'
-    || normalized === 'download-instructions.txt';
+function relativeDropboxEntryPath(entry: DropboxEntry, folderPath: string) {
+  const remotePath = (entry.path_display ?? entry.path_lower)?.replace(/\\/g, '/');
+  const normalizedFolder = folderPath.replace(/\\/g, '/');
+  const prefix = `${normalizedFolder}/`;
+  if (!remotePath || !remotePath.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase())) return null;
+  return remotePath.slice(prefix.length);
 }
 
-async function removeObsoleteDropboxFiles(token: string, folderPath: string, expectedNames: Set<string>) {
-  const normalizedExpected = new Set([...expectedNames].map((name) => name.toLocaleLowerCase()));
-  for (const entry of await listDropboxFolder(token, folderPath)) {
-    if (entry['.tag'] !== 'file' || !entry.name || !isManagedDropboxFile(entry.name)
-      || normalizedExpected.has(entry.name.toLocaleLowerCase())) continue;
-    const remotePath = entry.path_display ?? entry.path_lower;
-    if (!remotePath || !remotePath.toLocaleLowerCase().startsWith(`${folderPath.toLocaleLowerCase()}/`)) continue;
-    try {
-      await dropboxRpc('files/delete_v2', token, { path: remotePath });
-    } catch (error) {
-      if (!isDropboxNotFoundError(error)) throw error;
+async function deleteDropboxEntry(token: string, remotePath: string) {
+  try {
+    await dropboxRpc('files/delete_v2', token, { path: remotePath });
+  } catch (error) {
+    if (!isDropboxNotFoundError(error)) throw error;
+  }
+}
+
+async function removeObsoleteDropboxEntries(token: string, folderPath: string, expectedPaths: Set<string>) {
+  const normalizedExpected = new Set([...expectedPaths].map((name) => name.replace(/\\/g, '/').toLocaleLowerCase()));
+  const expectedFolders = new Set<string>();
+  for (const expectedPath of normalizedExpected) {
+    const parts = expectedPath.split('/');
+    for (let index = 1; index < parts.length; index += 1) {
+      expectedFolders.add(parts.slice(0, index).join('/'));
     }
+  }
+
+  const entries = await listDropboxFolder(token, folderPath, true);
+  for (const entry of entries) {
+    if (entry['.tag'] !== 'file') continue;
+    const relativePath = relativeDropboxEntryPath(entry, folderPath);
+    const remotePath = entry.path_display ?? entry.path_lower;
+    if (!relativePath || !remotePath || normalizedExpected.has(relativePath.toLocaleLowerCase())) continue;
+    await deleteDropboxEntry(token, remotePath);
+  }
+
+  const obsoleteFolders = entries
+    .filter((entry) => entry['.tag'] === 'folder')
+    .map((entry) => ({ entry, relativePath: relativeDropboxEntryPath(entry, folderPath) }))
+    .filter(({ relativePath }) => relativePath && !expectedFolders.has(relativePath.toLocaleLowerCase()))
+    .sort((left, right) => (right.relativePath?.length ?? 0) - (left.relativePath?.length ?? 0));
+  for (const { entry } of obsoleteFolders) {
+    const remotePath = entry.path_display ?? entry.path_lower;
+    if (remotePath) await deleteDropboxEntry(token, remotePath);
+  }
+}
+
+async function ensureDropboxUploadFolders(token: string, folderPath: string, files: DropboxUploadFile[]) {
+  const relativeFolders = new Set<string>();
+  for (const file of files) {
+    const parts = file.relativePath.split('/');
+    for (let index = 1; index < parts.length; index += 1) {
+      relativeFolders.add(parts.slice(0, index).join('/'));
+    }
+  }
+  for (const relativeFolder of [...relativeFolders].sort((left, right) => left.length - right.length)) {
+    await ensureDropboxFolder(token, `${folderPath}/${relativeFolder}`);
   }
 }
 
@@ -748,6 +847,56 @@ async function uploadDropboxFile(token: string, dropboxPath: string, contents: B
     body: new Uint8Array(contents),
   });
   if (!response.ok) throw new Error(`Dropbox upload failed: ${await response.text()}`);
+}
+
+function directDropboxDownloadUrl(sharedUrl: string) {
+  const url = new URL(sharedUrl);
+  if (url.hostname === 'www.dropbox.com' || url.hostname === 'dropbox.com') {
+    url.hostname = 'dl.dropboxusercontent.com';
+  }
+  url.searchParams.delete('dl');
+  url.searchParams.delete('raw');
+  return url.toString();
+}
+
+async function getOrCreateDropboxSharedUrl(token: string, remotePath: string) {
+  const findExistingLink = async () => {
+    const response = await dropboxRpc('sharing/list_shared_links', token, {
+      path: remotePath,
+      direct_only: true,
+    });
+    const first = Array.isArray(response.links)
+      ? response.links.find((link): link is Record<string, unknown> => Boolean(link) && typeof link === 'object')
+      : null;
+    return typeof first?.url === 'string' ? first.url : null;
+  };
+
+  const existingUrl = await findExistingLink();
+  if (existingUrl) return existingUrl;
+
+  try {
+    const response = await dropboxRpc('sharing/create_shared_link_with_settings', token, {
+      path: remotePath,
+      settings: { requested_visibility: 'public', access: 'viewer' },
+    });
+    if (typeof response.url === 'string') return response.url;
+  } catch (error) {
+    const recoveredUrl = await findExistingLink();
+    if (recoveredUrl) return recoveredUrl;
+    throw error;
+  }
+  throw new Error('Dropbox did not return a shared link.');
+}
+
+export async function getOrCreateDropboxFileUrl(folderPath: string, relativeFilePath: string) {
+  validateDropboxFolderPath(folderPath);
+  const parts = relativeFilePath.replace(/\\/g, '/').split('/');
+  if (parts.length === 0 || parts.some((part) => !part || part === '.' || part === '..')) {
+    throw new Error('The Dropbox artwork path is invalid.');
+  }
+  const remotePath = `${folderPath}/${parts.join('/')}`;
+  const token = await getDropboxAccessToken();
+  return directDropboxDownloadUrl(await getOrCreateDropboxSharedUrl(token, remotePath));
 }
 
 async function resolveCurrentDropboxZipFiles(
@@ -787,7 +936,12 @@ async function resolveCurrentDropboxZipFiles(
       || (candidate.expectedSize !== null && fileStats.size !== candidate.expectedSize)) {
       throw new DropboxBundleStateError('One or more ZIP files are invalid. Please zip the files again.');
     }
-    files.push({ fileName: candidate.fileName, storagePath: candidate.storagePath, sizeBytes: fileStats.size });
+    files.push({
+      fileName: candidate.fileName,
+      relativePath: candidate.fileName,
+      storagePath: candidate.storagePath,
+      sizeBytes: fileStats.size,
+    });
   }
   return files;
 }
@@ -828,7 +982,7 @@ export async function inspectListingZipStorage(
 
 export async function createOrUpdateDropbox(context: ListingContext) {
   const { listing, listingPath } = await loadBundleListing(context);
-  const digitalDownloadsZip = await createDigitalDownloadsZip(listing, listingPath);
+  const uploadFiles = await resolveDropboxUploadFiles(listing, listingPath);
   const token = await getDropboxAccessToken();
   const folderPath = listing.dropboxBundle?.folderPath
     ?? `/${safeName(listing.localDirectoryName ?? listing.title)}-${randomUUID()}`;
@@ -837,13 +991,16 @@ export async function createOrUpdateDropbox(context: ListingContext) {
   let dropboxUpdateCommitted = false;
   try {
     folderCreated = await ensureDropboxFolder(token, folderPath);
-    const expectedRemoteNames = new Set<string>();
-    await uploadDropboxFile(
-      token,
-      `${folderPath}/${digitalDownloadsZip.fileName}`,
-      digitalDownloadsZip.contents,
-    );
-    expectedRemoteNames.add(digitalDownloadsZip.fileName);
+    await ensureDropboxUploadFolders(token, folderPath, uploadFiles);
+    const expectedRemotePaths = new Set<string>();
+    for (const file of uploadFiles) {
+      await uploadDropboxFile(
+        token,
+        `${folderPath}/${file.relativePath}`,
+        await readFile(file.storagePath),
+      );
+      expectedRemotePaths.add(file.relativePath);
+    }
 
     let sharedUrl = folderCreated ? null : listing.dropboxBundle?.sharedUrl ?? null;
     if (!sharedUrl) {
@@ -871,7 +1028,7 @@ export async function createOrUpdateDropbox(context: ListingContext) {
       : null;
 
     const instructions = `Thank you for your purchase.\n\nDownload your files here:\n${sharedUrl}\n`;
-    await removeObsoleteDropboxFiles(token, folderPath, expectedRemoteNames);
+    await removeObsoleteDropboxEntries(token, folderPath, expectedRemotePaths);
 
     if (instructionPdfUpdate) {
       installedInstructionPdf = await installStorageReplacement(

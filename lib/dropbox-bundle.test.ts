@@ -100,6 +100,7 @@ import {
   createDropboxInstructionPdf,
   createDropboxZips,
   createOrUpdateDropbox,
+  getOrCreateDropboxFileUrl,
   inspectListingZipStorage,
 } from '@/lib/dropbox-bundle';
 
@@ -283,6 +284,84 @@ describe('grouped Dropbox ZIP installation', () => {
 });
 
 describe('Dropbox shared-link changes', () => {
+  it('returns a direct shared URL for an individual Dropbox artwork file', async () => {
+    vi.stubEnv('DROPBOX_ACCESS_TOKEN', 'test-dropbox-token');
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      const response = (body: Record<string, unknown>) => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      });
+      if (url.endsWith('/sharing/list_shared_links')) {
+        return response({ links: [{ url: 'https://www.dropbox.com/scl/fi/file-id/artwork.png?rlkey=abc&dl=0' }] });
+      }
+      throw new Error(`Unexpected Dropbox request: ${url}`);
+    }));
+
+    const result = await getOrCreateDropboxFileUrl('/Green-Sea-Turtle', 'Green_Turtle_A2.png');
+
+    expect(result).toBe('https://dl.dropboxusercontent.com/scl/fi/file-id/artwork.png?rlkey=abc');
+  });
+
+  it('uploads ordinary Digital Download files individually and removes the old Dropbox ZIP', async () => {
+    const newUrl = 'https://www.dropbox.com/scl/fo/unzipped-link';
+    const listing = makeListing();
+    listing.dropboxFiles = [];
+    listing.files = [
+      { id: 30, localFileName: 'file_1.jpg', originalFileName: 'Green_Turtle_A2.jpg', filename: 'file_1.jpg', rawJson: {} },
+      { id: 31, localFileName: 'file_2.pdf', originalFileName: 'How_To_Print.pdf', filename: 'file_2.pdf', rawJson: {} },
+    ];
+    listingRecord.value = listing;
+    storage.objects.set('D:/Listings/Current/downloads/file_1.jpg', Buffer.from('A2 artwork'));
+    storage.objects.set('D:/Listings/Current/downloads/file_2.pdf', Buffer.from('print guide PDF'));
+
+    vi.stubEnv('DROPBOX_ACCESS_TOKEN', 'test-dropbox-token');
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const response = (body: Record<string, unknown>, ok = true, status = 200) => ({
+        ok,
+        status,
+        statusText: ok ? 'OK' : 'Conflict',
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      });
+      if (url.includes('content.dropboxapi.com/2/files/upload')) return response({});
+      if (url.endsWith('/files/get_metadata')) return response({ error_summary: 'path/not_found/..' }, false, 409);
+      if (url.endsWith('/files/create_folder_v2')) return response({ metadata: { '.tag': 'folder' } });
+      if (url.endsWith('/sharing/create_shared_link_with_settings')) return response({ url: newUrl });
+      if (url.endsWith('/files/list_folder')) {
+        const requestedPath = JSON.parse(String(init?.body)).path as string;
+        return response({
+          entries: [{ '.tag': 'file', name: 'Grouped-listing.zip', path_display: `${requestedPath}/Grouped-listing.zip` }],
+          has_more: false,
+        });
+      }
+      if (url.endsWith('/files/delete_v2')) return response({});
+      throw new Error(`Unexpected Dropbox request: ${url}`);
+    }));
+
+    await createOrUpdateDropbox(context);
+
+    const uploadCalls = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes('content.dropboxapi.com/2/files/upload'));
+    const uploads = uploadCalls.map(([, init]) => {
+      const apiArg = JSON.parse(String((init?.headers as Record<string, string>)?.['Dropbox-API-Arg'])) as { path: string };
+      return { path: apiArg.path, contents: Buffer.from(init?.body as Uint8Array).toString() };
+    });
+    expect(uploads).toEqual(expect.arrayContaining([
+      { path: expect.stringMatching(/\/Green_Turtle_A2\.jpg$/), contents: 'A2 artwork' },
+      { path: expect.stringMatching(/\/How_To_Print\.pdf$/), contents: 'print guide PDF' },
+    ]));
+    expect(uploads).toHaveLength(2);
+    expect(uploads.some((file) => file.path.toLocaleLowerCase().endsWith('.zip'))).toBe(false);
+    expect(vi.mocked(fetch).mock.calls.some(([input, init]) => (
+      String(input).endsWith('/files/delete_v2')
+      && String(init?.body).includes('Grouped-listing.zip')
+    ))).toBe(true);
+  });
+
   it('creates the required Etsy instruction PDF when a grouped Dropbox listing does not have one', async () => {
     const newUrl = 'https://www.dropbox.com/scl/fo/new-grouped-link';
     const listing = makeListing();
@@ -297,6 +376,7 @@ describe('Dropbox shared-link changes', () => {
     storage.objects.set('D:/Listings/Current/downloads/file_2.jpg', Buffer.from('2x3 artwork'));
     storage.objects.set('D:/Listings/Current/downloads/file_3.jpg', Buffer.from('3x4 artwork'));
     storage.objects.set('D:/Listings/Current/downloads/file_7.txt', Buffer.from('print guide'));
+    storage.objects.set('D:/Listings/Current/downloads/HowToPrintGuide.txt', Buffer.from('print guide'));
 
     vi.stubEnv('DROPBOX_ACCESS_TOKEN', 'test-dropbox-token');
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -333,19 +413,20 @@ describe('Dropbox shared-link changes', () => {
       String(input).endsWith('/files/delete_v2')
       && String(init?.body).includes('download-instructions.txt')
     ))).toBe(true);
-    const zipUpload = uploadCalls.find(([, init]) => String((init?.headers as Record<string, string>)?.['Dropbox-API-Arg']).includes('Grouped-listing.zip'));
-    const uploadedZipNames = uploadCalls.flatMap(([, init]) => {
+    const uploadedFiles = uploadCalls.map(([, init]) => {
       const apiArg = JSON.parse(String((init?.headers as Record<string, string>)?.['Dropbox-API-Arg'])) as { path: string };
-      return apiArg.path.toLocaleLowerCase().endsWith('.zip') ? [apiArg.path] : [];
+      return {
+        path: apiArg.path,
+        contents: Buffer.from(init?.body as Uint8Array).toString(),
+      };
     });
-    expect(uploadedZipNames).toEqual([expect.stringMatching(/\/Grouped-listing\.zip$/)]);
-    expect(uploadedZipNames.some((name) => name.includes('zip_1.zip'))).toBe(false);
-    expect(zipUpload).toBeTruthy();
-    const zipBytes = Buffer.from(zipUpload?.[1]?.body as Uint8Array);
-    expect(zipBytes.includes(Buffer.from('Ant_2x3.jpeg'))).toBe(true);
-    expect(zipBytes.includes(Buffer.from('Ant_3x4.jpeg'))).toBe(true);
-    expect(zipBytes.includes(Buffer.from('HowToPrintGuide.txt'))).toBe(true);
-    expect(zipBytes.includes(Buffer.from('file_2.jpg'))).toBe(false);
+    expect(uploadedFiles).toEqual(expect.arrayContaining([
+      { path: expect.stringMatching(/\/01-Albert\/Albert\.jpg$/), contents: 'albert source' },
+      { path: expect.stringMatching(/\/02-Betty\/Betty\.jpg$/), contents: 'betty source' },
+      { path: expect.stringMatching(/\/HowToPrintGuide\.txt$/), contents: 'print guide' },
+    ]));
+    expect(uploadedFiles).toHaveLength(3);
+    expect(uploadedFiles.some((file) => file.path.toLocaleLowerCase().endsWith('.zip'))).toBe(false);
     expect(prismaMocks.fileCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         listingId: 79,

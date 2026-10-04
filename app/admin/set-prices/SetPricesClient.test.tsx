@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { PRICE_SECTIONS } from '@/lib/set-prices-core';
+import { PRICE_OPTIONS, PRICE_SECTIONS } from '@/lib/set-prices-core';
 import type { PriceUpdateJobView, SetPricesData } from '@/lib/set-prices';
 import { SetPricesClient } from './SetPricesClient';
 
@@ -53,17 +53,25 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Set Prices screen', () => {
-  it('renders all four sections and all 26 accessible product fields with saved prices', () => {
+  it('starts on Unframed Prints and orders the three price tabs as requested', () => {
     render(<SetPricesClient initialData={makeData()} />);
-    expect(screen.getByRole('heading', { name: 'Digital Downloads' })).toBeTruthy();
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Unframed Prints', 'Framed Prints', 'Digital Downloads']);
+    expect(tabs[0].getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('heading', { name: 'Unframed Prints' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Framed Prints' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Customisation' })).toBeTruthy();
-    expect(screen.getAllByRole('textbox')).toHaveLength(26);
-    expect((screen.getByLabelText('1 Image Download') as HTMLInputElement).value).toBe('3.49');
+    expect((screen.getByLabelText('A5') as HTMLInputElement).value).toBe('12.99');
+    expect((screen.getByLabelText('A1') as HTMLInputElement).value).toBe('34.99');
     expect((screen.getByLabelText('Fee') as HTMLInputElement).value).toBe('4.99');
-    expect(screen.getAllByLabelText('24 × 36 inches')).toHaveLength(2);
-    expect(screen.getAllByLabelText('20 × 28 inches')).toHaveLength(2);
+    expect(screen.getByLabelText('30 × 40 cm')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Framed Prints' }));
+    expect(screen.getByRole('heading', { name: 'Framed Prints' })).toBeTruthy();
+    expect((screen.getByLabelText('A5') as HTMLInputElement).value).toBe('29.99');
+    expect((screen.getByLabelText('A1') as HTMLInputElement).value).toBe('99.99');
+    expect(screen.getByLabelText('50 × 70 cm')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Digital Downloads' }));
+    expect(screen.getByRole('heading', { name: 'Digital Downloads' })).toBeTruthy();
+    expect((screen.getByLabelText('1 Image Download') as HTMLInputElement).value).toBe('3.49');
     expect(screen.getByRole('button', { name: 'Save prices' }).hasAttribute('disabled')).toBe(true);
   });
 
@@ -80,6 +88,7 @@ describe('Set Prices screen', () => {
     } }));
     vi.stubGlobal('fetch', fetchMock);
     render(<SetPricesClient initialData={initial} />);
+    await user.click(screen.getByRole('tab', { name: 'Digital Downloads' }));
     const input = screen.getByLabelText('1 Image Download');
     await user.clear(input);
     await user.type(input, '3.999');
@@ -101,6 +110,7 @@ describe('Set Prices screen', () => {
     const user = userEvent.setup();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'Database unavailable.' }, 500)));
     render(<SetPricesClient initialData={makeData()} />);
+    await user.click(screen.getByRole('tab', { name: 'Digital Downloads' }));
     const input = screen.getByLabelText('3 Downloads');
     await user.clear(input);
     await user.type(input, '5.25');
@@ -124,6 +134,7 @@ describe('Set Prices screen', () => {
   it('protects in-app links with Keep editing and Leave without saving actions', async () => {
     const user = userEvent.setup();
     render(<><a href="/shops">Go to shops</a><SetPricesClient initialData={makeData()} /></>);
+    await user.click(screen.getByRole('tab', { name: 'Digital Downloads' }));
     const input = screen.getByLabelText('6 Downloads');
     await user.clear(input);
     await user.type(input, '8.00');
@@ -146,6 +157,7 @@ describe('Set Prices screen', () => {
       .mockResolvedValueOnce(jsonResponse({ result: { data: saved, changedKeys: ['digital_12'], affectedListings: 2, skippedListings: 0, deliveryWarnings: [] } }));
     vi.stubGlobal('fetch', fetchMock);
     render(<><a href="/shops">Go elsewhere</a><SetPricesClient initialData={initial} /></>);
+    await user.click(screen.getByRole('tab', { name: 'Digital Downloads' }));
     const input = screen.getByLabelText('12 Downloads');
     await user.clear(input);
     await user.type(input, '10.99');

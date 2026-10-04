@@ -5,6 +5,7 @@ const completeState: ListingCompletionState = {
   hasListingDescription: true,
   hasThumbnail: true,
   hasRequiredImages: true,
+  hasRequiredDigitalDownloads: true,
   hasCurrentZips: true,
   hasCurrentDropbox: true,
   hasEtsyProducts: true,
@@ -36,6 +37,14 @@ describe('listing completeness', () => {
     const state = { ...completeState, hasDownloadSection: false };
     expect(isListingComplete(state)).toBe(false);
     expect(getListingTodoItems(state)).toEqual([{ label: 'Select a download section', tab: 'etsy-products' }]);
+  });
+
+  it('requires all six printable downloads and the How to Print guide', () => {
+    const state = { ...completeState, hasRequiredDigitalDownloads: false };
+    expect(isListingComplete(state)).toBe(false);
+    expect(getListingTodoItems(state)).toEqual([
+      { label: 'Create all 6 printable downloads and the How to Print guide', tab: 'downloads' },
+    ]);
   });
 
   it('requires separate Print and Digital Download details', () => {

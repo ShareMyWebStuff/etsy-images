@@ -1,6 +1,7 @@
 import { inspectListingZipStorage, isDropboxInstructionPdfFile } from '@/lib/dropbox-bundle';
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';
 import { hasRequiredListingImages } from '@/lib/listing-image-limits';
+import { hasRequiredPrintableDownloads } from '@/lib/printable-download-specs';
 import { isListingComplete } from '@/lib/listing-completeness';
 import { prisma } from '@/lib/prisma';
 
@@ -152,7 +153,7 @@ export async function getSubSectionListingsPageData(
         orderBy: [{ rank: 'asc' }, { id: 'asc' }],
         select: { rank: true, localFileName: true },
       },
-      files: { select: { rawJson: true } },
+      files: { select: { originalFileName: true, localFileName: true, filename: true, widthPixels: true, heightPixels: true, rawJson: true } },
       zippedFiles: { select: { fileName: true, sizeBytes: true } },
       productConfig: { select: { id: true, downloadSectionId: true } },
       products: { select: { id: true } },
@@ -213,6 +214,7 @@ export async function getSubSectionListingsPageData(
         hasListingDescription: (listing.listingDescription?.trim().length ?? 0) > 0,
         hasThumbnail,
         hasRequiredImages,
+        hasRequiredDigitalDownloads: hasRequiredPrintableDownloads(listing.files),
         hasCurrentZips,
         hasCurrentDropbox,
         hasEtsyProducts,

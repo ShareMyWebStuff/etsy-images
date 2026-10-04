@@ -3,16 +3,25 @@ import { prisma } from '@/lib/prisma';
 import { digitalPriceKeyForSection } from '@/lib/set-prices-core';
 
 export const ETSY_PRODUCT_SIZES = [
+  { key: 'a5', label: 'A5' },
   { key: 'a4', label: 'A4' },
   { key: 'a3', label: 'A3' },
   { key: 'a2', label: 'A2' },
+  { key: 'a1', label: 'A1' },
+  { key: '5x7', label: '5 × 7' },
+  { key: '6x8', label: '6 × 8' },
   { key: '8x10', label: '8 × 10' },
   { key: '11x14', label: '11 × 14' },
   { key: '12x16', label: '12 × 16' },
+  { key: '12x18', label: '12 × 18' },
   { key: '16x20', label: '16 × 20' },
+  { key: '16x24', label: '16 × 24' },
   { key: '18x24', label: '18 × 24' },
   { key: '20x28', label: '20 × 28' },
+  { key: '20x30', label: '20 × 30' },
   { key: '24x36', label: '24 × 36' },
+  { key: '30x40cm', label: '30 × 40 cm' },
+  { key: '50x70cm', label: '50 × 70 cm' },
 ] as const;
 
 export const ETSY_PRODUCT_FRAMES = [
@@ -38,8 +47,8 @@ export type SaveListingProductsInput = ListingProductsContext & {
   printsFrames?: boolean;
   customTop: boolean;
   customBottom: boolean;
-  customiseDigitalDownloads: boolean;
   customisePrints?: boolean;
+  giftMessageEnabled?: boolean;
   downloadSectionId?: number | null;
   returnPolicyId?: string | null;
   sizes: Record<string, boolean>;
@@ -62,8 +71,8 @@ type NormalizedListingProducts = {
   printsFrames: boolean;
   customTop: boolean;
   customBottom: boolean;
-  customiseDigitalDownloads: boolean;
   customisePrints: boolean;
+  giftMessageEnabled: boolean;
   downloadSectionId: number | null;
   returnPolicyId: string | null;
   sizes: Record<EtsyProductSizeKey, boolean>;
@@ -105,8 +114,8 @@ export function buildListingProductTypeDefaults(
     printsFrames: true,
     customTop: true,
     customBottom: true,
-    customiseDigitalDownloads: false,
     customisePrints: true,
+    giftMessageEnabled: false,
     downloadSectionId: null,
     returnPolicyId: null,
     sizes: Object.fromEntries(SIZE_KEYS.map((key) => [key, true])) as Record<EtsyProductSizeKey, boolean>,
@@ -176,8 +185,8 @@ export function validateListingProductsInput(input: SaveListingProductsInput): N
     printsFrames: input.printsFrames === undefined ? true : requireBoolean(input.printsFrames, 'Prints / Frames'),
     customTop: requireBoolean(input.customTop, 'Top customisation'),
     customBottom: requireBoolean(input.customBottom, 'Bottom customisation'),
-    customiseDigitalDownloads: requireBoolean(input.customiseDigitalDownloads, 'Customise digital downloads'),
     customisePrints: input.customisePrints === undefined ? true : requireBoolean(input.customisePrints, 'Customise prints'),
+    giftMessageEnabled: input.giftMessageEnabled === undefined ? false : requireBoolean(input.giftMessageEnabled, 'Gift message enabled'),
     downloadSectionId: input.downloadSectionId ?? null,
     returnPolicyId: returnPolicyId === ''
       ? null
@@ -325,8 +334,8 @@ async function persistListingProducts(
       printsFrames: config.printsFrames,
       customTop: config.customTop,
       customBottom: config.customBottom,
-      customiseDigitalDownloads: config.customiseDigitalDownloads,
       customisePrints: config.customisePrints,
+      giftMessageEnabled: config.giftMessageEnabled,
       downloadSectionId: config.downloadSectionId,
       returnPolicyId: config.returnPolicyId,
       sku: listingSku,
@@ -337,11 +346,12 @@ async function persistListingProducts(
       printsFrames: config.printsFrames,
       customTop: config.customTop,
       customBottom: config.customBottom,
-      customiseDigitalDownloads: config.customiseDigitalDownloads,
       customisePrints: config.customisePrints,
+      giftMessageEnabled: config.giftMessageEnabled,
       downloadSectionId: config.downloadSectionId,
       returnPolicyId: config.returnPolicyId,
       sku: listingSku,
+      confirmedAt: null,
     },
   });
 
@@ -508,6 +518,21 @@ export async function saveListingProducts(input: SaveListingProductsInput) {
   }
 }
 
+export async function confirmListingProducts(context: ListingProductsContext) {
+  await prisma.$transaction(async (tx) => {
+    const listing = await loadListingForContext(tx, context);
+    const config = await tx.etsyListingProductConfig.findUnique({
+      where: { listingId: listing.id },
+      select: { id: true },
+    });
+    if (!config) throw new Error('Save the Etsy Product settings before confirming them.');
+    await tx.etsyListingProductConfig.update({
+      where: { listingId: listing.id },
+      data: { confirmedAt: new Date() },
+    });
+  });
+}
+
 export async function saveListingSku(context: ListingProductsContext, value: string) {
   const sku = value.trim();
   if (!sku) throw new Error('Enter an Etsy SKU.');
@@ -535,8 +560,8 @@ export async function saveListingSku(context: ListingProductsContext, value: str
         printsFrames: configuration.productConfig.printsFrames,
         customTop: configuration.productConfig.customTop,
         customBottom: configuration.productConfig.customBottom,
-        customiseDigitalDownloads: configuration.productConfig.customiseDigitalDownloads,
         customisePrints: configuration.productConfig.customisePrints,
+        giftMessageEnabled: configuration.productConfig.giftMessageEnabled,
         downloadSectionId: configuration.productConfig.downloadSectionId,
         returnPolicyId: configuration.productConfig.returnPolicyId,
         sizes: Object.fromEntries(SIZE_KEYS.map((key) => [
@@ -609,8 +634,8 @@ export async function ensureListingProductDefaultsInTransaction(
         printsFrames: listing.productConfig?.printsFrames ?? true,
         customTop: listing.productConfig?.customTop ?? true,
         customBottom: listing.productConfig?.customBottom ?? true,
-        customiseDigitalDownloads: listing.productConfig?.customiseDigitalDownloads ?? false,
         customisePrints: listing.productConfig?.customisePrints ?? true,
+        giftMessageEnabled: listing.productConfig?.giftMessageEnabled ?? false,
         downloadSectionId: listing.productConfig?.downloadSectionId ?? null,
         returnPolicyId: listing.productConfig?.returnPolicyId ?? null,
         sizes: Object.fromEntries(SIZE_KEYS.map((key) => [key, existingSizes.get(key) ?? true])) as Record<EtsyProductSizeKey, boolean>,

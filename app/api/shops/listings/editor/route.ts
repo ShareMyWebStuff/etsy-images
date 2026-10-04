@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import {
   addListingCollectionItem,
   deleteListingCollectionItem,
+  getListingEditorData,
   saveListingTags,
   saveListingDetails,
   type CollectionKind,
@@ -32,6 +33,26 @@ function getContext(body: CollectionRequest) {
     subSectionId: body.subSectionId,
     listingId: body.listingId,
   };
+}
+
+export async function GET(request: Request) {
+  try {
+    const searchParams = new URL(request.url).searchParams;
+    const context = getContext({
+      shopId: searchParams.get('shopId') ?? undefined,
+      sectionId: searchParams.get('sectionId') ?? undefined,
+      subSectionId: searchParams.get('subSectionId') ?? undefined,
+      listingId: searchParams.get('listingId') ?? undefined,
+    });
+    const data = await getListingEditorData(context);
+    if (!data) return NextResponse.json({ error: 'Listing not found.' }, { status: 404 });
+    return NextResponse.json({ data });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Unable to load listing details.' },
+      { status: 500 },
+    );
+  }
 }
 
 export async function PUT(request: Request) {

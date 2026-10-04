@@ -8,12 +8,22 @@ import { inspectListingZipStorage, isDropboxInstructionPdfFile } from '@/lib/dro
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';
 import { getListingTodoItems, type ListingTodoItem } from '@/lib/listing-completeness';
 import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
-import { ETSY_PRODUCT_FRAMES, ETSY_PRODUCT_SIZES, saveListingSku } from '@/lib/listing-products';
+import { detectDominantEtsyColours } from '@/lib/etsy-image-colours';
+import { createEtsyListingSku } from '@/lib/etsy-listing-sku';
+import type { GeneratedListingDetails } from '@/lib/combined-listing-details-prompt';
+import {
+  ETSY_PRODUCT_FRAMES,
+  ETSY_PRODUCT_SIZES,
+  ensureListingProductDefaults,
+  saveListingSku,
+} from '@/lib/listing-products';
 import { prisma } from '@/lib/prisma';
 import { getNextPrintSize } from '@/lib/print-sizes';
 import { ETSY_MAX_DOWNLOAD_FILES, ETSY_MAX_FILE_SIZE_BYTES } from '@/lib/etsy-download-limits';
 import { hasRequiredListingImages, LISTING_EDITOR_MAX_IMAGES } from '@/lib/listing-image-limits';
 import { DEFAULT_PERSONALISATION_FONT_ID, getPersonalisationFont } from '@/lib/personalisation-fonts';
+import { createHowToPrintGuide, createPrintableDownload } from '@/lib/printable-download-generator';
+import { getPrintableDownloadRole, hasRequiredPrintableDownloads, type PrintableDownloadRatio } from '@/lib/printable-download-specs';
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from '@/lib/s3-listing-storage';
 import { PRICE_OPTIONS } from '@/lib/set-prices-core';
 
@@ -83,8 +93,14 @@ export type ListingEditorData = {
     etsySku: string;
     numberOfItems: number | null;
     includeAllItems: boolean;
+    thumbnailUpdatedAt: string | null;
   };
-  thumbnail: { fileName: string; originalFileName: string | null } | null;
+  sales: {
+    itemsSold: number;
+    orderCount: number;
+    lastSoldAt: string | null;
+  };
+  thumbnail: { fileName: string; originalFileName: string | null; updatedAt: string | null } | null;
   pendingChanges: PendingListingChange[];
   readyToUpload: boolean;
   missingUploadFields: string[];
@@ -92,7 +108,13 @@ export type ListingEditorData = {
   tags: Array<{ id: string; value: string }>;
   materials: Array<{ id: string; value: string }>;
   styles: Array<{ id: string; value: string }>;
-  images: Array<{ id: string; fileName: string; originalFileName: string | null; rank: number | null }>;
+  images: Array<{
+    id: string;
+    fileName: string;
+    originalFileName: string | null;
+    rank: number | null;
+    updatedAt: string;
+  }>;
   files: Array<{
     id: string;
     fileName: string;
@@ -117,10 +139,13 @@ export type ListingEditorData = {
       printsFrames: boolean;
       customTop: boolean;
       customBottom: boolean;
-      customiseDigitalDownloads: boolean;
       customisePrints: boolean;
+      giftMessageEnabled: boolean;
       downloadSectionId: number | null;
       returnPolicyId: string | null;
+      confirmedAt: string | null;
+      updatedAt: string | null;
+      needsConfirmation: boolean;
     };
     sizes: Array<{ key: string; label: string; enabled: boolean }>;
     frames: Array<{ key: string; label: string; enabled: boolean }>;
@@ -372,6 +397,14 @@ async function getListingForContext(context: ListingEditorContext) {
         orderBy: [{ groupNumber: 'asc' }, { id: 'asc' }],
       },
       dropboxBundle: true,
+      orderItems: {
+        where: { order: { is: { isPaid: true, isCanceled: false } } },
+        select: {
+          orderId: true,
+          quantity: true,
+          order: { select: { orderedAt: true } },
+        },
+      },
     },
   });
 
@@ -449,6 +482,7 @@ async function mapEditorData(
     hasListingDescription: normalize(data.listing.listingDescription).length > 0,
     hasThumbnail: normalize(data.listing.thumbnailFileName).length > 0,
     hasRequiredImages: hasRequiredListingImages(data.listing.images),
+    hasRequiredDigitalDownloads: hasRequiredPrintableDownloads(data.listing.files),
     hasCurrentZips: zippedFilesAreCurrent,
     hasCurrentDropbox: dropboxIsCurrent,
     hasEtsyProducts: data.listing.productConfig !== null && data.listing.products.length > 0,
@@ -470,6 +504,13 @@ async function mapEditorData(
   } else if (data.listing.dropboxBundle && !dropboxIsCurrent) {
     dropboxMessage = 'Please update Dropbox because the digital downloads have changed.';
   }
+  const saleItems = data.listing.orderItems ?? [];
+  const saleOrderCount = new Set(saleItems.map((item) => item.orderId)).size;
+  const itemsSold = saleItems.reduce((total, item) => total + Math.max(1, item.quantity), 0);
+  const lastSoldAt = saleItems.reduce<Date | null>((latest, item) => {
+    const orderedAt = item.order.orderedAt;
+    return orderedAt && (!latest || orderedAt > latest) ? orderedAt : latest;
+  }, null);
 
   return {
     context,
@@ -525,10 +566,17 @@ async function mapEditorData(
       etsySku: data.listing.productConfig?.sku ?? defaultListingSku,
       numberOfItems: data.listing.numberOfItems,
       includeAllItems: data.listing.includeAllItems,
+      thumbnailUpdatedAt: data.listing.thumbnailUpdatedAt?.toISOString() ?? null,
+    },
+    sales: {
+      itemsSold,
+      orderCount: saleOrderCount,
+      lastSoldAt: lastSoldAt?.toISOString() ?? null,
     },
     thumbnail: data.listing.thumbnailFileName ? {
       fileName: data.listing.thumbnailFileName,
       originalFileName: data.listing.thumbnailOriginalFileName,
+      updatedAt: data.listing.thumbnailUpdatedAt?.toISOString() ?? null,
     } : null,
     pendingChanges: [
       data.listing.detailsChanged ? 'Details' as const : null,
@@ -550,6 +598,7 @@ async function mapEditorData(
       fileName: image.localFileName ?? image.urlFullxFull ?? image.etsyImageId ?? `Image ${image.id}`,
       originalFileName: image.originalFileName,
       rank: image.rank,
+      updatedAt: image.updatedAt.toISOString(),
     })),
     files: data.listing.files.map((file) => ({
       id: String(file.id),
@@ -608,10 +657,13 @@ async function mapEditorData(
         printsFrames: data.listing.productConfig?.printsFrames ?? true,
         customTop: data.listing.productConfig?.customTop ?? true,
         customBottom: data.listing.productConfig?.customBottom ?? true,
-        customiseDigitalDownloads: data.listing.productConfig?.customiseDigitalDownloads ?? false,
         customisePrints: data.listing.productConfig?.customisePrints ?? true,
+        giftMessageEnabled: data.listing.productConfig?.giftMessageEnabled ?? false,
         downloadSectionId: data.listing.productConfig?.downloadSectionId ?? null,
         returnPolicyId: data.listing.productConfig?.returnPolicyId ?? importedReturnPolicyId,
+        confirmedAt: data.listing.productConfig?.confirmedAt?.toISOString() ?? null,
+        updatedAt: data.listing.productConfig?.updatedAt?.toISOString() ?? null,
+        needsConfirmation: !data.listing.productConfig?.confirmedAt,
       },
       sizes: ETSY_PRODUCT_SIZES.map((size) => ({
         key: size.key,
@@ -660,7 +712,16 @@ async function mapEditorData(
 
 export async function getListingEditorData(context: ListingEditorContext) {
   try {
-    return await mapEditorData(context, await getListingForContext(context));
+    let data = await getListingForContext(context);
+    const configuredSizeKeys = new Set(data.listing.sizeOptions.map(({ sizeKey }) => sizeKey));
+    const hasMissingSizes = ETSY_PRODUCT_SIZES.some(({ key }) => !configuredSizeKeys.has(key));
+
+    if (data.listing.productConfig && hasMissingSizes) {
+      await ensureListingProductDefaults(data.listing.id);
+      data = await getListingForContext(context);
+    }
+
+    return await mapEditorData(context, data);
   } catch {
     return null;
   }
@@ -808,6 +869,62 @@ export async function saveListingDetails(input: SaveListingDetailsInput) {
   });
 
   return refresh(input, ['details']);
+}
+
+export async function setListingColoursFromThumbnail(context: ListingEditorContext) {
+  const { data, listingPath } = await getListingAssetDirectory(context);
+  if (!data.listing.thumbnailFileName) {
+    throw new Error('Create or upload the thumbnail before setting Etsy colours.');
+  }
+  const thumbnailPath = path.join(listingPath, 'thumbnail', data.listing.thumbnailFileName);
+  const thumbnail = await readFile(thumbnailPath).catch((error) => {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      throw new Error('The saved thumbnail could not be found in S3. Upload or recreate it first.');
+    }
+    throw error;
+  });
+  const [primary, secondary] = await detectDominantEtsyColours(thumbnail);
+  await prisma.etsyListing.update({
+    where: { id: data.listing.id },
+    data: {
+      primaryColour: primary.value,
+      secondaryColour: secondary.value,
+      detailsChanged: true,
+      lastLocalChangeAt: new Date(),
+    },
+  });
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('The Etsy colours were saved, but the refreshed listing could not be loaded.');
+  if (refreshed.listing.primaryColour !== primary.value || refreshed.listing.secondaryColour !== secondary.value) {
+    throw new Error('The Etsy colours could not be verified after saving.');
+  }
+  return { data: refreshed, colours: [primary, secondary] as const };
+}
+
+export async function setListingEtsySku(context: ListingEditorContext) {
+  let listingData = await getListingForContext(context);
+  if (!listingData.listing.productConfig) {
+    await ensureListingProductDefaults(listingData.listing.id);
+    listingData = await getListingForContext(context);
+  }
+  const otherSkus = await prisma.etsyListingProductConfig.findMany({
+    where: {
+      listingId: { not: listingData.listing.id },
+      sku: { not: null },
+    },
+    select: { sku: true },
+  });
+  const sku = createEtsyListingSku({
+    sectionName: listingData.section.title,
+    listingName: listingData.listing.localDirectoryName ?? listingData.listing.title,
+    listingId: listingData.listing.id,
+    usedSkus: otherSkus.flatMap(({ sku: otherSku }) => otherSku ? [otherSku] : []),
+  });
+  await saveListingSku(context, sku);
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('The Etsy SKU was saved, but the refreshed listing could not be loaded.');
+  if (refreshed.listing.etsySku !== sku) throw new Error('The Etsy SKU could not be verified after saving.');
+  return { data: refreshed, sku };
 }
 
 export async function saveListingDescription(context: ListingEditorContext, value: string) {
@@ -1016,6 +1133,61 @@ export async function saveListingTags(context: ListingEditorContext, tags: strin
   return refresh(context, ['tags']);
 }
 
+export async function saveGeneratedListingDetails(
+  context: ListingEditorContext,
+  generated: GeneratedListingDetails,
+) {
+  const data = await getListingForContext(context);
+  const tags = generated.tags
+    .map((tag) => normalize(tag))
+    .filter(Boolean)
+    .filter((tag, index, values) => values.findIndex((value) => value.toLocaleLowerCase() === tag.toLocaleLowerCase()) === index);
+  if (!normalize(generated.printTitle) || !normalize(generated.printDescription)
+    || !normalize(generated.digitalTitle) || !normalize(generated.digitalDescription)) {
+    throw new Error('ChatGPT must return both titles and both descriptions.');
+  }
+  if (Array.from(normalize(generated.printTitle)).length > 140
+    || Array.from(normalize(generated.digitalTitle)).length > 140) {
+    throw new Error('ChatGPT returned an Etsy title longer than 140 characters.');
+  }
+  if (tags.length === 0 || tags.length > 13) {
+    throw new Error('ChatGPT must return between 1 and 13 distinct Etsy tags.');
+  }
+  const longTag = tags.find((tag) => Array.from(tag).length > 20);
+  if (longTag) throw new Error(`ChatGPT returned an Etsy tag longer than 20 characters: ${longTag}`);
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.etsyListing.update({
+      where: { id: data.listing.id },
+      data: {
+        title: normalize(generated.printTitle),
+        description: normalize(generated.printDescription),
+        digitalTitle: normalize(generated.digitalTitle),
+        digitalDescription: normalize(generated.digitalDescription),
+        detailsChanged: true,
+        tagsChanged: true,
+        lastLocalChangeAt: new Date(),
+      },
+    });
+    await transaction.etsyListingTag.deleteMany({ where: { listingId: data.listing.id } });
+    await transaction.etsyListingTag.createMany({
+      data: tags.map((tag, position) => ({ listingId: data.listing.id, tag, position })),
+    });
+  });
+
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('The generated listing details were saved, but the listing could not be reloaded.');
+  const savedTags = refreshed.tags.map(({ value }) => value.toLocaleLowerCase());
+  if (refreshed.listing.title !== normalize(generated.printTitle)
+    || refreshed.listing.description !== normalize(generated.printDescription)
+    || refreshed.listing.digitalTitle !== normalize(generated.digitalTitle)
+    || refreshed.listing.digitalDescription !== normalize(generated.digitalDescription)
+    || tags.some((tag) => !savedTags.includes(tag.toLocaleLowerCase()))) {
+    throw new Error('The generated listing details could not be verified after saving.');
+  }
+  return refreshed;
+}
+
 async function getListingAssetDirectory(context: ListingEditorContext) {
   const data = await getListingForContext(context);
   const shopName = data.shop.shopName ?? data.shop.title ?? `Shop ${data.shop.etsyShopId}`;
@@ -1106,7 +1278,11 @@ export async function uploadListingAsset(context: ListingEditorContext, kind: Up
   if (kind === 'thumbnail') {
     await prisma.etsyListing.update({
       where: { id: data.listing.id },
-      data: { thumbnailFileName: fileName, thumbnailOriginalFileName: file.name },
+      data: {
+        thumbnailFileName: fileName,
+        thumbnailOriginalFileName: file.name,
+        thumbnailUpdatedAt: new Date(),
+      },
     });
   } else if (kind === 'image') {
     await prisma.etsyListingImage.create({
@@ -1170,6 +1346,378 @@ export async function uploadListingAsset(context: ListingEditorContext, kind: Up
   }
 
   return refresh(context, kind === 'thumbnail' ? [] : [kind === 'file' ? 'downloads' : 'images']);
+}
+
+async function unlinkIfPresent(filePath: string) {
+  try {
+    await unlink(filePath);
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+}
+
+export async function generateListingPrintableDownload(
+  context: ListingEditorContext,
+  ratio: PrintableDownloadRatio,
+) {
+  const { data, listingPath } = await getListingAssetDirectory(context);
+  if (!data.listing.thumbnailFileName) {
+    throw new Error('Create or upload the thumbnail before generating a digital download.');
+  }
+
+  const sourcePath = path.join(listingPath, 'thumbnail', data.listing.thumbnailFileName);
+  const source = await readFile(sourcePath).catch((error) => {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      throw new Error('The saved thumbnail file could not be found. Upload the thumbnail again.');
+    }
+    throw error;
+  });
+  const animalName = normalize(data.listing.listingItem)
+    || normalize(data.listing.localDirectoryName)
+    || normalize(data.listing.title)
+    || `Listing ${data.listing.id}`;
+  const generated = await createPrintableDownload(source, ratio, animalName);
+  const downloadsDirectory = path.join(listingPath, 'downloads');
+  await mkdir(downloadsDirectory, { recursive: true });
+
+  const ratioMatches = data.listing.files.filter((file) => getPrintableDownloadRole(file) === ratio);
+  const existingRatio = ratioMatches[0] ?? null;
+  const ratioLocalFileName = existingRatio?.localFileName && /\.jpe?g$/i.test(existingRatio.localFileName)
+    ? existingRatio.localFileName
+    : await nextAssetName('file', data.listing.id, generated.originalFileName, downloadsDirectory);
+
+  await writeFile(path.join(downloadsDirectory, ratioLocalFileName), generated.buffer);
+  const storedImage = await readFile(path.join(downloadsDirectory, ratioLocalFileName));
+  if (!storedImage.equals(generated.buffer)) {
+    throw new Error('The generated digital download could not be verified after saving.');
+  }
+  const storedMetadata = await sharp(storedImage, { failOn: 'error' }).metadata();
+  if (
+    storedMetadata.width !== generated.width
+    || storedMetadata.height !== generated.height
+    || storedMetadata.format !== 'jpeg'
+    || !storedMetadata.density
+    || Math.abs(storedMetadata.density - generated.density) > 1
+  ) {
+    throw new Error('The saved digital download failed its dimensions, format or DPI verification.');
+  }
+
+  const duplicateFiles = ratioMatches.slice(1);
+  const obsoleteFiles = [
+    ...duplicateFiles,
+    ...(existingRatio?.localFileName && existingRatio.localFileName !== ratioLocalFileName ? [existingRatio] : []),
+  ];
+  const obsoleteIds = [...new Set(duplicateFiles.map((file) => file.id))];
+  const now = new Date();
+
+  await prisma.$transaction(async (transaction) => {
+    const ratioData = {
+      etsyListingFileId: null,
+      localFileName: ratioLocalFileName,
+      originalFileName: generated.originalFileName,
+      filename: ratioLocalFileName,
+      filesize: `${(generated.buffer.length / (1024 * 1024)).toFixed(2)} MB`,
+      sizeBytes: generated.buffer.length,
+      widthPixels: generated.width,
+      heightPixels: generated.height,
+      jpegQuality: 95,
+      filetype: generated.fileType,
+      rawJson: toRawJson({
+        kind: 'generated_printable_download',
+        printableDownloadRole: ratio,
+        originalFileName: generated.originalFileName,
+        widthPixels: generated.width,
+        heightPixels: generated.height,
+        density: generated.density,
+        orientation: generated.orientation,
+      }),
+    };
+    if (existingRatio) {
+      await transaction.etsyListingFile.update({ where: { id: existingRatio.id }, data: ratioData });
+    } else {
+      await transaction.etsyListingFile.create({ data: { listingId: data.listing.id, ...ratioData } });
+    }
+
+    if (obsoleteIds.length > 0) {
+      await transaction.etsyListingFile.deleteMany({ where: { listingId: data.listing.id, id: { in: obsoleteIds } } });
+    }
+    await transaction.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } });
+    await transaction.etsyListing.update({
+      where: { id: data.listing.id },
+      data: {
+        downloadsRevision: { increment: 1 },
+        downloadsChanged: true,
+        lastLocalChangeAt: now,
+      },
+    });
+  });
+
+  await Promise.all(obsoleteFiles.flatMap((file) => file.localFileName
+    && file.localFileName !== ratioLocalFileName
+    ? [unlinkIfPresent(path.join(downloadsDirectory, file.localFileName))]
+    : []));
+  await removeListingZipFiles(listingPath, data.listing.zippedFiles);
+  const refreshed = await refresh(context, []);
+  const persistedRatio = refreshed.files.find((file) => (
+    file.fileName === ratioLocalFileName
+    && file.originalFileName === generated.originalFileName
+  ));
+  if (!persistedRatio) {
+    throw new Error('The generated digital download was saved to S3 but could not be verified in the database.');
+  }
+  const verifiedImage = await readFile(path.join(downloadsDirectory, ratioLocalFileName));
+  if (!verifiedImage.equals(generated.buffer)) {
+    throw new Error('The generated digital download is recorded in the database but could not be verified in S3.');
+  }
+  return refreshed;
+}
+
+export async function generateListingHowToPrintGuide(context: ListingEditorContext) {
+  const { data, listingPath } = await getListingAssetDirectory(context);
+  if (!data.listing.thumbnailFileName) {
+    throw new Error('Create or upload the thumbnail before generating the How to Print guide.');
+  }
+
+  const sourcePath = path.join(listingPath, 'thumbnail', data.listing.thumbnailFileName);
+  const source = await readFile(sourcePath).catch((error) => {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      throw new Error('The saved thumbnail file could not be found. Upload the thumbnail again.');
+    }
+    throw error;
+  });
+  const sourceMetadata = await sharp(source, { failOn: 'error' }).rotate().metadata();
+  if (!sourceMetadata.width || !sourceMetadata.height) {
+    throw new Error('The thumbnail dimensions could not be read. Upload the thumbnail again.');
+  }
+  const orientation = sourceMetadata.width > sourceMetadata.height ? 'landscape' : 'portrait';
+  const animalName = normalize(data.listing.listingItem)
+    || normalize(data.listing.localDirectoryName)
+    || normalize(data.listing.title)
+    || `Listing ${data.listing.id}`;
+  const guide = await createHowToPrintGuide(animalName, orientation);
+  if (!guide.buffer.subarray(0, 5).equals(Buffer.from('%PDF-'))) {
+    throw new Error('The generated How to Print guide is not a valid PDF file.');
+  }
+
+  const downloadsDirectory = path.join(listingPath, 'downloads');
+  await mkdir(downloadsDirectory, { recursive: true });
+  const guideMatches = data.listing.files.filter((file) => getPrintableDownloadRole(file) === 'guide');
+  const existingGuide = guideMatches[0] ?? null;
+  const guideLocalFileName = existingGuide?.localFileName && /\.pdf$/i.test(existingGuide.localFileName)
+    ? existingGuide.localFileName
+    : await nextAssetName('file', data.listing.id, guide.originalFileName, downloadsDirectory);
+  const guidePath = path.join(downloadsDirectory, guideLocalFileName);
+
+  await writeFile(guidePath, guide.buffer);
+  const storedGuide = await readFile(guidePath);
+  if (!storedGuide.equals(guide.buffer)) {
+    throw new Error('The generated How to Print guide could not be verified after saving.');
+  }
+
+  const duplicateFiles = guideMatches.slice(1);
+  const obsoleteFiles = [
+    ...duplicateFiles,
+    ...(existingGuide?.localFileName && existingGuide.localFileName !== guideLocalFileName ? [existingGuide] : []),
+  ];
+  const obsoleteIds = [...new Set(duplicateFiles.map((file) => file.id))];
+  const now = new Date();
+
+  await prisma.$transaction(async (transaction) => {
+    const guideData = {
+      etsyListingFileId: null,
+      localFileName: guideLocalFileName,
+      originalFileName: guide.originalFileName,
+      filename: guideLocalFileName,
+      filesize: `${(guide.buffer.length / (1024 * 1024)).toFixed(2)} MB`,
+      sizeBytes: guide.buffer.length,
+      widthPixels: null,
+      heightPixels: null,
+      jpegQuality: null,
+      filetype: 'pdf',
+      rawJson: toRawJson({
+        kind: 'generated_printable_download_guide',
+        printableDownloadRole: 'guide',
+        originalFileName: guide.originalFileName,
+        orientation,
+      }),
+    };
+    if (existingGuide) {
+      await transaction.etsyListingFile.update({ where: { id: existingGuide.id }, data: guideData });
+    } else {
+      await transaction.etsyListingFile.create({ data: { listingId: data.listing.id, ...guideData } });
+    }
+    if (obsoleteIds.length > 0) {
+      await transaction.etsyListingFile.deleteMany({ where: { listingId: data.listing.id, id: { in: obsoleteIds } } });
+    }
+    await transaction.etsyListingZip.deleteMany({ where: { listingId: data.listing.id } });
+    await transaction.etsyListing.update({
+      where: { id: data.listing.id },
+      data: {
+        downloadsRevision: { increment: 1 },
+        downloadsChanged: true,
+        lastLocalChangeAt: now,
+      },
+    });
+  });
+
+  await Promise.all(obsoleteFiles.flatMap((file) => file.localFileName
+    && file.localFileName !== guideLocalFileName
+    ? [unlinkIfPresent(path.join(downloadsDirectory, file.localFileName))]
+    : []));
+  await removeListingZipFiles(listingPath, data.listing.zippedFiles);
+
+  const refreshed = await refresh(context, []);
+  const persistedGuide = refreshed.files.find((file) => (
+    file.fileName === guideLocalFileName
+    && file.originalFileName === guide.originalFileName
+  ));
+  if (!persistedGuide) {
+    throw new Error('The How to Print guide was saved to S3 but could not be verified in the database.');
+  }
+  const verifiedGuide = await readFile(guidePath);
+  if (!verifiedGuide.equals(guide.buffer)) {
+    throw new Error('The How to Print guide is recorded in the database but could not be verified in S3.');
+  }
+  return refreshed;
+}
+
+function generatedImageExtension(fileName: string) {
+  const extension = path.extname(cleanFileName(fileName)).toLowerCase();
+  if (!IMAGE_EXTENSIONS.has(extension)) throw new Error('The generated image must be a JPG, PNG, or WEBP file.');
+  return extension === '.jpeg' ? '.jpg' : extension;
+}
+
+export async function replaceListingThumbnailFromBuffer(
+  context: ListingEditorContext,
+  contents: Buffer,
+  originalFileName: string,
+) {
+  const { data, listingPath } = await getListingAssetDirectory(context);
+  const extension = generatedImageExtension(originalFileName);
+  const thumbnailDirectory = path.join(listingPath, 'thumbnail');
+  const fileName = `thumbnail${extension}`;
+  const targetPath = path.join(thumbnailDirectory, fileName);
+  const previousFileName = data.listing.thumbnailFileName;
+
+  await mkdir(thumbnailDirectory, { recursive: true });
+  await writeFile(targetPath, contents);
+  await prisma.etsyListing.update({
+    where: { id: data.listing.id },
+    data: {
+      thumbnailFileName: fileName,
+      thumbnailOriginalFileName: originalFileName,
+      thumbnailUpdatedAt: new Date(),
+      lastLocalChangeAt: new Date(),
+    },
+  });
+
+  if (previousFileName && previousFileName !== fileName) {
+    await unlink(path.join(thumbnailDirectory, previousFileName)).catch((error) => {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    });
+  }
+
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('The thumbnail was replaced, but the refreshed listing could not be loaded.');
+  return refreshed;
+}
+
+export async function replaceListingImageAtPosition(
+  context: ListingEditorContext,
+  position: number,
+  contents: Buffer,
+  originalFileName: string,
+) {
+  if (!Number.isInteger(position) || position < 1 || position > LISTING_EDITOR_MAX_IMAGES) {
+    throw new Error(`The image position must be between 1 and ${LISTING_EDITOR_MAX_IMAGES}.`);
+  }
+  const { data, listingPath } = await getListingAssetDirectory(context);
+  const extension = generatedImageExtension(originalFileName);
+  const fileName = `image_${position}${extension}`;
+  const targetPath = path.join(listingPath, fileName);
+  const orderedImages = data.listing.images.slice(0, LISTING_EDITOR_MAX_IMAGES);
+  const imagesUseNumberedRanks = orderedImages.some((image) => (image.rank ?? 0) >= 1);
+  const existing = orderedImages.find((image) => image.rank === position)
+    ?? (!imagesUseNumberedRanks ? orderedImages[position - 1] : null)
+    ?? null;
+  const previousFileName = existing?.localFileName ?? null;
+  let dimensions: { width?: number; height?: number } = {};
+  try {
+    dimensions = imageSize(contents);
+  } catch {
+    // ChatGPT output has already been validated as an image by its extension.
+  }
+
+  const previousTargetContents = await readFile(targetPath).catch((error) => {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  });
+  try {
+    await writeFile(targetPath, contents);
+    const storedContents = await readFile(targetPath);
+    if (!storedContents.equals(contents)) {
+      throw new Error(`The generated image for position ${position} could not be verified in S3.`);
+    }
+  } catch (error) {
+    if (previousTargetContents) await writeFile(targetPath, previousTargetContents);
+    else await unlinkIfPresent(targetPath);
+    throw error;
+  }
+
+  try {
+    await prisma.$transaction(async (transaction) => {
+      if (existing) {
+        // Update the existing row so Etsy image IDs and download-image IDs remain attached.
+        await transaction.etsyListingImage.update({
+          where: { id: existing.id },
+          data: {
+            localFileName: fileName,
+            originalFileName,
+            rank: position,
+            fullWidth: dimensions.width ?? existing.fullWidth,
+            fullHeight: dimensions.height ?? existing.fullHeight,
+          },
+        });
+      } else {
+        await transaction.etsyListingImage.create({
+          data: {
+            listingId: data.listing.id,
+            localFileName: fileName,
+            originalFileName,
+            rank: position,
+            fullWidth: dimensions.width ?? null,
+            fullHeight: dimensions.height ?? null,
+          },
+        });
+      }
+      await transaction.etsyListing.update({
+        where: { id: data.listing.id },
+        data: { imagesChanged: true, lastLocalChangeAt: new Date() },
+      });
+    });
+  } catch (error) {
+    if (previousTargetContents) await writeFile(targetPath, previousTargetContents);
+    else await unlinkIfPresent(targetPath);
+    throw error;
+  }
+
+  if (previousFileName && previousFileName !== fileName) {
+    await unlink(path.join(listingPath, previousFileName)).catch((error) => {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    });
+  }
+
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('The listing image was replaced, but the refreshed listing could not be loaded.');
+  const persistedImage = refreshed.images.find((image) => image.rank === position);
+  if (!persistedImage || persistedImage.fileName !== fileName || persistedImage.originalFileName !== originalFileName) {
+    throw new Error(`The generated image for position ${position} was saved to S3 but could not be verified in the database.`);
+  }
+  const verifiedContents = await readFile(targetPath);
+  if (!verifiedContents.equals(contents)) {
+    throw new Error(`The generated image for position ${position} is recorded in the database but could not be verified in S3.`);
+  }
+  return refreshed;
 }
 
 async function renameImageFilesSafely(
@@ -1304,6 +1852,8 @@ export async function getListingAssetFile(context: ListingEditorContext, kind: U
     '.jpeg': 'image/jpeg',
     '.png': 'image/png',
     '.webp': 'image/webp',
+    '.pdf': 'application/pdf',
+    '.txt': 'text/plain; charset=utf-8',
   };
 
   return {
@@ -1885,7 +2435,7 @@ export async function deleteListingAsset(context: ListingEditorContext, kind: Up
     if (!localFileName) throw new Error('Thumbnail not found.');
     await prisma.etsyListing.update({
       where: { id: data.listing.id },
-      data: { thumbnailFileName: null, thumbnailOriginalFileName: null },
+      data: { thumbnailFileName: null, thumbnailOriginalFileName: null, thumbnailUpdatedAt: null },
     });
   } else if (kind === 'image') {
     const numericId = toInt(id, 'asset id');

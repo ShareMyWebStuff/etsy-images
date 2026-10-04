@@ -85,11 +85,13 @@ describe('Etsy financial classification', () => {
     expect(classifyEtsyLedgerEntry('123', { ...base, entry_id: 4, amount: 75, ledger_type: 'refund_reversal' })).toMatchObject({ type: 'INCOME', category: 'Etsy refunds', amountMinorUnits: 75 });
     expect(classifyEtsyLedgerEntry('123', { ...base, entry_id: 5, ledger_type: 'etsy_ads', description: 'Etsy Ads' })).toMatchObject({ type: 'EXPENSE', category: 'Etsy fees', amountMinorUnits: 100 });
     expect(classifyEtsyLedgerEntry('123', { ...base, entry_id: 6, ledger_type: 'listing_fee', description: 'Listing fee' })).toMatchObject({ type: 'EXPENSE', category: 'Etsy fees', amountMinorUnits: 100 });
+    expect(classifyEtsyLedgerEntry('123', { ...base, entry_id: 7, ledger_type: 'seller_onboarding_fee' })).toMatchObject({ type: 'EXPENSE', category: 'Etsy fees', amountMinorUnits: 100 });
   });
 
   it('preserves payment and deposit rows outside reporting to avoid double-counting receipt income', () => {
     expect(classifyEtsyLedgerEntry('123', { entry_id: 9, amount: 2500, currency: 'GBP', created_timestamp: created, ledger_type: 'payment' })).toBeNull();
     expect(classifyEtsyLedgerEntry('123', { entry_id: 10, amount: -2500, currency: 'GBP', created_timestamp: created, ledger_type: 'disbursement' })).toBeNull();
+    expect(classifyEtsyLedgerEntry('123', { entry_id: 11, amount: 1400, currency: 'GBP', created_timestamp: created, ledger_type: 'seller_onboarding_fee_payment' })).toBeNull();
   });
 
   it('generates stable source keys for retry-safe upserts', () => {

@@ -6,6 +6,7 @@ import { inspectListingZipStorage, isDropboxInstructionPdfFile } from '@/lib/dro
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';
 import { isListingComplete } from '@/lib/listing-completeness';
 import { hasRequiredListingImages } from '@/lib/listing-image-limits';
+import { hasRequiredPrintableDownloads } from '@/lib/printable-download-specs';
 
 const MAX_ETSY_ZIP_SIZE_BYTES = 20 * 1024 * 1024;
 
@@ -34,7 +35,7 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
             include: {
               sourceSection: { select: { title: true } },
               zippedFiles: { select: { fileName: true, sizeBytes: true } },
-              files: { select: { localFileName: true, sizeBytes: true, rawJson: true } },
+              files: { select: { localFileName: true, originalFileName: true, filename: true, sizeBytes: true, widthPixels: true, heightPixels: true, rawJson: true } },
               images: { orderBy: [{ rank: 'asc' }, { id: 'asc' }], select: { localFileName: true } },
               tags: { select: { id: true } },
               products: { select: { id: true } },
@@ -103,6 +104,7 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
             hasListingDescription: (listing.listingDescription?.trim().length ?? 0) > 0,
             hasThumbnail: (listing.thumbnailFileName?.trim().length ?? 0) > 0,
             hasRequiredImages: hasRequiredListingImages(listing.images),
+            hasRequiredDigitalDownloads: hasRequiredPrintableDownloads(listing.files),
             hasCurrentZips: zipsAreCurrent,
             hasCurrentDropbox,
             hasEtsyProducts: listing.productConfig !== null && listing.products.length > 0,

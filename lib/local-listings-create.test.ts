@@ -101,7 +101,7 @@ describe('single local listing creation recovery', () => {
     expect(mocks.tx.etsyListing.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         quantity: 999,
-        priceAmount: 3499,
+        priceAmount: 2999,
         priceDivisor: 100,
         priceCurrencyCode: 'GBP',
         whoMade: 'i_did',

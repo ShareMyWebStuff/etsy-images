@@ -102,10 +102,38 @@ function periodJson(period: { start: Date; endExclusive: Date; label: string }) 
   return { start: period.start.toISOString(), endExclusive: period.endExclusive.toISOString(), label: period.label };
 }
 
+async function removePreviouslyReportedOnboardingFeePayments() {
+  const paymentRows = await prisma.etsyPaymentLedgerEntry.findMany({
+    where: {
+      ledgerType: 'seller_onboarding_fee_payment',
+      financialEntryId: { not: null },
+    },
+    select: { id: true, financialEntryId: true },
+  });
+  const financialEntryIds = paymentRows.flatMap(({ financialEntryId }) => (
+    financialEntryId === null ? [] : [financialEntryId]
+  ));
+  if (financialEntryIds.length === 0) return;
+
+  await prisma.$transaction(async (transaction) => {
+    await transaction.etsyPaymentLedgerEntry.updateMany({
+      where: { id: { in: paymentRows.map(({ id }) => id) } },
+      data: { financialEntryId: null },
+    });
+    await transaction.financialEntry.deleteMany({
+      where: {
+        id: { in: financialEntryIds },
+        source: 'ETSY',
+      },
+    });
+  });
+}
+
 export async function getAccountsData(
   query: Record<string, string | null | undefined> = {},
   now = new Date(),
 ): Promise<AccountsPageData> {
+  await removePreviouslyReportedOnboardingFeePayments();
   const filters = parseAccountsFilters(query, now);
   const currentAccountingYear = getAccountingYearDateRange(now);
   const period = filters.view === 'accounting-year' ? currentAccountingYear : getMonthDateRange(filters.month);

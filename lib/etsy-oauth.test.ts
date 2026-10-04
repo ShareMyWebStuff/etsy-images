@@ -19,6 +19,7 @@ describe('Etsy accounting OAuth scope', () => {
       'shops_r',
       'shops_w',
       'transactions_r',
+      'transactions_w',
     ]));
   });
 
@@ -27,6 +28,16 @@ describe('Etsy accounting OAuth scope', () => {
     vi.stubEnv('ETSY_ACCESS_TOKEN_SCOPES', 'listings_r shops_r');
     await expect(getEtsyOAuthConnectionStatus()).resolves.toMatchObject({ connected: true, hasTransactionsScope: false });
     vi.stubEnv('ETSY_ACCESS_TOKEN_SCOPES', 'listings_r shops_r transactions_r');
-    await expect(getEtsyOAuthConnectionStatus()).resolves.toMatchObject({ connected: true, hasTransactionsScope: true });
+    await expect(getEtsyOAuthConnectionStatus()).resolves.toMatchObject({
+      connected: true,
+      hasTransactionsScope: true,
+      hasTransactionsWriteScope: false,
+    });
+    vi.stubEnv('ETSY_ACCESS_TOKEN_SCOPES', 'listings_r shops_r transactions_r transactions_w');
+    await expect(getEtsyOAuthConnectionStatus()).resolves.toMatchObject({
+      connected: true,
+      hasTransactionsScope: true,
+      hasTransactionsWriteScope: true,
+    });
   });
 });

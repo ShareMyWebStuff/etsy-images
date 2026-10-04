@@ -7,7 +7,6 @@ const settings = {
   customTop: true,
   customBottom: true,
   customisePrints: true,
-  customiseDigitalDownloads: false,
 };
 
 describe('selectEtsySyncImages', () => {
@@ -21,7 +20,7 @@ describe('selectEtsySyncImages', () => {
 
   it('uses the enabled text positions for each variant', () => {
     expect(slots(selectEtsySyncImages(images, 'print', { ...settings, customTop: false }))).toEqual([1, 2, 3, 4, 5, 6, 7, 11]);
-    expect(slots(selectEtsySyncImages(images, 'download', { ...settings, customiseDigitalDownloads: true, customBottom: false }))).toEqual([1, 2, 3, 4, 5, 6, 7, 10, 12, 13, 14, 15]);
+    expect(slots(selectEtsySyncImages(images, 'download', { ...settings, customBottom: false }))).toEqual([1, 2, 3, 4, 5, 6, 7, 12, 13, 14, 15]);
   });
 
   it('does not reclassify later slots when an earlier image is missing', () => {

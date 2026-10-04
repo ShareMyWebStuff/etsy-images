@@ -24,7 +24,8 @@ export default async function EditListingPage({ searchParams }: EditListingPageP
   const subSectionId = resolvedSearchParams?.subSectionId ?? '';
   const listingId = resolvedSearchParams?.listingId ?? '';
   const requestedTab = resolvedSearchParams?.tab;
-  const initialTab = requestedTab === 'images'
+  const initialTab = requestedTab === 'start'
+    || requestedTab === 'images'
     || requestedTab === 'etsy-products'
     || requestedTab === 'details'
     || requestedTab === 'tags'
@@ -33,7 +34,7 @@ export default async function EditListingPage({ searchParams }: EditListingPageP
     || requestedTab === 'dropbox'
     || requestedTab === 'todo'
     ? requestedTab
-    : 'thumbnail';
+    : 'start';
   const data =
     shopId && sectionId && subSectionId && listingId
       ? await getListingEditorData({

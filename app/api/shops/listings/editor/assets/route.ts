@@ -68,7 +68,7 @@ export async function GET(request: Request) {
     const kind = (searchParams.get('kind') ?? '') as UploadKind;
     const assetId = searchParams.get('assetId') ?? '';
 
-    if (!context.shopId || !context.sectionId || !context.subSectionId || !context.listingId || !assetId || !['image', 'thumbnail'].includes(kind)) {
+    if (!context.shopId || !context.sectionId || !context.subSectionId || !context.listingId || !assetId || !['image', 'thumbnail', 'file'].includes(kind)) {
       return NextResponse.json({ error: 'Missing or invalid asset context.' }, { status: 400 });
     }
 

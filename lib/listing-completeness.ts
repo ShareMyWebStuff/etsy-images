@@ -6,6 +6,7 @@ export type ListingCompletionState = {
   hasListingDescription: boolean;
   hasThumbnail: boolean;
   hasRequiredImages: boolean;
+  hasRequiredDigitalDownloads: boolean;
   hasCurrentZips: boolean;
   hasCurrentDropbox: boolean;
   hasEtsyProducts: boolean;
@@ -30,6 +31,7 @@ export function getListingTodoItems(state: ListingCompletionState): ListingTodoI
     state.hasListingDescription ? null : { label: 'Add the listing description', tab: 'thumbnail' as const },
     state.hasThumbnail ? null : { label: 'Upload the thumbnail', tab: 'thumbnail' as const },
     state.hasRequiredImages ? null : { label: `Upload at least ${LISTING_COMPLETE_MIN_IMAGES} listing images`, tab: 'images' as const },
+    state.hasRequiredDigitalDownloads ? null : { label: 'Create all 6 printable downloads and the How to Print guide', tab: 'downloads' as const },
     state.hasCurrentZips ? null : { label: 'Create the current ZIP files', tab: 'downloads' as const },
     state.hasCurrentDropbox ? null : { label: 'Create or update Dropbox', tab: 'dropbox' as const },
     state.hasEtsyProducts ? null : { label: 'Configure the Etsy products', tab: 'etsy-products' as const },

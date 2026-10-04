@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   experimental: {
     typedRoutes: true,
   },
-  serverExternalPackages: ['pdfkit'],
+  serverExternalPackages: ['pdfkit', 'playwright'],
 };
 
 export default nextConfig;

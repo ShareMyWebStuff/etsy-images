@@ -6,6 +6,7 @@ import {
   buildListingProductTypeDefaults,
   validateListingProductsInput,
 } from '@/lib/listing-products';
+import { PRICE_OPTIONS } from '@/lib/set-prices-core';
 
 function validInput() {
   return {
@@ -18,8 +19,8 @@ function validInput() {
     printsFrames: true,
     customTop: true,
     customBottom: true,
-    customiseDigitalDownloads: false,
     customisePrints: true,
+    giftMessageEnabled: false,
     downloadSectionId: 123456,
     returnPolicyId: '12345',
     sizes: Object.fromEntries(ETSY_PRODUCT_SIZES.map(({ key }) => [key, true])),
@@ -29,6 +30,13 @@ function validInput() {
 }
 
 describe('listing Etsy product configuration', () => {
+  it('offers every physical size configured on the Set Prices screen', () => {
+    const pricedSizes = new Set(PRICE_OPTIONS
+      .filter((option) => option.category === 'unframed' || option.category === 'framed')
+      .map((option) => option.key.replace(/^(?:unframed|framed)_/, '')));
+    expect(new Set(ETSY_PRODUCT_SIZES.map(({ key }) => key))).toEqual(pricedSizes);
+  });
+
   it('uses clean, type-specific defaults when a rerun changes product type', () => {
     const digital = buildListingProductTypeDefaults('digital');
     expect(digital).toMatchObject({
@@ -37,8 +45,8 @@ describe('listing Etsy product configuration', () => {
       printsFrames: true,
       customTop: true,
       customBottom: true,
-      customiseDigitalDownloads: false,
       customisePrints: true,
+      giftMessageEnabled: false,
       skus: {},
     });
     expect(Object.values(digital.sizes).every(Boolean)).toBe(true);
@@ -51,8 +59,8 @@ describe('listing Etsy product configuration', () => {
       printsFrames: true,
       customTop: true,
       customBottom: true,
-      customiseDigitalDownloads: false,
       customisePrints: true,
+      giftMessageEnabled: false,
       frames: { no_frame: false, black: true, white: true, oak: true },
     });
     expect(Object.values(physical.sizes).every(Boolean)).toBe(true);
@@ -87,13 +95,11 @@ describe('listing Etsy product configuration', () => {
     })).toThrow('Choose a valid Etsy return policy.');
   });
 
-  it('validates the digital-download customisation setting', () => {
-    expect(validateListingProductsInput(validInput()).customiseDigitalDownloads).toBe(false);
-    expect(validateListingProductsInput({ ...validInput(), customiseDigitalDownloads: true }).customiseDigitalDownloads).toBe(true);
-    expect(() => validateListingProductsInput({
-      ...validInput(),
-      customiseDigitalDownloads: undefined as never,
-    })).toThrow('Customise digital downloads must be true or false.');
+  it('defaults gift messages to off and validates explicit changes', () => {
+    expect(validateListingProductsInput({ ...validInput(), giftMessageEnabled: undefined }).giftMessageEnabled).toBe(false);
+    expect(validateListingProductsInput({ ...validInput(), giftMessageEnabled: true }).giftMessageEnabled).toBe(true);
+    expect(() => validateListingProductsInput({ ...validInput(), giftMessageEnabled: 'on' as never }))
+      .toThrow('Gift message enabled must be true or false.');
   });
 
   it('defaults print customisation to on and validates explicit changes', () => {
@@ -134,9 +140,9 @@ describe('listing Etsy product configuration', () => {
       config
     );
 
-    expect(products).toHaveLength(11);
+    expect(products).toHaveLength(ETSY_PRODUCT_SIZES.length + 1);
     expect(products[0]).toMatchObject({ productKey: 'digital', priceKey: 'digital_6' });
-    expect(products.filter(({ frameKey }) => frameKey === 'frame')).toHaveLength(10);
+    expect(products.filter(({ frameKey }) => frameKey === 'frame')).toHaveLength(ETSY_PRODUCT_SIZES.length);
     expect(products.some(({ productKey }) => productKey.startsWith('unframed_'))).toBe(false);
   });
 
@@ -152,7 +158,7 @@ describe('listing Etsy product configuration', () => {
     );
 
     expect(products[0]).toMatchObject({ productKey: 'digital', priceKey: 'digital_complete' });
-    expect(products.filter(({ frameKey }) => frameKey === 'no_frame')).toHaveLength(10);
+    expect(products.filter(({ frameKey }) => frameKey === 'no_frame')).toHaveLength(ETSY_PRODUCT_SIZES.length);
     expect(products.some(({ frameKey }) => frameKey === 'frame')).toBe(false);
   });
 

@@ -9,19 +9,28 @@ process.env.DATABASE_URL = databaseLine.slice('DATABASE_URL='.length).replace(/^
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-const BACKUP_SUFFIX = '_2026_09_09';
+const BACKUP_SUFFIX = '_2026_10_04';
 const SKU_MAX_LENGTH = 32;
 const SIZES = [
+  ['a5', 'A5'],
   ['a4', 'A4'],
   ['a3', 'A3'],
   ['a2', 'A2'],
+  ['a1', 'A1'],
+  ['5x7', '5X7'],
+  ['6x8', '6X8'],
   ['8x10', '8X10'],
   ['11x14', '11X14'],
   ['12x16', '12X16'],
+  ['12x18', '12X18'],
   ['16x20', '16X20'],
+  ['16x24', '16X24'],
   ['18x24', '18X24'],
   ['20x28', '20X28'],
+  ['20x30', '20X30'],
   ['24x36', '24X36'],
+  ['30x40cm', '30X40CM'],
+  ['50x70cm', '50X70CM'],
 ];
 const FRAMES = [
   ['no_frame', false],

@@ -21,7 +21,7 @@ async function main() {
   }
 
   await prisma.$executeRawUnsafe(
-    'ALTER TABLE etsy_listing_product_configs ADD COLUMN customisePrints BOOLEAN NOT NULL DEFAULT TRUE AFTER customiseDigitalDownloads'
+    'ALTER TABLE etsy_listing_product_configs ADD COLUMN customisePrints BOOLEAN NOT NULL DEFAULT TRUE AFTER customBottom'
   );
   console.log('Added customisePrints with a default of true for existing listings.');
 }

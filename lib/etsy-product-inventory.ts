@@ -19,9 +19,11 @@ const SIZE_LABELS: Record<string, string> = {
   a4: 'A4',
   a3: 'A3',
   a2: 'A2',
+  '5x7': '5 x 7',
   '8x10': '8 x 10',
   '11x14': '11 x 14',
   '12x16': '12 x 16',
+  '12x18': '12 x 18',
   '16x20': '16 x 20',
   '18x24': '18 x 24',
   '20x28': '20 x 28',
@@ -153,23 +155,45 @@ export function buildEtsyInventoryPlan(
   };
 }
 
-export function buildPersonalizationQuestions(customTop: boolean, customBottom: boolean) {
-  const base = {
+export const ETSY_PERSONALISATION_FONT_OPTIONS = [
+  'No Customisation',
+  'Nunito',
+  'Fredoka',
+  'Quicksand',
+  'Patrick Hand',
+  'Caveat',
+  'Sacramento',
+] as const;
+
+export function buildPersonalizationQuestions(
+  customisePrints: boolean,
+  customTop: boolean,
+  customBottom: boolean,
+) {
+  if (!customisePrints) return [];
+
+  const textInputBase = {
     question_type: 'text_input' as const,
     required: false,
-    max_allowed_characters: 100,
+    max_allowed_characters: 40,
     // Etsy requires an explicit zero to remove an existing add-on charge.
     add_on_price: 0,
   };
   return [
+    {
+      question_type: 'dropdown' as const,
+      question_text: 'Font Style',
+      required: true,
+      options: ETSY_PERSONALISATION_FONT_OPTIONS.map((label) => ({ label })),
+    },
     customTop ? {
-      ...base,
-      question_text: 'Text for the top of the image',
+      ...textInputBase,
+      question_text: 'Top Text',
       instructions: 'Enter the wording exactly as you would like it to appear at the top.',
     } : null,
     customBottom ? {
-      ...base,
-      question_text: 'Text for the bottom of the image',
+      ...textInputBase,
+      question_text: 'Bottom Text',
       instructions: 'Enter the wording exactly as you would like it to appear at the bottom.',
     } : null,
   ].filter((question): question is NonNullable<typeof question> => question !== null);

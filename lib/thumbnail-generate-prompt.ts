@@ -31,6 +31,9 @@ export type ThumbnailIllustrationPromptInput = {
   sectionName: string;
 };
 
+export const THUMBNAIL_PRINT_MASTER_WIDTH_PX = 7016;
+export const THUMBNAIL_PRINT_MASTER_HEIGHT_PX = 9933;
+
 function sentenceCase(value: string) {
   const trimmed = value.trim();
   return trimmed ? `${trimmed.charAt(0).toLocaleUpperCase()}${trimmed.slice(1)}` : '';
@@ -155,8 +158,8 @@ Do not describe it as an A1 print master or claim that exact dimensions, DPI, or
 }
 
 export function buildThumbnailPrintMasterPrompt() {
-  return `FINAL_WIDTH_PX = 7016
-FINAL_HEIGHT_PX = 9933
+  return `FINAL_WIDTH_PX = ${THUMBNAIL_PRINT_MASTER_WIDTH_PX}
+FINAL_HEIGHT_PX = ${THUMBNAIL_PRINT_MASTER_HEIGHT_PX}
 DPI = 300
 FILE_FORMAT = "PNG"
 BACKGROUND = "TRANSPARENT"

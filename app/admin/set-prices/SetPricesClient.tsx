@@ -13,6 +13,8 @@ import type { PriceUpdateJobView, SavePricesResult, SetPricesData } from '@/lib/
 
 type SetPricesClientProps = { initialData: SetPricesData };
 type PendingNavigation = { type: 'href'; href: string } | { type: 'back' };
+const PRICE_TAB_KEYS = ['unframed', 'framed', 'digital'] as const;
+type PriceTabKey = typeof PRICE_TAB_KEYS[number];
 
 function valuesFromData(data: SetPricesData) {
   return Object.fromEntries(data.sections.flatMap((section) => section.prices.map((price) => [price.key, formatGbp(price.amountPence)]))) as Record<ProductPriceKey, string>;
@@ -42,6 +44,7 @@ export function SetPricesClient({ initialData }: SetPricesClientProps) {
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation | null>(null);
   const [job, setJob] = useState<PriceUpdateJobView | null>(initialData.latestJob);
+  const [activePriceTab, setActivePriceTab] = useState<PriceTabKey>('unframed');
   const guardPushed = useRef(false);
   const bypassPopState = useRef(false);
   const processingJob = useRef(false);
@@ -284,6 +287,46 @@ export function SetPricesClient({ initialData }: SetPricesClientProps) {
   }
 
   const progressPercent = job && job.total > 0 ? Math.round((job.processed / job.total) * 100) : job?.status === 'completed' ? 100 : 0;
+  const activePriceSection = data.sections.find((section) => section.key === activePriceTab);
+  const customisationSection = data.sections.find((section) => section.key === 'customisation');
+
+  function priceRows(section: SetPricesData['sections'][number]) {
+    return <div className="divide-y divide-border">
+      {section.prices.map((price) => <div key={price.key} className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(13rem,17rem)] sm:items-start sm:gap-8">
+        <label htmlFor={`price-${price.key}`} className="pt-2 text-sm font-medium">{price.label}</label>
+        <div className="grid gap-2">
+          <div className="relative">
+            <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground">£</span>
+            <Input
+              id={`price-${price.key}`}
+              inputMode="decimal"
+              value={values[price.key] ?? ''}
+              onChange={(event) => setValues((current) => ({ ...current, [price.key]: event.target.value }))}
+              className="pl-7 tabular-nums"
+              aria-invalid={Boolean(validationErrors[price.key])}
+              aria-describedby={`price-${price.key}-help`}
+              disabled={saving}
+            />
+          </div>
+          <div id={`price-${price.key}-help`} className="min-h-5 text-xs">
+            {validationErrors[price.key] ? (
+              <span className="text-destructive">{validationErrors[price.key]}</span>
+            ) : section.key === 'customisation' ? (
+              <span className="text-muted-foreground">Saved locally as the default customisation fee</span>
+            ) : price.affectedListings > 0 ? (
+              <span className="text-muted-foreground">{price.affectedListings} mapped Etsy listing{price.affectedListings === 1 ? '' : 's'}</span>
+            ) : price.unsupportedMappings > 0 ? (
+              <span className="text-amber-700">No currently supported Etsy listings ({price.unsupportedMappings} mapping{price.unsupportedMappings === 1 ? '' : 's'} skipped)</span>
+            ) : section.key !== 'digital' ? (
+              <span className="text-amber-700">No Etsy listings currently mapped for this option</span>
+            ) : (
+              <span className="text-muted-foreground">No linked Etsy listings currently use this option</span>
+            )}
+          </div>
+        </div>
+      </div>)}
+    </div>;
+  }
 
   return (
     <div className="grid gap-6">
@@ -299,49 +342,45 @@ export function SetPricesClient({ initialData }: SetPricesClientProps) {
 
       {error ? <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm font-medium text-destructive">{error}</p> : null}
 
-      {data.sections.map((section) => (
-        <Card key={section.key}>
+      <div className="grid gap-4">
+        <div role="tablist" aria-label="Price categories" className="flex flex-wrap gap-2 border-b border-border pb-2">
+          {PRICE_TAB_KEYS.map((key) => {
+            const section = data.sections.find((candidate) => candidate.key === key);
+            if (!section) return null;
+            return <Button
+              key={key}
+              id={`price-tab-${key}`}
+              type="button"
+              role="tab"
+              aria-selected={activePriceTab === key}
+              aria-controls={`price-panel-${key}`}
+              variant={activePriceTab === key ? 'default' : 'ghost'}
+              onClick={() => setActivePriceTab(key)}
+            >{section.title}</Button>;
+          })}
+        </div>
+
+        {activePriceSection ? <Card
+          key={activePriceSection.key}
+          id={`price-panel-${activePriceSection.key}`}
+          role="tabpanel"
+          aria-labelledby={`price-tab-${activePriceSection.key}`}
+        >
           <CardHeader>
-            <CardTitle>{section.title}</CardTitle>
-            <CardDescription>{section.description}</CardDescription>
+            <CardTitle>{activePriceSection.title}</CardTitle>
+            <CardDescription>{activePriceSection.description}</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
-            {section.prices.map((price) => (
-              <div key={price.key} className="grid content-start gap-2">
-                <label htmlFor={`price-${price.key}`} className="text-sm font-medium">{price.label}</label>
-                <div className="relative max-w-xs">
-                  <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground">£</span>
-                  <Input
-                    id={`price-${price.key}`}
-                    inputMode="decimal"
-                    value={values[price.key] ?? ''}
-                    onChange={(event) => setValues((current) => ({ ...current, [price.key]: event.target.value }))}
-                    className="pl-7 tabular-nums"
-                    aria-invalid={Boolean(validationErrors[price.key])}
-                    aria-describedby={`price-${price.key}-help`}
-                    disabled={saving}
-                  />
-                </div>
-                <div id={`price-${price.key}-help`} className="min-h-5 text-xs">
-                  {validationErrors[price.key] ? (
-                    <span className="text-destructive">{validationErrors[price.key]}</span>
-                  ) : section.key === 'customisation' ? (
-                    <span className="text-muted-foreground">Saved locally as the default customisation fee</span>
-                  ) : price.affectedListings > 0 ? (
-                    <span className="text-muted-foreground">{price.affectedListings} mapped Etsy listing{price.affectedListings === 1 ? '' : 's'}</span>
-                  ) : price.unsupportedMappings > 0 ? (
-                    <span className="text-amber-700">No currently supported Etsy listings ({price.unsupportedMappings} mapping{price.unsupportedMappings === 1 ? '' : 's'} skipped)</span>
-                  ) : section.key !== 'digital' ? (
-                    <span className="text-amber-700">No Etsy listings currently mapped for this option</span>
-                  ) : (
-                    <span className="text-muted-foreground">No linked Etsy listings currently use this option</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      ))}
+          <CardContent className="max-w-3xl">{priceRows(activePriceSection)}</CardContent>
+        </Card> : null}
+      </div>
+
+      {customisationSection ? <Card>
+        <CardHeader>
+          <CardTitle>{customisationSection.title}</CardTitle>
+          <CardDescription>{customisationSection.description}</CardDescription>
+        </CardHeader>
+        <CardContent className="max-w-3xl">{priceRows(customisationSection)}</CardContent>
+      </Card> : null}
 
       {data.deliveryWarnings.length > 0 ? (
         <Card>

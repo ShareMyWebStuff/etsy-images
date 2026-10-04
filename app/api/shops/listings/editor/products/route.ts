@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getListingEditorData } from '@/lib/listing-editor';
-import { saveListingProducts, type SaveListingProductsInput } from '@/lib/listing-products';
+import { confirmListingProducts, saveListingProducts, type SaveListingProductsInput } from '@/lib/listing-products';
 
 export async function PUT(request: Request) {
   try {
@@ -20,6 +20,25 @@ export async function PUT(request: Request) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Unable to save Etsy products.' },
       { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const body = (await request.json()) as SaveListingProductsInput;
+    if (!body.shopId || !body.sectionId || !body.subSectionId || !body.listingId) {
+      return NextResponse.json({ error: 'Missing listing context.' }, { status: 400 });
+    }
+    await confirmListingProducts(body);
+    const data = await getListingEditorData(body);
+    if (!data) throw new Error('Listing not found after confirming Etsy products.');
+    return NextResponse.json({ data });
+  } catch (error) {
+    console.error('Failed to confirm listing Etsy products:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Unable to confirm Etsy products.' },
+      { status: 500 },
     );
   }
 }

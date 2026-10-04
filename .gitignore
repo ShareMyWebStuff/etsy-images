@@ -6,3 +6,4 @@ prisma/generated
 npm-debug.log*
 .etsy-tokens.json
 .tmp/
+.playwright/

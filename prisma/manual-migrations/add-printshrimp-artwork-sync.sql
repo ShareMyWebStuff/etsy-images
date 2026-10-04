@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS printshrimp_artwork_syncs (
+  id INT NOT NULL AUTO_INCREMENT,
+  listingId INT NOT NULL,
+  ratio VARCHAR(10) NOT NULL,
+  sourceFileId INT NULL,
+  sourceContentHash VARCHAR(64) NULL,
+  lastSuccessfulSourceHash VARCHAR(64) NULL,
+  printShrimpSku VARCHAR(100) NOT NULL,
+  uploadedFileName VARCHAR(140) NOT NULL,
+  externalItemId VARCHAR(191) NULL,
+  status ENUM('PENDING','RUNNING','SYNCED','FAILED') NOT NULL DEFAULT 'PENDING',
+  syncStartedAt DATETIME(3) NULL,
+  lastSuccessfulSyncAt DATETIME(3) NULL,
+  lastError TEXT NULL,
+  createdAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updatedAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE INDEX printshrimp_sync_listing_ratio_key (listingId, ratio),
+  INDEX printshrimp_sync_status_idx (status),
+  INDEX printshrimp_sync_source_file_idx (sourceFileId),
+  PRIMARY KEY (id),
+  CONSTRAINT printshrimp_sync_listing_fkey FOREIGN KEY (listingId) REFERENCES etsy_listings(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT printshrimp_sync_source_file_fkey FOREIGN KEY (sourceFileId) REFERENCES etsy_listing_files(id) ON DELETE SET NULL ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

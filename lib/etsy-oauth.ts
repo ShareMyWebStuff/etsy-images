@@ -11,7 +11,7 @@ export type EtsyTokens = {
   scope?: string;
 };
 
-export const ETSY_OAUTH_SCOPES = ['listings_r', 'listings_w', 'listings_d', 'shops_r', 'shops_w', 'transactions_r'] as const;
+export const ETSY_OAUTH_SCOPES = ['listings_r', 'listings_w', 'listings_d', 'shops_r', 'shops_w', 'transactions_r', 'transactions_w'] as const;
 
 const tokenFilePath = path.join(process.cwd(), '.etsy-tokens.json');
 
@@ -160,11 +160,21 @@ export async function getEtsyOAuthConnectionStatus() {
   const envAccessToken = process.env.ETSY_ACCESS_TOKEN;
   if (envAccessToken) {
     const scopes = parseScopes(process.env.ETSY_ACCESS_TOKEN_SCOPES);
-    return { connected: true, scopes: [...scopes], hasTransactionsScope: scopes.has('transactions_r') };
+    return {
+      connected: true,
+      scopes: [...scopes],
+      hasTransactionsScope: scopes.has('transactions_r'),
+      hasTransactionsWriteScope: scopes.has('transactions_w'),
+    };
   }
   const tokens = await readSavedTokens();
   const scopes = parseScopes(tokens?.scope);
-  return { connected: tokens !== null, scopes: [...scopes], hasTransactionsScope: scopes.has('transactions_r') };
+  return {
+    connected: tokens !== null,
+    scopes: [...scopes],
+    hasTransactionsScope: scopes.has('transactions_r'),
+    hasTransactionsWriteScope: scopes.has('transactions_w'),
+  };
 }
 
 export async function getEtsyAccountingAccessToken() {
@@ -174,6 +184,18 @@ export async function getEtsyAccountingAccessToken() {
   }
   if (!status.hasTransactionsScope) {
     throw new Error('Etsy authorization is missing transactions_r. Reconnect Etsy from the Accounts page to approve sales and payment-account access.');
+  }
+  return getValidEtsyAccessToken();
+}
+
+export async function getEtsyOrderAccessToken(requireWrite = false) {
+  const status = await getEtsyOAuthConnectionStatus();
+  if (!status.connected) throw new Error('Connect Etsy before downloading orders.');
+  if (!status.hasTransactionsScope) {
+    throw new Error('Etsy authorization is missing transactions_r. Reconnect Etsy to download orders.');
+  }
+  if (requireWrite && !status.hasTransactionsWriteScope) {
+    throw new Error('Etsy authorization is missing transactions_w. Reconnect Etsy before processing orders.');
   }
   return getValidEtsyAccessToken();
 }

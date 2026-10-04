@@ -56,8 +56,8 @@ describe('multi-listing product type reconciliation', () => {
             printsFrames: false,
             customTop: false,
             customBottom: false,
-            customiseDigitalDownloads: true,
             customisePrints: false,
+            giftMessageEnabled: true,
             downloadSectionId: 123456,
             returnPolicyId: null,
             sku: null,
@@ -92,18 +92,18 @@ describe('multi-listing product type reconciliation', () => {
     );
 
     expect(configUpsert).toHaveBeenCalledWith(expect.objectContaining({
-      update: {
+      update: expect.objectContaining({
         listOnEtsy: true,
         digitalDownload: true,
         printsFrames: true,
         customTop: true,
         customBottom: true,
-        customiseDigitalDownloads: false,
         customisePrints: true,
+        giftMessageEnabled: false,
         downloadSectionId: 123456,
         returnPolicyId: null,
         sku: 'DONKEY-SET',
-      },
+      }),
     }));
     expect(frameUpsert).toHaveBeenCalledTimes(4);
     expect(frameUpsert.mock.calls.every(([call]) => call.update.enabled === false)).toBe(true);

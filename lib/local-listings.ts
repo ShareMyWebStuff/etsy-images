@@ -24,6 +24,7 @@ import {
 } from '@/lib/etsy-product-inventory';
 import { deleteDropboxBundleFolder, inspectListingZipStorage, isDropboxInstructionPdfFile } from '@/lib/dropbox-bundle';
 import {
+  ETSY_PRODUCT_SIZES,
   ensureListingProductDefaults,
   ensureListingProductDefaultsInTransaction,
 } from '@/lib/listing-products';
@@ -1632,6 +1633,7 @@ type EtsyPersonalizationQuestion = {
   required?: boolean;
   max_allowed_characters?: number;
   add_on_price?: number | { amount?: number; divisor?: number } | null;
+  options?: Array<{ option_id?: number | string; label?: string }>;
 };
 
 function personalizationQuestions(payload: unknown): EtsyPersonalizationQuestion[] {
@@ -1645,10 +1647,11 @@ function personalizationQuestions(payload: unknown): EtsyPersonalizationQuestion
 async function syncListingPersonalization(
   shopId: string,
   etsyListingId: string,
+  customisePrints: boolean,
   customTop: boolean,
   customBottom: boolean
 ) {
-  const desired = buildPersonalizationQuestions(customTop, customBottom);
+  const desired = buildPersonalizationQuestions(customisePrints, customTop, customBottom);
   const currentPayload = await fetchEtsyListingMutation<unknown>(
     `/listings/${encodeURIComponent(etsyListingId)}/personalization`,
     { method: 'GET' }
@@ -1667,12 +1670,19 @@ async function syncListingPersonalization(
       : rawPrice && typeof rawPrice === 'object' && typeof rawPrice.amount === 'number'
         ? Math.round(rawPrice.amount * 100 / (rawPrice.divisor || 100))
         : null;
-    const expectedFeePence = Math.round(question.add_on_price * 100);
+    const expectedFeePence = 'add_on_price' in question && typeof question.add_on_price === 'number'
+      ? Math.round(question.add_on_price * 100)
+      : 0;
+    const savedOptionLabels = saved?.options?.map((option) => option.label?.trim() ?? '') ?? [];
+    const expectedOptionLabels = 'options' in question && Array.isArray(question.options)
+      ? question.options.map((option) => option.label)
+      : [];
     return saved?.question_type === question.question_type
       && saved.required === question.required
-      && saved.max_allowed_characters === question.max_allowed_characters
-      && (saved.instructions ?? '') === question.instructions
-      && (savedFeePence ?? 0) === expectedFeePence;
+      && (saved.max_allowed_characters ?? null) === ('max_allowed_characters' in question ? question.max_allowed_characters : null)
+      && (saved.instructions ?? '') === ('instructions' in question ? question.instructions : '')
+      && (savedFeePence ?? 0) === expectedFeePence
+      && JSON.stringify(savedOptionLabels) === JSON.stringify(expectedOptionLabels);
   });
   if (alreadyCurrent) return;
   const idByText = new Map(current.flatMap((question) => {
@@ -1682,7 +1692,23 @@ async function syncListingPersonalization(
   }));
   const questions = desired.map((question) => {
     const questionId = idByText.get(question.question_text);
-    return { ...question, ...(questionId ? { question_id: questionId } : {}) };
+    const saved = current.find((item) => item.question_text?.trim() === question.question_text);
+    const existingOptionIdByLabel = new Map((saved?.options ?? []).flatMap((option) => {
+      const optionId = positiveEtsyId(option.option_id);
+      const label = option.label?.trim();
+      return optionId && label ? [[label, optionId] as const] : [];
+    }));
+    const options = 'options' in question && Array.isArray(question.options)
+      ? question.options.map((option) => {
+        const optionId = existingOptionIdByLabel.get(option.label);
+        return { ...option, ...(optionId ? { option_id: optionId } : {}) };
+      })
+      : undefined;
+    return {
+      ...question,
+      ...(options ? { options } : {}),
+      ...(questionId ? { question_id: questionId } : {}),
+    };
   });
   await fetchEtsyListingMutation<unknown>(
     `${mutationPath}?supports_multiple_personalization_questions=true`,
@@ -1726,7 +1752,7 @@ export async function syncListingToEtsy(shopId: string, sectionId: string, subSe
     include: includes,
   });
   if (!listing) throw new Error('Listing not found.');
-  if (!listing.productConfig || listing.sizeOptions.length < 10 || listing.frameOptions.length < 4) {
+  if (!listing.productConfig || listing.sizeOptions.length < ETSY_PRODUCT_SIZES.length || listing.frameOptions.length < 4) {
     await ensureListingProductDefaults(listing.id);
     listing = await prisma.etsyListing.findUnique({ where: { id: listing.id }, include: includes });
   }
@@ -1959,12 +1985,12 @@ export async function syncListingToEtsy(shopId: string, sectionId: string, subSe
       );
       await persistDigitalProductMapping(listing.id, remoteId, product, mapping);
     }
-    const allowCustomisation = isPrint ? settings.customisePrints : settings.customiseDigitalDownloads;
     await syncListingPersonalization(
       etsyShopId,
       remoteId,
-      allowCustomisation && settings.customTop,
-      allowCustomisation && settings.customBottom,
+      isPrint && settings.customisePrints,
+      isPrint && settings.customTop,
+      isPrint && settings.customBottom,
     );
     if (!isPrint) {
       const etsyDownloadFiles = listing.dropboxFiles.length > 0

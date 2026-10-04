@@ -192,8 +192,14 @@ export function classifyEtsyLedgerEntry(shopId: string, entry: EtsyLedgerEntryIn
   const currencyCode = entry.currency?.trim().toUpperCase();
   if (!entryId || !entryDate || !currencyCode) return null;
   const text = normalizedLedgerText(entry);
+  const ledgerType = entry.ledger_type?.trim().toLowerCase();
   let mapped: ReturnType<typeof signedAdjustment> = null;
 
+  // Etsy records the onboarding charge and the payment that settles it as two
+  // ledger rows. The charge is the expense; reporting the positive payment as
+  // income would cancel that expense (and reporting it as another expense would
+  // double-count it).
+  if (ledgerType === 'seller_onboarding_fee_payment') return null;
   if (/refund/.test(text)) mapped = signedAdjustment(entry, 'Etsy refunds');
   else if (/tax|vat/.test(text)) mapped = signedAdjustment(entry, 'Etsy taxes');
   else if (/fee|listing charge|offsite ads|etsy ads|advertis|marketing|promoted listing|shipping label|seller service|processing/.test(text)) mapped = signedAdjustment(entry, 'Etsy fees');
