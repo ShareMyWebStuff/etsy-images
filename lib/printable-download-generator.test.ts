@@ -23,6 +23,69 @@ describe('printable download generator', () => {
     expect(metadata).toMatchObject({ format: 'jpeg', width: 200, height: 280, density: 300, hasAlpha: false });
   });
 
+  it('exports exactly the saved region without adding margins or using the rest of the source', async () => {
+    const source = await sharp({
+      create: { width: 300, height: 300, channels: 3, background: '#ff0000' },
+    })
+      .composite([{
+        input: await sharp({ create: { width: 200, height: 300, channels: 3, background: '#008000' } }).png().toBuffer(),
+        left: 50,
+        top: 0,
+      }])
+      .png()
+      .toBuffer();
+
+    const result = await createPrintableDownload(
+      source,
+      '2x3',
+      'crop test',
+      { width: 200, height: 300 },
+      { x: 50 / 300, y: 0, width: 200 / 300, height: 1 },
+    );
+    const { data, info } = await sharp(result.buffer).raw().toBuffer({ resolveWithObject: true });
+    expect(info).toMatchObject({ width: 200, height: 300, channels: 3 });
+    for (const [x, y] of [[0, 0], [199, 0], [0, 299], [199, 299]]) {
+      const offset = ((y * info.width) + x) * info.channels;
+      expect(data[offset]).toBeLessThan(20);
+      expect(data[offset + 1]).toBeGreaterThan(110);
+      expect(data[offset + 2]).toBeLessThan(20);
+    }
+  });
+
+  it('uses landscape output dimensions for a landscape saved crop', async () => {
+    const source = await sharp({ create: { width: 300, height: 200, channels: 3, background: '#008000' } }).png().toBuffer();
+    const result = await createPrintableDownload(
+      source,
+      '2x3',
+      'landscape crop',
+      { width: 300, height: 200 },
+      { x: 0, y: 0, width: 1, height: 1 },
+    );
+    expect(result.orientation).toBe('landscape');
+    expect(await sharp(result.buffer).metadata()).toMatchObject({ width: 300, height: 200 });
+  });
+
+  it('places the complete 4:5 artwork within taller portrait paper at its saved vertical offset', async () => {
+    const source = await sharp({
+      create: { width: 80, height: 100, channels: 3, background: '#008000' },
+    }).png().toBuffer();
+    const result = await createPrintableDownload(
+      source,
+      '2x3',
+      'paper placement',
+      { width: 120, height: 180 },
+      { x: 0, y: 0, width: 1, height: 1 },
+      { x: 0, y: 1 / 6, width: 1, height: 5 / 6 },
+    );
+    const { data, info } = await sharp(result.buffer).raw().toBuffer({ resolveWithObject: true });
+    const top = 10 * info.channels;
+    const middle = ((90 * info.width) + 10) * info.channels;
+    expect([...data.subarray(top, top + 3)]).toEqual([255, 255, 255]);
+    expect(data[middle]).toBeLessThan(20);
+    expect(data[middle + 1]).toBeGreaterThan(110);
+    expect(data[middle + 2]).toBeLessThan(20);
+  });
+
   it('builds a branded PDF printing guide', async () => {
     const guide = await createHowToPrintGuide('green sea turtle', 'portrait');
     expect(guide.originalFileName).toBe('How_To_Print_Guide.pdf');

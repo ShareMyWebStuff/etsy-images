@@ -6,6 +6,7 @@ import {
   buildSingleDigitalInventoryBody,
   resolveEtsyListingMode,
 } from '@/lib/etsy-product-inventory';
+import { ETSY_PRODUCT_SIZES } from '@/lib/listing-products';
 
 describe('Etsy product inventory', () => {
   it('maps digital, physical, and physical-with-download products to the Etsy contract', () => {
@@ -20,8 +21,14 @@ describe('Etsy product inventory', () => {
       key: 'a4:frame', productType: 'framed', sizeKey: 'a4', frameKey: 'frame',
       sku: 'WOODLAND-RHINOCEROSBEETLE', amountPence: 3499,
     }], ['black', 'white', 'oak'], 999, 12345);
-    expect(plan.body.products).toHaveLength(3);
-    expect(plan.body.products.map((product) => product.property_values[1].values[0])).toEqual(['Black', 'White', 'Oak']);
+    expect(plan.body.products).toHaveLength(6);
+    expect(plan.body.products.map((product) => product.property_values[1].values[0])).toEqual([
+      'Black', 'Black', 'White', 'White', 'Oak', 'Oak',
+    ]);
+    expect(plan.body.products.map((product) => product.property_values[2].values[0])).toEqual([
+      'No', 'Yes', 'No', 'Yes', 'No', 'Yes',
+    ]);
+    expect(plan.body.price_on_property).toEqual([513, 514, 516]);
     expect(plan.body.products.every((product) => product.sku.length <= APP_SKU_MAX_LENGTH)).toBe(true);
     expect(plan.body.products.every((product) => product.sku === 'WOODLAND-RHINOCEROSBEETLE')).toBe(true);
     expect(plan.body.products.every((product) => product.offerings[0].price === 34.99)).toBe(true);
@@ -35,7 +42,9 @@ describe('Etsy product inventory', () => {
       key: '20x28:no_frame', productType: 'unframed', sizeKey: '20x28', frameKey: 'no_frame',
       sku: 'PF-DONKEY-20X28-NF', amountPence: 3999,
     }], ['no_frame'], 10);
-    expect(plan.body.products[0].property_values.map((value) => value.values[0])).toEqual(['20 x 28', 'No Frame']);
+    expect(plan.body.products).toHaveLength(2);
+    expect(plan.body.products[0].property_values.map((value) => value.values[0])).toEqual(['20 x 28', 'No Frame', 'No']);
+    expect(plan.body.products[1].property_values.map((value) => value.values[0])).toEqual(['20 x 28', 'No Frame', 'Yes']);
     const both = buildPersonalizationQuestions(true, true, true);
     expect(both).toHaveLength(3);
     expect(both.map((question) => question.question_text)).toEqual([
@@ -77,8 +86,27 @@ describe('Etsy product inventory', () => {
 
     expect(plan.body.products.map((product) => product.property_values[0].values[0])).toEqual([
       '5 x 7',
+      '5 x 7',
+      '12 x 18',
       '12 x 18',
     ]);
+  });
+
+  it('maps every product size offered by the application to an Etsy variation', () => {
+    const products = ETSY_PRODUCT_SIZES.map(({ key }, index) => ({
+      key: `${key}:no_frame`,
+      productType: 'unframed',
+      sizeKey: key,
+      frameKey: 'no_frame',
+      sku: `SKU_${String(index + 1).padStart(6, '0')}`,
+      amountPence: 1299,
+    }));
+
+    const plan = buildEtsyInventoryPlan(products, ['no_frame'], 10);
+
+    expect(plan.body.products.filter((_, index) => index % 2 === 0).map((product) => product.property_values[0].values[0])).toEqual(
+      ETSY_PRODUCT_SIZES.map(({ label }) => label.replaceAll('×', 'x')),
+    );
   });
 
   it('keeps the priced digital product as a concrete option in a physical listing with downloads', () => {
@@ -91,6 +119,7 @@ describe('Etsy product inventory', () => {
       property_values: [
         expect.objectContaining({ values: ['Digital Download'] }),
         expect.objectContaining({ values: ['No Frame'] }),
+        expect.objectContaining({ values: ['No'] }),
       ],
       offerings: [expect.objectContaining({ price: 3.49, readiness_state_id: 12345 })],
     })]);

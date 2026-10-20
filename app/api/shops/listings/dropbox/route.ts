@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import {
   createDropboxInstructionPdf,
+  createGroupedDropboxInstructionPdf,
   createDropboxZips,
   createOrUpdateDropbox,
   DropboxBundleStateError,
@@ -9,7 +10,7 @@ import { getListingEditorData } from '@/lib/listing-editor';
 
 type RequestBody = {
   shopId?: string; sectionId?: string; subSectionId?: string; listingId?: string;
-  action?: 'zip' | 'dropbox' | 'pdf';
+  action?: 'zip' | 'dropbox' | 'pdf' | 'grouped-pdf';
 };
 
 export async function POST(request: Request) {
@@ -23,6 +24,7 @@ export async function POST(request: Request) {
     if (body.action === 'zip') result = await createDropboxZips(context);
     else if (body.action === 'dropbox') result = await createOrUpdateDropbox(context);
     else if (body.action === 'pdf') result = await createDropboxInstructionPdf(context);
+    else if (body.action === 'grouped-pdf') result = await createGroupedDropboxInstructionPdf(context);
     else return NextResponse.json({ error: 'Invalid action.' }, { status: 400 });
     // Keep the legacy top-level result fields for the multi-listing wizard while
     // also returning the refreshed editor payload used by the listing editor.

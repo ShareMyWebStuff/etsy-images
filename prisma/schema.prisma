@@ -25,179 +25,170 @@ model Listing {
   createdAt  DateTime  @default(now())
 }
 
-model MyCategory {
-  id          Int      @id @default(autoincrement())
-  name        String   @unique @db.VarChar(50)
-  description String   @db.VarChar(1000)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
 model EtsyListing {
-  id                        Int                          @id @default(autoincrement())
+  id                            Int                          @id @default(autoincrement())
   // Print listing ID: Prisma keeps the legacy property name for existing callers.
-  etsyId                    String?                      @unique(map: "etsy_listings_etsyId_key") @map("etsyPrintId")
-  etsyDownloadId            String?                      @unique
-  etsyDownloadState         String?
-  etsyDownloadUrl           String?                      @db.Text
-  etsyDownloadRawJson       Json?
-  etsyDownloadShopSectionId Int?
-  etsyDownloadLastSyncedAt  DateTime?
-  shopId                    String
-  userId                    String?
-  title                     String
-  description               String?                      @db.Text
-  digitalTitle              String?                      @db.VarChar(255)
-  digitalDescription        String?                      @db.Text
-  digitalQuantity           Int?
-  listingDescription        String?                      @db.VarChar(1000)
-  listingItem               String?                      @db.VarChar(100)
-  roomTheme                 String?                      @db.VarChar(200)
-  personalisationHeaderText String?                      @db.VarChar(200)
-  personalisationFooterText String?                      @db.VarChar(200)
-  personalisationFontId     String?                      @db.VarChar(64)
-  state                     String?
-  url                       String?                      @db.Text
-  quantity                  Int?
-  priceAmount               Int?
-  priceDivisor              Int?
-  priceCurrencyCode         String?
-  taxonomyId                Int?
-  shopSectionId             Int?
-  whoMade                   String?
-  isSupply                  Boolean?
-  whenMade                  String?
-  shouldAutoRenew           Boolean?
-  isPersonalizable          Boolean?
-  personalizationIsRequired Boolean?
-  language                  String?
-  primaryColour             String?
-  secondaryColour           String?
-  createdTimestamp          Int?
-  updatedTimestamp          Int?
-  originalCreationTimestamp Int?
-  endingTimestamp           Int?
-  rawJson                   Json?
-  subSectionId              Int?
-  sourceSectionId           Int?
-  localDirectoryName        String?
-  thumbnailFileName         String?
-  thumbnailOriginalFileName String?
-  thumbnailUpdatedAt        DateTime?
-  isLocal                   Boolean                      @default(false)
-  downloadedAt              DateTime                     @default(now())
-  updatedAt                 DateTime                     @updatedAt
-  lastLocalChangeAt         DateTime                     @default(now())
-  lastSyncedAt              DateTime?
-  detailsChanged            Boolean                      @default(false)
-  tagsChanged               Boolean                      @default(false)
-  imagesChanged             Boolean                      @default(false)
-  downloadsChanged          Boolean                      @default(false)
-  productsChanged           Boolean                      @default(false)
-  numberOfItems             Int?                         @default(1)
-  includeAllItems           Boolean                      @default(false)
-  etsyProductType           String                       @default("physical") @db.VarChar(16)
-  downloadsRevision         Int                          @default(0)
-  zippedRevision            Int                          @default(0)
-  hasEverZipped             Boolean                      @default(false)
-  dropboxRevision           Int                          @default(0)
-  dropboxSyncedAt           DateTime?
-  tags                      EtsyListingTag[]
-  materials                 EtsyListingMaterial[]
-  images                    EtsyListingImage[]
-  files                     EtsyListingFile[]
-  zippedFiles               EtsyListingZip[]
-  styles                    EtsyListingStyle[]
-  videos                    EtsyListingVideo[]
-  translations              EtsyListingTranslation[]
-  inventoryItems            EtsyListingInventory[]
-  personalizations          EtsyListingPersonalization[]
-  buyerPrices               EtsyListingBuyerPrice[]
-  localProfile              EtsyListingLocalProfile?
-  dropboxFiles              EtsyListingDropboxFile[]
-  dropboxBundle             EtsyListingDropboxBundle?
-  pinterestPins             PinterestPin[]
-  priceMappings             EtsyListingPriceMapping[]
-  priceUpdateItems          EtsyPriceUpdateItem[]
-  productConfig             EtsyListingProductConfig?
-  sizeOptions               EtsyListingSizeOption[]
-  frameOptions              EtsyListingFrameOption[]
-  products                  EtsyListingProduct[]
-  printShrimpArtworkSyncs   PrintShrimpArtworkSync[]
-  orderItems                EtsyOrderItem[]
-  subSection                EtsyShopSubSection?          @relation(fields: [subSectionId], references: [id], onDelete: SetNull)
-  sourceSection             EtsyShopSection?             @relation("ListingSourceSection", fields: [sourceSectionId], references: [id], onDelete: SetNull)
+  etsyId                        String?                      @unique(map: "etsy_listings_etsyId_key") @map("etsyPrintId")
+  etsyDownloadId                String?                      @unique
+  etsyDownloadState             String?
+  etsyDownloadUrl               String?                      @db.Text
+  etsyDownloadRawJson           Json?
+  etsyDownloadShopSectionId     Int?
+  etsyDownloadLastSyncedAt      DateTime?
+  etsyCustomisedId              String?                      @unique
+  etsyCustomisedState           String?
+  etsyCustomisedUrl             String?                      @db.Text
+  etsyCustomisedRawJson         Json?
+  etsyCustomisedShopSectionId   Int?
+  etsyCustomisedLastSyncedAt    DateTime?
+  shopId                        String
+  userId                        String?
+  title                         String
+  description                   String?                      @db.Text
+  digitalTitle                  String?                      @db.VarChar(255)
+  digitalDescription            String?                      @db.Text
+  digitalQuantity               Int?
+  listingDescription            String?                      @db.VarChar(1000)
+  artworkOrientation            String                       @default("portrait") @db.VarChar(16)
+  listingItem                   String?                      @db.VarChar(100)
+  roomTheme                     String?                      @db.VarChar(200)
+  personalisationHeaderText     String?                      @db.VarChar(200)
+  personalisationFooterText     String?                      @db.VarChar(200)
+  personalisationFontId         String?                      @db.VarChar(64)
+  personalisationTextAreas      Json?
+  printCropSettings             Json?
+  state                         String?
+  url                           String?                      @db.Text
+  quantity                      Int?
+  priceAmount                   Int?
+  priceDivisor                  Int?
+  priceCurrencyCode             String?
+  taxonomyId                    Int?
+  shopSectionId                 Int?
+  whoMade                       String?
+  isSupply                      Boolean?
+  whenMade                      String?
+  shouldAutoRenew               Boolean?
+  isPersonalizable              Boolean?
+  personalizationIsRequired     Boolean?
+  language                      String?
+  primaryColour                 String?
+  secondaryColour               String?
+  createdTimestamp              Int?
+  updatedTimestamp              Int?
+  originalCreationTimestamp     Int?
+  endingTimestamp               Int?
+  rawJson                       Json?
+  subSectionId                  Int?
+  sourceSectionId               Int?
+  ourCategoryId                 Int?
+  localDirectoryName            String?
+  thumbnailFileName             String?
+  thumbnailOriginalFileName     String?
+  thumbnailUpdatedAt            DateTime?
+  isLocal                       Boolean                      @default(false)
+  downloadedAt                  DateTime                     @default(now())
+  updatedAt                     DateTime                     @updatedAt
+  lastLocalChangeAt             DateTime                     @default(now())
+  lastSyncedAt                  DateTime?
+  detailsChanged                Boolean                      @default(false)
+  tagsChanged                   Boolean                      @default(false)
+  imagesChanged                 Boolean                      @default(false)
+  downloadsChanged              Boolean                      @default(false)
+  productsChanged               Boolean                      @default(false)
+  numberOfItems                 Int?                         @default(1)
+  includeAllItems               Boolean                      @default(false)
+  etsyProductType               String                       @default("physical") @db.VarChar(16)
+  downloadsRevision             Int                          @default(0)
+  zippedRevision                Int                          @default(0)
+  hasEverZipped                 Boolean                      @default(false)
+  dropboxRevision               Int                          @default(0)
+  dropboxSyncedAt               DateTime?
+  overviewGenerationFingerprint String?                      @db.VarChar(64)
+  tags                          EtsyListingTag[]
+  materials                     EtsyListingMaterial[]
+  images                        EtsyListingImage[]
+  files                         EtsyListingFile[]
+  zippedFiles                   EtsyListingZip[]
+  styles                        EtsyListingStyle[]
+  videos                        EtsyListingVideo[]
+  translations                  EtsyListingTranslation[]
+  inventoryItems                EtsyListingInventory[]
+  personalizations              EtsyListingPersonalization[]
+  buyerPrices                   EtsyListingBuyerPrice[]
+  localProfile                  EtsyListingLocalProfile?
+  dropboxFiles                  EtsyListingDropboxFile[]
+  dropboxBundle                 EtsyListingDropboxBundle?
+  pinterestPins                 PinterestPin[]
+  priceMappings                 EtsyListingPriceMapping[]
+  priceUpdateItems              EtsyPriceUpdateItem[]
+  productConfig                 EtsyListingProductConfig?
+  products                      EtsyListingProduct[]
+  skuAllocation                 EtsySkuAllocation?
+  printShrimpArtworkSyncs       PrintShrimpArtworkSync[]
+  orderItems                    EtsyOrderItem[]
+  groupItems                    EtsyListingGroupItem[]       @relation("GroupListingItems")
+  groupedInto                   EtsyListingGroupItem[]       @relation("GroupSourceListings")
+  subSection                    EtsyShopSubSection?          @relation(fields: [subSectionId], references: [id], onDelete: SetNull)
+  sourceSection                 EtsyShopSection?             @relation("ListingSourceSection", fields: [sourceSectionId], references: [id], onDelete: SetNull)
+  ourCategory                   OurCategory?                 @relation(fields: [ourCategoryId], references: [id], onDelete: SetNull)
 
   @@unique([subSectionId, localDirectoryName])
   @@index([shopId])
   @@index([state])
   @@index([subSectionId])
   @@index([sourceSectionId])
+  @@index([ourCategoryId])
   @@map("etsy_listings")
 }
 
 model EtsyListingProductConfig {
-  id                        Int         @id @default(autoincrement())
-  listingId                 Int         @unique
-  listOnEtsy                Boolean     @default(true)
-  digitalDownload           Boolean     @default(false)
-  printsFrames              Boolean     @default(true)
-  customTop                 Boolean     @default(true)
-  customBottom              Boolean     @default(true)
-  customisePrints           Boolean     @default(true)
-  giftMessageEnabled        Boolean     @default(false)
-  downloadSectionId         Int?
-  returnPolicyId            String?     @db.VarChar(64)
-  sku                       String?     @db.VarChar(32)
-  confirmedAt               DateTime?
-  createdAt                 DateTime    @default(now())
-  updatedAt                 DateTime    @updatedAt
-  listing                   EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  id                 Int         @id @default(autoincrement())
+  listingId          Int         @unique
+  listOnEtsy         Boolean     @default(true)
+  digitalDownload    Boolean     @default(false)
+  printsFrames       Boolean     @default(true)
+  customTop          Boolean     @default(true)
+  customBottom       Boolean     @default(true)
+  customisePrints    Boolean     @default(true)
+  giftMessageEnabled Boolean     @default(false)
+  downloadSectionId  Int?
+  returnPolicyId     String?     @db.VarChar(64)
+  sku                String?     @db.VarChar(32)
+  confirmedAt        DateTime?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  listing            EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
   @@map("etsy_listing_product_configs")
 }
 
+model EtsySkuAllocation {
+  sequenceNumber Int         @id @default(autoincrement())
+  listingId      Int         @unique
+  createdAt      DateTime    @default(now())
+  listing        EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@map("etsy_sku_allocations")
+}
+
 model EtsyDownloadSection {
-  id                Int      @id @default(autoincrement())
-  etsyShopId        BigInt
-  etsyShopSectionId Int
-  title             String   @db.VarChar(191)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                        Int           @id @default(autoincrement())
+  etsyShopId                BigInt
+  etsyShopSectionId         Int
+  title                     String        @db.VarChar(191)
+  useForPrintFrames         Boolean       @default(false)
+  useForCustomisedPrints    Boolean       @default(false)
+  useForDigitalDownloads    Boolean       @default(false)
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
+  printFrameCategories      OurCategory[] @relation("OurCategoryPrintFrameSection")
+  customisedPrintCategories OurCategory[] @relation("OurCategoryCustomisedSection")
+  digitalDownloadCategories OurCategory[] @relation("OurCategoryDigitalDownloadSection")
 
   @@unique([etsyShopId, etsyShopSectionId])
   @@index([etsyShopId])
   @@map("etsy_download_sections")
-}
-
-model EtsyListingSizeOption {
-  id        Int         @id @default(autoincrement())
-  listingId Int
-  sizeKey   String      @db.VarChar(16)
-  enabled   Boolean     @default(true)
-  position  Int         @default(0)
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-  listing   EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
-
-  @@unique([listingId, sizeKey])
-  @@index([listingId, position])
-  @@map("etsy_listing_size_options")
-}
-
-model EtsyListingFrameOption {
-  id        Int         @id @default(autoincrement())
-  listingId Int
-  frameKey  String      @db.VarChar(16)
-  enabled   Boolean     @default(false)
-  position  Int         @default(0)
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-  listing   EtsyListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
-
-  @@unique([listingId, frameKey])
-  @@index([listingId, position])
-  @@map("etsy_listing_frame_options")
 }
 
 model EtsyListingProduct {
@@ -355,9 +346,89 @@ model EtsyShop {
   accountingSyncState     EtsyAccountingSyncState?
   orders                  EtsyOrder[]
   orderSyncState          EtsyOrderSyncState?
+  ourCategories           OurCategory[]
 
   @@index([userId])
   @@map("etsy_shops")
+}
+
+model OurCategory {
+  id                   Int                        @id @default(autoincrement())
+  shopId               Int
+  name                 String                     @db.VarChar(100)
+  templateType         String                     @default("single") @db.VarChar(16)
+  followedTemplateId   Int?
+  itemCount            Int                        @default(1)
+  roomTheme            String                     @db.VarChar(200)
+  printsFrames         Boolean                    @default(true)
+  customisePrints      Boolean                    @default(true)
+  digitalDownload      Boolean                    @default(true)
+  customTop            Boolean                    @default(true)
+  customBottom         Boolean                    @default(true)
+  printFrameSectionId  Int?
+  customisedSectionId  Int?
+  downloadSectionId    Int?
+  sizes                Json
+  frames               Json
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+  shop                 EtsyShop                   @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  followedTemplate     OurCategory?               @relation("OurTemplateFollowing", fields: [followedTemplateId], references: [id], onDelete: Restrict)
+  followingTemplates   OurCategory[]              @relation("OurTemplateFollowing")
+  printFrameSection    EtsyDownloadSection?       @relation("OurCategoryPrintFrameSection", fields: [printFrameSectionId], references: [id], onDelete: SetNull)
+  customisedSection    EtsyDownloadSection?       @relation("OurCategoryCustomisedSection", fields: [customisedSectionId], references: [id], onDelete: SetNull)
+  downloadSection      EtsyDownloadSection?       @relation("OurCategoryDigitalDownloadSection", fields: [downloadSectionId], references: [id], onDelete: SetNull)
+  listings             EtsyListing[]
+  imageTemplates       OurCategoryImageTemplate[]
+  linkedImageTemplates OurCategoryImageTemplate[] @relation("LinkedImageTemplateSourceCategory")
+
+  @@unique([shopId, name])
+  @@index([followedTemplateId])
+  @@index([printFrameSectionId])
+  @@index([customisedSectionId])
+  @@index([downloadSectionId])
+  @@map("our_categories")
+}
+
+model OurCategoryImageTemplate {
+  id                          Int                        @id @default(autoincrement())
+  categoryId                  Int
+  linkedSourceCategoryId      Int?
+  linkedSourceImageTemplateId Int?
+  linkedImageItemNumber       Int?
+  name                        String                     @db.VarChar(100)
+  description                 String                     @db.VarChar(500)
+  imagePath                   String                     @db.VarChar(500)
+  originalFileName            String                     @db.VarChar(255)
+  contentType                 String                     @db.VarChar(100)
+  sizeBytes                   Int
+  imageWidth                  Int?
+  imageHeight                 Int?
+  openingCorners              Json?
+  openingRegions              Json?
+  displayFonts                Boolean                    @default(false)
+  borderEnabled               Boolean                    @default(false)
+  borderSizePercent           Float                      @default(5)
+  topText                     String                     @default("") @db.VarChar(40)
+  bottomText                  String                     @default("") @db.VarChar(40)
+  fontId                      String                     @default("nunito-semibold") @db.VarChar(50)
+  position                    Int                        @default(0)
+  useOnPrints                 Boolean                    @default(true)
+  useOnCustomised             Boolean                    @default(true)
+  useOnDigital                Boolean                    @default(true)
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
+  category                    OurCategory                @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  linkedSourceCategory        OurCategory?               @relation("LinkedImageTemplateSourceCategory", fields: [linkedSourceCategoryId], references: [id], onDelete: Restrict)
+  linkedSourceImageTemplate   OurCategoryImageTemplate?  @relation("LinkedImageTemplateSource", fields: [linkedSourceImageTemplateId], references: [id], onDelete: Restrict)
+  linkedImageTemplates        OurCategoryImageTemplate[] @relation("LinkedImageTemplateSource")
+  listingImages               EtsyListingImage[]
+
+  @@unique([categoryId, name])
+  @@index([categoryId])
+  @@index([linkedSourceCategoryId])
+  @@index([linkedSourceImageTemplateId])
+  @@map("our_category_image_templates")
 }
 
 enum FinancialEntryType {
@@ -618,37 +689,34 @@ model PrintShrimpOrderAttempt {
 }
 
 model EtsyOrderSyncState {
-  id                   Int      @id @default(autoincrement())
-  etsyShopId           BigInt   @unique
+  id                   Int       @id @default(autoincrement())
+  etsyShopId           BigInt    @unique
   lastSuccessfulSyncAt DateTime?
   syncStartedAt        DateTime?
-  lastError            String?  @db.Text
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
-  shop                 EtsyShop @relation(fields: [etsyShopId], references: [etsyShopId], onDelete: Cascade)
+  lastError            String?   @db.Text
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  shop                 EtsyShop  @relation(fields: [etsyShopId], references: [etsyShopId], onDelete: Cascade)
 
   @@map("etsy_order_sync_states")
 }
 
 model EtsyShopSection {
-  id                  Int                  @id @default(autoincrement())
-  shopId              Int?
-  etsyShopId          BigInt?
-  etsyShopSectionId   String?
-  title               String
-  roomTheme           String?              @db.VarChar(200)
-  rank                Int?
-  activeListingCount  Int?
-  rawJson             Json?
-  downloadedAt        DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  numberOfDownloads   Int                  @default(1)
-  includeAllDownloads Boolean              @default(false)
-  sourceSectionId     Int?
-  shop                EtsyShop?            @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  subSections         EtsyShopSubSection[]
-  sourceListings      EtsyListing[]        @relation("ListingSourceSection")
-  pinterestCampaigns  PinterestCampaign[]
+  id                 Int                  @id @default(autoincrement())
+  shopId             Int?
+  etsyShopId         BigInt?
+  etsyShopSectionId  String?
+  title              String
+  rank               Int?
+  activeListingCount Int?
+  rawJson            Json?
+  downloadedAt       DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  sourceSectionId    Int?
+  shop               EtsyShop?            @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  subSections        EtsyShopSubSection[]
+  sourceListings     EtsyListing[]        @relation("ListingSourceSection")
+  pinterestCampaigns PinterestCampaign[]
 
   @@unique([shopId, title])
   @@unique([shopId, etsyShopSectionId])
@@ -794,27 +862,49 @@ model EtsyListingMaterial {
 }
 
 model EtsyListingImage {
-  id                  Int            @id @default(autoincrement())
-  listingId           Int
-  etsyImageId         String?
-  etsyDownloadImageId String?
-  localFileName       String?
-  originalFileName    String?
-  rank                Int?
-  url75x75            String?        @db.Text
-  url170x135          String?        @db.Text
-  url570xN            String?        @db.Text
-  urlFullxFull        String?        @db.Text
-  fullHeight          Int?
-  fullWidth           Int?
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @default(now()) @updatedAt
-  listing             EtsyListing    @relation(fields: [listingId], references: [id], onDelete: Cascade)
-  pinterestPins       PinterestPin[]
+  id                         Int                       @id @default(autoincrement())
+  listingId                  Int
+  ourCategoryImageTemplateId Int?
+  etsyImageId                String?
+  etsyDownloadImageId        String?
+  etsyCustomisedImageId      String?
+  localFileName              String?
+  originalFileName           String?
+  rank                       Int?
+  url75x75                   String?                   @db.Text
+  url170x135                 String?                   @db.Text
+  url570xN                   String?                   @db.Text
+  urlFullxFull               String?                   @db.Text
+  fullHeight                 Int?
+  fullWidth                  Int?
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @default(now()) @updatedAt
+  listing                    EtsyListing               @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  ourCategoryImageTemplate   OurCategoryImageTemplate? @relation(fields: [ourCategoryImageTemplateId], references: [id], onDelete: SetNull)
+  pinterestPins              PinterestPin[]
 
   @@unique([listingId, etsyImageId])
   @@unique([listingId, etsyDownloadImageId])
+  @@unique([listingId, etsyCustomisedImageId])
+  @@unique([listingId, ourCategoryImageTemplateId])
+  @@index([ourCategoryImageTemplateId])
   @@map("etsy_listing_images")
+}
+
+model EtsyListingGroupItem {
+  id              Int         @id @default(autoincrement())
+  groupListingId  Int
+  sourceListingId Int
+  position        Int
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  groupListing    EtsyListing @relation("GroupListingItems", fields: [groupListingId], references: [id], onDelete: Cascade)
+  sourceListing   EtsyListing @relation("GroupSourceListings", fields: [sourceListingId], references: [id], onDelete: Restrict)
+
+  @@unique([groupListingId, sourceListingId])
+  @@unique([groupListingId, position])
+  @@index([sourceListingId])
+  @@map("etsy_listing_group_items")
 }
 
 model EtsyListingFile {

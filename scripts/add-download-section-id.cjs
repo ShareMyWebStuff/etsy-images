@@ -24,7 +24,7 @@ async function main() {
     console.log('Download section column already exists.');
   }
   await prisma.$executeRawUnsafe(
-    'CREATE TABLE IF NOT EXISTS etsy_download_sections (id INT NOT NULL AUTO_INCREMENT, etsyShopId BIGINT NOT NULL, etsyShopSectionId INT NOT NULL, title VARCHAR(191) NOT NULL, createdAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), updatedAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), PRIMARY KEY (id), UNIQUE KEY etsy_download_sections_etsyShopId_etsyShopSectionId_key (etsyShopId, etsyShopSectionId), KEY etsy_download_sections_etsyShopId_idx (etsyShopId))'
+    'CREATE TABLE IF NOT EXISTS etsy_download_sections (id INT NOT NULL AUTO_INCREMENT, etsyShopId BIGINT NOT NULL, etsyShopSectionId INT NOT NULL, title VARCHAR(191) NOT NULL, useForPrintFrames BOOLEAN NOT NULL DEFAULT FALSE, useForCustomisedPrints BOOLEAN NOT NULL DEFAULT FALSE, useForDigitalDownloads BOOLEAN NOT NULL DEFAULT FALSE, createdAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), updatedAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), PRIMARY KEY (id), UNIQUE KEY etsy_download_sections_etsyShopId_etsyShopSectionId_key (etsyShopId, etsyShopSectionId), KEY etsy_download_sections_etsyShopId_idx (etsyShopId))'
   );
   console.log('Download sections table is ready.');
 }

@@ -10,7 +10,7 @@ export async function GET(request: Request) {
       include: {
         images: { orderBy: [{ rank: 'asc' }, { id: 'asc' }] },
         sourceSection: { select: { title: true } },
-        subSection: { include: { shopSection: { select: { title: true, numberOfDownloads: true, includeAllDownloads: true } } } },
+        subSection: { include: { shopSection: { select: { title: true } } } },
       },
     });
     const data = listings
@@ -21,8 +21,7 @@ export async function GET(request: Request) {
         url: listing.url,
         section: listing.subSection?.shopSection.title ?? listing.sourceSection?.title ?? 'Uncategorised',
         subject: listing.sourceSection?.title ?? 'Uncategorised',
-        showSubject: Boolean(listing.subSection?.shopSection.includeAllDownloads)
-          || [3, 6, 12].includes(listing.subSection?.shopSection.numberOfDownloads ?? 1),
+        showSubject: Boolean(listing.includeAllItems) || [3, 6, 12].includes(listing.numberOfItems ?? 1),
         images: listing.images.map((image) => ({
           id: image.id,
           rank: image.rank,

@@ -15,5 +15,17 @@ describe('main navigation', () => {
       label: 'Orders',
       href: '/etsy/orders',
     });
+    expect(NAV_GROUPS.find((group) => group.title === 'Etsy')?.items).toContainEqual({
+      label: 'Etsy Categories',
+      href: '/etsy/categories',
+    });
+    expect(NAV_GROUPS.find((group) => group.title === 'Local')?.items).toContainEqual({
+      label: 'Our Templates',
+      href: '/our-templates',
+    });
+    expect(NAV_GROUPS.find((group) => group.title === 'Local')?.items.at(-1)).toEqual({
+      label: 'Backdrop Images',
+      href: '/backdrop-images',
+    });
   });
 });

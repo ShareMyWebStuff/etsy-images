@@ -117,12 +117,9 @@ export type ShopSectionsPageData = {
     id: string;
     subSectionId: string | null;
     sectionName: string;
-    roomTheme: string;
     noOfActive: number;
     noOfDraft: number;
     noOfListings: number;
-    numberOfDownloads: number | null;
-    includeAllDownloads: boolean;
     hasEtsyShopSection: boolean;
   }>;
 };
@@ -925,15 +922,12 @@ export async function getShopSectionsPageData(shopId: string): Promise<ShopSecti
         },
       ],
     },
-    orderBy: [{ includeAllDownloads: 'asc' }, { numberOfDownloads: 'asc' }, { title: 'asc' }],
+    orderBy: [{ title: 'asc' }],
     select: {
       id: true,
       etsyShopSectionId: true,
       title: true,
-      roomTheme: true,
       activeListingCount: true,
-      numberOfDownloads: true,
-      includeAllDownloads: true,
       subSections: {
         select: { id: true, _count: { select: { listings: true } } },
       },
@@ -988,12 +982,9 @@ export async function getShopSectionsPageData(shopId: string): Promise<ShopSecti
         id: String(section.id),
         subSectionId: section.subSections[0] ? String(section.subSections[0].id) : null,
         sectionName: section.title,
-        roomTheme: section.roomTheme ?? '',
         noOfActive: activeListingCount,
         noOfDraft: draftCount,
         noOfListings: Math.max(listingsCount, activeListingCount + draftCount),
-        numberOfDownloads: section.includeAllDownloads ? null : section.numberOfDownloads,
-        includeAllDownloads: section.includeAllDownloads,
         hasEtsyShopSection: section.etsyShopSectionId !== null,
       };
     }),

@@ -203,8 +203,6 @@ function makeListingRecord() {
     personalizations: [],
     buyerPrices: [],
     productConfig: null,
-    sizeOptions: [],
-    frameOptions: [],
     products: [],
     dropboxFiles: [],
     dropboxBundle: null,

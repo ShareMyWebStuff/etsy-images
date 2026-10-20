@@ -52,6 +52,7 @@ type DropboxInstructionPdfFile = {
 
 type DropboxInstructionPdfListing = {
   title: string;
+  localDirectoryName?: string | null;
   files: DropboxInstructionPdfFile[];
 };
 
@@ -171,6 +172,24 @@ async function loadBundleListing(context: ListingContext) {
     include: {
       dropboxFiles: { orderBy: [{ groupNumber: 'asc' }, { id: 'asc' }] },
       dropboxBundle: true,
+      groupItems: {
+        orderBy: [{ position: 'asc' }, { id: 'asc' }],
+        include: {
+          sourceListing: {
+            select: {
+              id: true,
+              title: true,
+              localDirectoryName: true,
+              downloadsRevision: true,
+              dropboxRevision: true,
+              dropboxSyncedAt: true,
+              subSectionId: true,
+              subSection: { select: { shopSectionId: true } },
+              dropboxBundle: { select: { sharedUrl: true } },
+            },
+          },
+        },
+      },
       files: true,
       zippedFiles: { orderBy: [{ zipNumber: 'asc' }, { id: 'asc' }] },
       subSection: { include: { shopSection: { include: { shop: true } } } },
@@ -423,7 +442,8 @@ async function prepareDropboxInstructionPdf(
     .flatMap((file) => [file.localFileName, file.filename])
     .filter((name): name is string => Boolean(name))
     .map((name) => name.toLocaleLowerCase()));
-  const defaultFileName = 'CosyHousePrints_Download_Instructions.pdf';
+  const listingToken = (listing.localDirectoryName ?? listing.title).replace(/\s+/g, '') || 'Listing';
+  const defaultFileName = `${safeName(listingToken)}_DownloadInstructions.pdf`;
   let fileName = existingFile?.localFileName ?? existingFile?.filename ?? defaultFileName;
   if (normalFileNames.has(fileName.toLocaleLowerCase())) {
     let suffix = 2;
@@ -1113,6 +1133,62 @@ export async function createOrUpdateDropbox(context: ListingContext) {
   }
 }
 
+export type GroupedDropboxSourceItem = {
+  sourceListing: {
+    id: number;
+    title: string;
+    localDirectoryName: string | null;
+    downloadsRevision: number;
+    dropboxRevision: number;
+    dropboxSyncedAt: Date | null;
+    subSectionId: number | null;
+    subSection: { shopSectionId: number } | null;
+    dropboxBundle: { sharedUrl: string | null } | null;
+  };
+};
+
+type DropboxUpdater = (context: ListingContext) => Promise<{ sharedUrl: string | null }>;
+
+export async function ensureGroupedDropboxLinks(
+  shopId: string,
+  groupItems: readonly GroupedDropboxSourceItem[],
+  updateDropbox: DropboxUpdater = createOrUpdateDropbox,
+) {
+  const links: Array<{ name: string; url: string }> = [];
+  for (const item of groupItems) {
+    const source = item.sourceListing;
+    const name = source.localDirectoryName ?? source.title;
+    let url = source.dropboxBundle?.sharedUrl?.trim() ?? '';
+    const isCurrent = Boolean(
+      url
+      && source.dropboxSyncedAt
+      && source.dropboxRevision === source.downloadsRevision,
+    );
+
+    if (!isCurrent) {
+      if (source.subSectionId === null || !source.subSection) {
+        throw new Error(`The source listing ${name} is not assigned to a section and cannot be uploaded to Dropbox.`);
+      }
+      try {
+        const bundle = await updateDropbox({
+          shopId,
+          sectionId: String(source.subSection.shopSectionId),
+          subSectionId: String(source.subSectionId),
+          listingId: String(source.id),
+        });
+        url = bundle.sharedUrl?.trim() ?? '';
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to create Dropbox.';
+        throw new Error(`Unable to prepare Dropbox for ${name}: ${message}`, { cause: error });
+      }
+    }
+
+    if (!url) throw new Error(`Dropbox did not return a shared URL for ${name}.`);
+    links.push({ name, url });
+  }
+  return links;
+}
+
 async function createLinkedPdf(title: string, url: string) {
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -1213,6 +1289,69 @@ async function createLinkedPdf(title: string, url: string) {
       .text('Digital product only   |   No physical item will be shipped   |   Personal use only', 55, 801, { width: pageWidth - 110, align: 'center' });
     document.end();
   });
+}
+
+async function createGroupedLinkedPdf(title: string, links: Array<{ name: string; url: string }>) {
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const document = new PDFDocument({ size: 'A4', margin: 64 });
+    document.on('data', (chunk: Buffer) => chunks.push(chunk));
+    document.on('end', () => resolve(Buffer.concat(chunks)));
+    document.on('error', reject);
+    document.fillColor('#536149').font('Times-Roman').fontSize(28).text('CosyHousePrints', { align: 'center' });
+    document.moveDown(0.5).fontSize(20).text(title, { align: 'center' });
+    document.moveDown().fillColor('#3E3935').font('Helvetica').fontSize(11)
+      .text('Thank you for your purchase. Use each link below to download the artwork files included in this set.');
+    document.moveDown();
+    for (const [index, link] of links.entries()) {
+      if (document.y > 700) document.addPage();
+      document.fillColor('#536149').font('Helvetica-Bold').fontSize(13).text(`${index + 1}. ${link.name}`);
+      document.fillColor('#2563EB').font('Helvetica').fontSize(10).text(link.url, { link: link.url, underline: true });
+      document.moveDown();
+    }
+    document.moveDown().fillColor('#6B645E').fontSize(9)
+      .text('Digital product only | No physical item will be shipped | Personal use only', { align: 'center' });
+    document.end();
+  });
+}
+
+export async function createGroupedDropboxInstructionPdf(context: ListingContext) {
+  const { listing, listingPath } = await loadBundleListing(context);
+  if (listing.groupItems.length === 0) throw new Error('Select and save the grouped listings first.');
+  const expectedItems = listing.includeAllItems ? null : listing.numberOfItems;
+  if (expectedItems !== null && listing.groupItems.length !== expectedItems) {
+    throw new Error(`Select and save all ${expectedItems} grouped listings before creating the instruction PDF.`);
+  }
+  const links = await ensureGroupedDropboxLinks(context.shopId, listing.groupItems);
+  const pdf = await createGroupedLinkedPdf(listing.localDirectoryName ?? listing.title, links);
+  const generatedFiles = listing.files.filter(isDropboxInstructionPdfFile);
+  const existingFile = generatedFiles[0] ?? null;
+  const duplicateIds = generatedFiles.slice(1).map((file) => file.id);
+  const listingToken = (listing.localDirectoryName ?? listing.title).replace(/\s+/g, '') || `Listing${listing.id}`;
+  const fileName = `${safeName(listingToken)}_DownloadInstructions.pdf`;
+  await mkdir(path.join(listingPath, 'downloads'), { recursive: true });
+  await writeFile(path.join(listingPath, 'downloads', fileName), pdf);
+  const fileData = {
+    localFileName: fileName,
+    originalFileName: fileName,
+    filename: fileName,
+    filetype: 'application/pdf',
+    filesize: `${(pdf.length / (1024 * 1024)).toFixed(2)} MB`,
+    sizeBytes: pdf.length,
+    rank: 1,
+    etsyListingFileId: null,
+    rawJson: { kind: 'dropbox_instruction_pdf', groupedDropboxLinks: links },
+  };
+  await prisma.$transaction(async (tx) => {
+    if (duplicateIds.length > 0) await tx.etsyListingFile.deleteMany({ where: { id: { in: duplicateIds } } });
+    if (existingFile) await tx.etsyListingFile.update({ where: { id: existingFile.id }, data: fileData });
+    else await tx.etsyListingFile.create({ data: { listingId: listing.id, ...fileData } });
+    await tx.etsyListing.update({
+      where: { id: listing.id },
+      data: { downloadsChanged: true, downloadsRevision: { increment: 1 }, lastLocalChangeAt: new Date() },
+    });
+  });
+  return { fileName, sizeBytes: pdf.length, links: links.length };
 }
 
 export async function createDropboxInstructionPdf(context: ListingContext) {

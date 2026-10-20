@@ -1,4 +1,4 @@
-export type EtsySyncVariant = 'print' | 'download';
+export type EtsySyncVariant = 'print' | 'customised' | 'download';
 
 export type EtsyTaxonomyProperty = {
   property_id?: number | string;
@@ -116,6 +116,7 @@ export function resolveArtworkOrientation(
 export function derivePhysicalAttributeLabels(input: {
   frameOptions: Array<{ frameKey: string; enabled: boolean }>;
   artwork: Array<{ widthPixels: number | null; heightPixels: number | null }>;
+  orientation?: 'portrait' | 'landscape';
   roomTheme?: string | null;
   sectionTitle?: string | null;
   listingTitle?: string | null;
@@ -136,7 +137,9 @@ export function derivePhysicalAttributeLabels(input: {
   return {
     Framing: [hasFramed ? 'Framed' : null, enabledFrames.has('no_frame') ? 'Unframed' : null]
       .filter((value): value is string => value !== null),
-    Orientation: [resolveArtworkOrientation(input.artwork)],
+    Orientation: [input.orientation === 'landscape'
+      ? 'Landscape'
+      : input.orientation === 'portrait' ? 'Portrait' : resolveArtworkOrientation(input.artwork)],
     'Frame colour': FRAME_COLOURS.filter(({ key }) => enabledFrames.has(key)).map(({ label }) => label),
     'Home style': homeStyle ? [homeStyle] : [],
     Occasion: input.explicitOccasion?.trim() ? [input.explicitOccasion.trim()] : [],
@@ -223,7 +226,7 @@ export async function syncEtsyPhysicalListingAttributes(input: {
   taxonomyId: number;
   labels: PhysicalAttributeLabels;
 }, request: PhysicalAttributeRequest) {
-  if (input.variant !== 'print') return { updates: 0, deletes: 0 };
+  if (input.variant === 'download') return { updates: 0, deletes: 0 };
 
   const [taxonomyPayload, currentPayload] = await Promise.all([
     request(`/seller-taxonomy/nodes/${encodeURIComponent(input.taxonomyId)}/properties`, { method: 'GET' }),

@@ -8,6 +8,7 @@ import {
   type PrintableDownloadOrientation,
   type PrintableDownloadRatio,
 } from '@/lib/printable-download-specs';
+import { printCropPixelBounds, type PrintArtworkPlacement, type PrintCropRegion } from '@/lib/listing-print-crops';
 import { createThumbnailPrintMaster } from '@/lib/thumbnail-print-master';
 
 const JPEG_QUALITY = 95;
@@ -82,41 +83,106 @@ async function createOpaqueFallback(source: Buffer, width: number, height: numbe
     .toBuffer();
 }
 
+async function placeArtworkOnPaper(
+  source: Buffer,
+  width: number,
+  height: number,
+  placement: PrintArtworkPlacement,
+) {
+  const drawWidth = Math.max(1, Math.round(width * placement.width));
+  const drawHeight = Math.max(1, Math.round(height * placement.height));
+  const left = Math.round(width * placement.x);
+  const top = Math.round(height * placement.y);
+  const resized = await sharp(source, { failOn: 'error' })
+    .resize({ width: drawWidth, height: drawHeight, fit: 'fill', kernel: sharp.kernel.lanczos3 })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+  const sourceLeft = Math.max(0, -left);
+  const sourceTop = Math.max(0, -top);
+  const targetLeft = Math.max(0, left);
+  const targetTop = Math.max(0, top);
+  const visibleWidth = Math.min(drawWidth - sourceLeft, width - targetLeft);
+  const visibleHeight = Math.min(drawHeight - sourceTop, height - targetTop);
+  if (visibleWidth < 1 || visibleHeight < 1) throw new Error('The artwork is positioned outside the paper.');
+  const visible = sourceLeft || sourceTop || visibleWidth !== drawWidth || visibleHeight !== drawHeight
+    ? await sharp(resized, { failOn: 'error' }).extract({
+        left: sourceLeft,
+        top: sourceTop,
+        width: visibleWidth,
+        height: visibleHeight,
+      }).toBuffer()
+    : resized;
+  return sharp({ create: { width, height, channels: 3, background: '#FFFFFF' } })
+    .composite([{ input: visible, left: targetLeft, top: targetTop }])
+    .toColourspace('srgb')
+    .jpeg({ quality: JPEG_QUALITY, chromaSubsampling: '4:4:4' })
+    .withMetadata({ density: 300 })
+    .toBuffer();
+}
+
 export async function createPrintableDownload(
   source: Buffer,
   ratio: PrintableDownloadRatio,
   animalName: string,
   dimensionsOverride?: { width: number; height: number },
+  cropRegion?: PrintCropRegion,
+  artworkPlacement?: PrintArtworkPlacement,
 ): Promise<GeneratedPrintableDownload> {
   const normalized = await normalizedSource(source);
-  const orientation: PrintableDownloadOrientation = normalized.info.width > normalized.info.height ? 'landscape' : 'portrait';
+  const orientation: PrintableDownloadOrientation = cropRegion
+    ? cropRegion.width * normalized.info.width > cropRegion.height * normalized.info.height ? 'landscape' : 'portrait'
+    : normalized.info.width > normalized.info.height ? 'landscape' : 'portrait';
   const dimensions = dimensionsOverride ?? printableDownloadDimensions(ratio, orientation);
-  const stats = await sharp(normalized.data).stats();
-  const hasTransparency = stats.channels.length >= 4 && stats.channels[3].min < 255;
   let buffer: Buffer;
 
-  if (hasTransparency) {
-    try {
-      const master = await createThumbnailPrintMaster(normalized.data, {
+  if (artworkPlacement) {
+    buffer = await placeArtworkOnPaper(
+      normalized.data,
+      dimensions.width,
+      dimensions.height,
+      artworkPlacement,
+    );
+  } else if (cropRegion) {
+    const bounds = printCropPixelBounds(cropRegion, normalized.info.width, normalized.info.height);
+    buffer = await sharp(normalized.data, { failOn: 'error' })
+      .extract(bounds)
+      .resize({
         width: dimensions.width,
         height: dimensions.height,
-        density: 300,
-        sideMarginPercent: 7.5,
-        topMarginPercent: 15,
-        bottomMarginPercent: 15,
-      });
-      buffer = await sharp(master.buffer, { failOn: 'error' })
-        .flatten({ background: { r: 255, g: 255, b: 255 } })
-        .toColourspace('srgb')
-        .jpeg({ quality: JPEG_QUALITY, chromaSubsampling: '4:4:4' })
-        .withMetadata({ density: 300 })
-        .toBuffer();
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes('transparent outer padding')) throw error;
+        fit: 'fill',
+        kernel: sharp.kernel.lanczos3,
+      })
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
+      .toColourspace('srgb')
+      .jpeg({ quality: JPEG_QUALITY, chromaSubsampling: '4:4:4' })
+      .withMetadata({ density: 300 })
+      .toBuffer();
+  } else {
+    const stats = await sharp(normalized.data).stats();
+    const hasTransparency = stats.channels.length >= 4 && stats.channels[3].min < 255;
+    if (hasTransparency) {
+      try {
+        const master = await createThumbnailPrintMaster(normalized.data, {
+          width: dimensions.width,
+          height: dimensions.height,
+          density: 300,
+          sideMarginPercent: 7.5,
+          topMarginPercent: 15,
+          bottomMarginPercent: 15,
+        });
+        buffer = await sharp(master.buffer, { failOn: 'error' })
+          .flatten({ background: { r: 255, g: 255, b: 255 } })
+          .toColourspace('srgb')
+          .jpeg({ quality: JPEG_QUALITY, chromaSubsampling: '4:4:4' })
+          .withMetadata({ density: 300 })
+          .toBuffer();
+      } catch (error) {
+        if (!(error instanceof Error) || !error.message.includes('transparent outer padding')) throw error;
+        buffer = await createOpaqueFallback(normalized.data, dimensions.width, dimensions.height);
+      }
+    } else {
       buffer = await createOpaqueFallback(normalized.data, dimensions.width, dimensions.height);
     }
-  } else {
-    buffer = await createOpaqueFallback(normalized.data, dimensions.width, dimensions.height);
   }
 
   const metadata = await sharp(buffer, { failOn: 'error' }).metadata();

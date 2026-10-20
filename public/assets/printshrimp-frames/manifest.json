@@ -1,0 +1,48 @@
+{
+  "officialReferencePage": "https://printshrimp.com/pages/framed-prints",
+  "importDate": "2026-10-18",
+  "notes": "The supplier-published images are complete frame reference photographs, not seamless textures or production overlays. The renderer uses rail-surface crops extracted from those references, repeated within deterministic mitred rail geometry. Bevel highlights and contact shadows are procedural visual approximations and are not supplier-supplied textures.",
+  "finishes": [
+    {
+      "finish": "Black",
+      "originalUrl": "https://printshrimp.com/cdn/shop/files/black-framed.png?v=1776156350&width=1024",
+      "localOriginal": "/assets/printshrimp-frames/originals/black-framed.png",
+      "derivedAssets": [
+        "/assets/printshrimp-frames/derived/black-rail-horizontal.png",
+        "/assets/printshrimp-frames/derived/black-rail-vertical.png"
+      ],
+      "processing": "Cropped a clean surface section from the top rail, resampled it to a reusable 1024 x 96 PNG strip, and rotated that strip for vertical grain direction.",
+      "rendererUsage": "Supplier-reference-derived rail texture with procedural mitre geometry, bevel lines and shadow."
+    },
+    {
+      "finish": "White",
+      "originalUrl": "https://printshrimp.com/cdn/shop/files/white-framed.png?v=1776156351&width=1024",
+      "localOriginal": "/assets/printshrimp-frames/originals/white-framed.png",
+      "derivedAssets": [
+        "/assets/printshrimp-frames/derived/white-rail-horizontal.png",
+        "/assets/printshrimp-frames/derived/white-rail-vertical.png"
+      ],
+      "processing": "Cropped a clean surface section from the top rail, resampled it to a reusable 1024 x 96 PNG strip, and rotated that strip for vertical grain direction.",
+      "rendererUsage": "Supplier-reference-derived rail texture with procedural mitre geometry, bevel lines and shadow."
+    },
+    {
+      "finish": "Oak",
+      "originalUrl": "https://printshrimp.com/cdn/shop/files/ChatGPT_Image_Jul_21_2026_12_24_50_PM.png?v=1784633350&width=1254",
+      "localOriginal": "/assets/printshrimp-frames/originals/oak-framed.png",
+      "derivedAssets": [
+        "/assets/printshrimp-frames/derived/oak-rail-horizontal.png",
+        "/assets/printshrimp-frames/derived/oak-rail-vertical.png"
+      ],
+      "processing": "Cropped a clean wood-grain section from the top rail, resampled it to a reusable 1024 x 96 PNG strip, and rotated that strip so grain follows vertical rails.",
+      "rendererUsage": "Supplier-reference-derived oak grain with procedural mitre geometry, bevel lines and shadow."
+    },
+    {
+      "finish": "Unframed",
+      "originalUrl": null,
+      "localOriginal": null,
+      "derivedAssets": [],
+      "processing": "None.",
+      "rendererUsage": "Application presentation option using white paper and a procedural contact shadow; it is not a PrintShrimp frame product."
+    }
+  ]
+}

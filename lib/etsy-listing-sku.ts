@@ -1,44 +1,30 @@
-export const ETSY_LISTING_SKU_MAX_LENGTH = 32;
+import type { Prisma } from '@prisma/client';
 
-function skuPart(value: string) {
-  return value
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLocaleUpperCase()
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
+export const ETSY_LISTING_SKU_PREFIX = 'SKU_';
+export const ETSY_LISTING_SKU_DIGITS = 6;
+export const ETSY_LISTING_SKU_MAX_NUMBER = (10 ** ETSY_LISTING_SKU_DIGITS) - 1;
+
+export function formatEtsyListingSku(sequenceNumber: number) {
+  if (!Number.isSafeInteger(sequenceNumber) || sequenceNumber < 1 || sequenceNumber > ETSY_LISTING_SKU_MAX_NUMBER) {
+    throw new Error(`The Etsy SKU sequence number must be between 1 and ${ETSY_LISTING_SKU_MAX_NUMBER}.`);
+  }
+  return `${ETSY_LISTING_SKU_PREFIX}${String(sequenceNumber).padStart(ETSY_LISTING_SKU_DIGITS, '0')}`;
 }
 
-function fitSku(prefix: string, suffix = '') {
-  const suffixWithSeparator = suffix ? `_${suffix}` : '';
-  const maximumPrefixLength = ETSY_LISTING_SKU_MAX_LENGTH - suffixWithSeparator.length;
-  const fittedPrefix = prefix
-    .slice(0, Math.max(1, maximumPrefixLength))
-    .replace(/_+$/g, '') || 'LISTING';
-  return `${fittedPrefix}${suffixWithSeparator}`;
+export function isGeneratedEtsyListingSku(value: string) {
+  return /^SKU_\d{6}$/.test(value);
 }
 
-export function createEtsyListingSku(input: {
-  sectionName: string;
-  listingName: string;
-  listingId: number;
-  usedSkus?: Iterable<string>;
-}) {
-  const sectionName = input.sectionName
-    .replace(/\s+wall\s+art(?:\s+listings?)?\s*$/i, '')
-    .replace(/\s+listings?\s*$/i, '');
-  const prefix = [skuPart(sectionName), skuPart(input.listingName)]
-    .filter(Boolean)
-    .join('_') || `LISTING_${input.listingId}`;
-  const usedSkus = new Set(Array.from(input.usedSkus ?? [], (sku) => sku.toLocaleUpperCase()));
-  let candidate = fitSku(prefix);
-  if (!usedSkus.has(candidate.toLocaleUpperCase())) return candidate;
-
-  let attempt = 1;
-  do {
-    const suffix = attempt === 1 ? String(input.listingId) : `${input.listingId}_${attempt}`;
-    candidate = fitSku(prefix, suffix);
-    attempt += 1;
-  } while (usedSkus.has(candidate.toLocaleUpperCase()));
-  return candidate;
+export async function getOrCreateEtsyListingSku(
+  tx: Pick<Prisma.TransactionClient, 'etsySkuAllocation'>,
+  listingId: number,
+) {
+  if (!Number.isSafeInteger(listingId) || listingId < 1) throw new Error('Invalid listing id.');
+  const allocation = await tx.etsySkuAllocation.upsert({
+    where: { listingId },
+    create: { listingId },
+    update: {},
+    select: { sequenceNumber: true },
+  });
+  return formatEtsyListingSku(allocation.sequenceNumber);
 }

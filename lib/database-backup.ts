@@ -4,6 +4,13 @@ import { prisma } from '@/lib/prisma';
 
 const BACKUP_SUFFIX = '_bk';
 
+export function isDatabaseBackupTableName(tableName: string) {
+  const normalized = tableName.toLowerCase();
+  return normalized.endsWith(BACKUP_SUFFIX)
+    || /_20\d{2}_\d{2}_\d{2}$/.test(normalized)
+    || /_backup_\d{8,14}$/.test(normalized);
+}
+
 type TableNameRow = {
   TABLE_NAME: string;
 };
@@ -40,7 +47,7 @@ async function getSourceTableNames(client: Prisma.TransactionClient | typeof pri
 
   return rows
     .map((row) => row.TABLE_NAME)
-    .filter((tableName) => !tableName.toLowerCase().endsWith(BACKUP_SUFFIX));
+    .filter((tableName) => !isDatabaseBackupTableName(tableName));
 }
 
 async function ensureBackupTables(tableNames: string[]) {

@@ -5,9 +5,6 @@ import { createLocalShopSection, createOrLinkEtsyShopSection, deleteLocalShopSec
 type CreateSectionRequest = {
   shopId?: string;
   sectionName?: string;
-  numberOfDownloads?: number | null;
-  includeAllDownloads?: boolean;
-  roomTheme?: string;
 };
 
 type DeleteSectionRequest = {
@@ -71,13 +68,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Enter a section name.' }, { status: 400 });
     }
 
-    const includeAllDownloads = body.includeAllDownloads === true;
-    const numberOfDownloads = includeAllDownloads ? null : Number(body.numberOfDownloads);
-    if (!includeAllDownloads && (!Number.isInteger(numberOfDownloads) || numberOfDownloads! < 1)) {
-      return NextResponse.json({ error: 'Select a valid number of downloads.' }, { status: 400 });
-    }
-
-    await createLocalShopSection(body.shopId, body.sectionName, numberOfDownloads, includeAllDownloads, body.roomTheme ?? '');
+    await createLocalShopSection(body.shopId, body.sectionName);
     const data = await getShopSectionsPageData(body.shopId);
 
     return NextResponse.json({ data });

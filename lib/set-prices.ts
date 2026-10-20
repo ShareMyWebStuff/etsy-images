@@ -107,10 +107,16 @@ type ListingForImpact = Awaited<ReturnType<typeof loadListingsForImpact>>[number
 
 async function loadListingsForImpact() {
   return prisma.etsyListing.findMany({
-    where: { etsyId: { not: null } },
+    where: { OR: [
+      { etsyId: { not: null } },
+      { etsyCustomisedId: { not: null } },
+      { etsyDownloadId: { not: null } },
+    ] },
     select: {
       id: true,
       etsyId: true,
+      etsyCustomisedId: true,
+      etsyDownloadId: true,
       title: true,
       localDirectoryName: true,
       rawJson: true,
@@ -122,11 +128,6 @@ async function loadListingsForImpact() {
       products: {
         select: { productType: true, priceKey: true },
         orderBy: [{ position: 'asc' }, { id: 'asc' }],
-      },
-      subSection: {
-        select: {
-          shopSection: { select: { numberOfDownloads: true, includeAllDownloads: true } },
-        },
       },
       priceMappings: {
         select: {
@@ -517,7 +518,9 @@ export async function processNextPriceUpdateItem(jobId: string) {
         priceMappings: true,
       },
     });
-    if (!listing?.etsyId || !listing.subSection?.shopSection) throw new Error('The Etsy listing mapping is no longer available.');
+    if (!listing || (!listing.etsyId && !listing.etsyCustomisedId && !listing.etsyDownloadId) || !listing.subSection?.shopSection) {
+      throw new Error('The Etsy listing mapping is no longer available.');
+    }
     const keys = jsonPriceKeys(item.priceKeys);
     const changedPrices = parseChangedPrices(job.changedPrices);
     const digitalProductKey = listing.products.find((product) => product.productType === 'digital')?.priceKey;
@@ -531,7 +534,8 @@ export async function processNextPriceUpdateItem(jobId: string) {
       const amountPence = changedPrices.get(digitalKey);
       if (!amountPence) throw new Error('The saved digital price is missing from this update job.');
       if (listing.etsyProductType === 'digital') {
-        await updateEtsyListingPrice(listing.shopId, listing.etsyId, amountPence);
+        if (!listing.etsyDownloadId) throw new Error('The Etsy digital listing mapping is no longer available.');
+        await updateEtsyListingPrice(listing.shopId, listing.etsyDownloadId, amountPence);
         await prisma.etsyListing.update({
           where: { id: listing.id },
           data: { priceAmount: amountPence, priceDivisor: 100, priceCurrencyCode: 'GBP', lastSyncedAt: new Date() },
@@ -541,7 +545,8 @@ export async function processNextPriceUpdateItem(jobId: string) {
         if (mappings.length === 0 || mappings.some((mapping) => !mapping.etsyProductId || !mapping.etsyOfferingId)) {
           throw new Error('The Etsy product and offering IDs for Digital Download are not mapped.');
         }
-        await updateEtsyListingVariationPrices(listing.etsyId, mappings.map((mapping) => ({
+        if (!listing.etsyDownloadId) throw new Error('The Etsy digital listing mapping is no longer available.');
+        await updateEtsyListingVariationPrices(listing.etsyDownloadId, mappings.map((mapping) => ({
           etsyProductId: mapping.etsyProductId!,
           etsyOfferingId: mapping.etsyOfferingId!,
           amountPence,
@@ -554,7 +559,7 @@ export async function processNextPriceUpdateItem(jobId: string) {
     if (physicalKeys.length > 0) {
       const mappings = listing.priceMappings.filter((mapping) => physicalKeys.includes(mapping.productKey as ProductPriceKey));
       if (mappings.some((mapping) => !mapping.isSupported)) throw new Error('A configured physical size is not supported by its fulfilment provider.');
-      const changes = mappings.flatMap((mapping) => {
+      const changesFor = (targetMappings: typeof mappings) => targetMappings.flatMap((mapping) => {
         const amountPence = changedPrices.get(mapping.productKey as ProductPriceKey);
         return mapping.etsyProductId && mapping.etsyOfferingId && amountPence
           ? [{ etsyProductId: mapping.etsyProductId, etsyOfferingId: mapping.etsyOfferingId, amountPence }]
@@ -564,8 +569,23 @@ export async function processNextPriceUpdateItem(jobId: string) {
         mapping.productKey === key && mapping.etsyProductId && mapping.etsyOfferingId
       ));
       if (missingKey) throw new Error(`The Etsy product/offerings for ${PRICE_OPTION_BY_KEY.get(missingKey)!.label} are not mapped.`);
-      await updateEtsyListingVariationPrices(listing.etsyId, changes);
-      await prisma.etsyListing.update({ where: { id: listing.id }, data: { lastSyncedAt: new Date() } });
+      const printMappings = mappings.filter((mapping) => mapping.fulfilmentProvider !== 'Etsy inventory:customised');
+      const customisedMappings = mappings.filter((mapping) => mapping.fulfilmentProvider === 'Etsy inventory:customised');
+      if (printMappings.length > 0) {
+        if (!listing.etsyId) throw new Error('The Etsy print listing mapping is no longer available.');
+        await updateEtsyListingVariationPrices(listing.etsyId, changesFor(printMappings));
+      }
+      if (customisedMappings.length > 0) {
+        if (!listing.etsyCustomisedId) throw new Error('The Etsy customised listing mapping is no longer available.');
+        await updateEtsyListingVariationPrices(listing.etsyCustomisedId, changesFor(customisedMappings));
+      }
+      await prisma.etsyListing.update({
+        where: { id: listing.id },
+        data: {
+          ...(printMappings.length > 0 ? { lastSyncedAt: new Date() } : {}),
+          ...(customisedMappings.length > 0 ? { etsyCustomisedLastSyncedAt: new Date() } : {}),
+        },
+      });
     }
 
     await prisma.etsyPriceUpdateItem.update({ where: { id: item.id }, data: { status: 'updated', message: null } });

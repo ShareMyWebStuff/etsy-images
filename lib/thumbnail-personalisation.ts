@@ -4,6 +4,7 @@ import {
   THUMBNAIL_PRINT_MASTER_HEIGHT_PX,
   THUMBNAIL_PRINT_MASTER_WIDTH_PX,
 } from '@/lib/thumbnail-generate-prompt';
+import type { PersonalisationTextArea } from '@/lib/personalisation-text-areas';
 
 export type LocalPersonalisationSpec = {
   headerText: string;
@@ -21,6 +22,8 @@ export type PersonalisationRenderOptions = {
   requireSourceAlpha?: boolean;
   fontFamily?: string;
   fontWeight?: number;
+  headerTextArea?: PersonalisationTextArea;
+  footerTextArea?: PersonalisationTextArea;
 };
 
 export type PersonalisationRenderResult = {
@@ -33,6 +36,8 @@ export type PersonalisationRenderResult = {
   headerText: string;
   footerText: string;
 };
+
+export const PERSONALISATION_HORIZONTAL_EDGE_GAP_PERCENT = 5;
 
 type Bounds = { minX: number; minY: number; maxX: number; maxY: number };
 type CurvedLine = { paths: string; bounds: Bounds };
@@ -121,10 +126,8 @@ function boundsHeight(bounds: Bounds) {
 }
 
 function chooseSharedFontSize(
-  lines: Array<{ run: FontkitRun; direction: 'up' | 'down' }>,
+  lines: Array<{ run: FontkitRun; direction: 'up' | 'down'; maxWidth: number; maxHeight: number }>,
   font: FontkitFont,
-  maxWidth: number,
-  maxHeight: number,
   maximumFontSize: number,
   curveRisePercent: number,
 ) {
@@ -133,7 +136,7 @@ function chooseSharedFontSize(
   let selected = 0;
   while (low <= high) {
     const candidate = Math.floor((low + high) / 2);
-    const fits = lines.every(({ run, direction }) => {
+    const fits = lines.every(({ run, direction, maxWidth, maxHeight }) => {
       const line = curvedLine(run, font, candidate, direction, curveRisePercent);
       return boundsWidth(line.bounds) <= maxWidth && boundsHeight(line.bounds) <= maxHeight;
     });
@@ -259,40 +262,70 @@ export async function createPersonalisedPrintMaster(
   const headerBottom = Math.round(height * 0.15);
   const footerTop = Math.round(height * 0.85);
   const footerBottom = height - Math.round(height * 0.05);
+  const horizontalGap = width * (PERSONALISATION_HORIZONTAL_EDGE_GAP_PERCENT / 100);
+  const safeLeft = horizontalGap;
+  const safeRight = width - horizontalGap;
+  const safeHorizontalBounds = (requestedLeft: number, requestedRight: number) => {
+    const requestedWidth = Math.max(1, requestedRight - requestedLeft);
+    const areaWidth = Math.min(requestedWidth, safeRight - safeLeft);
+    const left = Math.max(safeLeft, Math.min(safeRight - areaWidth, requestedLeft));
+    return { left, right: left + areaWidth };
+  };
+  const pixelArea = (area: PersonalisationTextArea | undefined, fallbackTop: number, fallbackBottom: number) => {
+    const requestedLeft = area ? area.x * width : 0;
+    const requestedRight = area ? (area.x + area.width) * width : width;
+    const horizontal = safeHorizontalBounds(requestedLeft, requestedRight);
+    return {
+      ...horizontal,
+      top: area ? area.y * height : fallbackTop,
+      bottom: area ? (area.y + area.height) * height : fallbackBottom,
+      custom: Boolean(area),
+    };
+  };
+  const headerArea = pixelArea(suppliedOptions.headerTextArea, headerTop, headerBottom);
+  const footerArea = pixelArea(suppliedOptions.footerTextArea, footerTop, footerBottom);
+  const measuredLines = activeLines.map((line) => {
+    const area = line.direction === 'up' ? headerArea : footerArea;
+    return {
+      ...line,
+      area,
+      maxWidth: area.custom ? area.right - area.left : width * (targetTextWidthPercent / 100),
+      maxHeight: area.bottom - area.top,
+    };
+  });
   let fontSize = chooseSharedFontSize(
-    activeLines,
+    measuredLines,
     font,
-    Math.floor(width * (targetTextWidthPercent / 100)),
-    Math.min(headerBottom - headerTop, footerBottom - footerTop),
     Math.floor(width * (maxFontSizePercent / 100)),
     curveRisePercent,
   );
   const colour = await artworkTextColour(source);
   const layoutTolerance = 0.5;
-  const positionLine = (line: typeof activeLines[number], candidateFontSize: number) => {
+  const positionLine = (line: typeof measuredLines[number], candidateFontSize: number) => {
     const geometry = curvedLine(line.run, font, candidateFontSize, line.direction, curveRisePercent);
-    const translateX = (width / 2) - ((geometry.bounds.minX + geometry.bounds.maxX) / 2);
-    const translateY = line.direction === 'up'
-      ? headerTop - geometry.bounds.minY
-      : footerBottom - geometry.bounds.maxY;
+    const translateX = ((line.area.left + line.area.right) / 2) - ((geometry.bounds.minX + geometry.bounds.maxX) / 2);
+    const translateY = line.area.custom
+      ? ((line.area.top + line.area.bottom) / 2) - ((geometry.bounds.minY + geometry.bounds.maxY) / 2)
+      : line.direction === 'up'
+        ? line.area.top - geometry.bounds.minY
+        : line.area.bottom - geometry.bounds.maxY;
     const positionedBounds = {
       minX: geometry.bounds.minX + translateX,
       maxX: geometry.bounds.maxX + translateX,
       minY: geometry.bounds.minY + translateY,
       maxY: geometry.bounds.maxY + translateY,
     };
-    const fits = positionedBounds.minX >= -layoutTolerance
-      && positionedBounds.maxX <= width + layoutTolerance
-      && (line.direction === 'up'
-        ? positionedBounds.minY >= headerTop - layoutTolerance && positionedBounds.maxY <= headerBottom + layoutTolerance
-        : positionedBounds.minY >= footerTop - layoutTolerance && positionedBounds.maxY <= footerBottom + layoutTolerance);
+    const fits = positionedBounds.minX >= line.area.left - layoutTolerance
+      && positionedBounds.maxX <= line.area.right + layoutTolerance
+      && positionedBounds.minY >= line.area.top - layoutTolerance
+      && positionedBounds.maxY <= line.area.bottom + layoutTolerance;
     return { geometry, translateX, translateY, fits };
   };
 
-  let positionedLines = activeLines.map((line) => positionLine(line, fontSize));
+  let positionedLines = measuredLines.map((line) => positionLine(line, fontSize));
   while (fontSize > 1 && positionedLines.some((line) => !line.fits)) {
     fontSize -= 1;
-    positionedLines = activeLines.map((line) => positionLine(line, fontSize));
+    positionedLines = measuredLines.map((line) => positionLine(line, fontSize));
   }
   if (positionedLines.some((line) => !line.fits)) {
     throw new Error('The personalisation text cannot fit inside its reserved areas, even at the minimum font size.');

@@ -1,15 +1,19 @@
 import { NextResponse } from 'next/server';
-import { checkEtsySectionListingStatuses } from '@/lib/local-listings';
+import { checkEtsyListingStatusesByIds, checkEtsySectionListingStatuses } from '@/lib/local-listings';
 import { getSyncToEtsyData } from '@/lib/sync-to-etsy';
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { sectionId?: string };
-    if (!body.sectionId) {
+    const body = (await request.json()) as { sectionId?: string; listingIds?: string[] };
+    if (!body.sectionId && (!Array.isArray(body.listingIds) || body.listingIds.length === 0)) {
       return NextResponse.json({ error: 'Choose a section to check.' }, { status: 400 });
     }
 
-    await checkEtsySectionListingStatuses(body.sectionId);
+    if (Array.isArray(body.listingIds) && body.listingIds.length > 0) {
+      await checkEtsyListingStatusesByIds(body.listingIds);
+    } else {
+      await checkEtsySectionListingStatuses(body.sectionId!);
+    }
     return NextResponse.json({ data: await getSyncToEtsyData() });
   } catch (error) {
     console.error('Failed to check Etsy listing statuses:', error);

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createListingZipFiles, deleteAllListingDownloads, deleteListingAsset, getListingAssetFile, reduceListingDownload, reduceListingDownloadQuality, uploadListingAsset, type UploadKind } from '@/lib/listing-editor';
+import type { PrintableDownloadRole } from '@/lib/printable-download-specs';
 
 type DeleteAssetRequest = {
   shopId?: string;
@@ -72,7 +73,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Missing or invalid asset context.' }, { status: 400 });
     }
 
-    const asset = await getListingAssetFile(context, kind, assetId);
+    const asset = await getListingAssetFile(context, kind, assetId, searchParams.get('preview') === '1');
     return new Response(new Uint8Array(asset.contents), {
       headers: { 'Content-Type': asset.contentType, 'Cache-Control': 'private, max-age=60' },
     });
@@ -109,6 +110,12 @@ export async function POST(request: Request) {
     const formData = await request.formData();
     const kind = getRequiredFormValue(formData, 'kind') as UploadKind;
     const file = formData.get('file');
+    const downloadRoleValue = formData.get('downloadRole');
+    const downloadRole = typeof downloadRoleValue === 'string' && downloadRoleValue
+      ? downloadRoleValue as PrintableDownloadRole
+      : undefined;
+    const rotationValue = formData.get('thumbnailRotation');
+    const thumbnailRotation = typeof rotationValue === 'string' ? Number(rotationValue) : 0;
 
     if (!['thumbnail', 'image', 'file', 'video'].includes(kind)) {
       return NextResponse.json({ error: 'Choose a valid asset type.' }, { status: 400 });
@@ -126,7 +133,9 @@ export async function POST(request: Request) {
         listingId: getRequiredFormValue(formData, 'listingId'),
       },
       kind,
-      file
+      file,
+      downloadRole,
+      thumbnailRotation,
     );
 
     return NextResponse.json({ data });

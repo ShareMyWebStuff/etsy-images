@@ -2,7 +2,7 @@ export const PRICE_SECTIONS = [
   {
     key: 'digital',
     title: 'Digital Downloads',
-    description: 'Base prices for downloadable Etsy listings.',
+    description: 'UK buyer prices including VAT. Etsy receives the VAT-exclusive amount.',
     options: [
       { key: 'digital_1', label: '1 Image Download', defaultAmountPence: 349 },
       { key: 'digital_3', label: '3 Downloads', defaultAmountPence: 499 },

@@ -1,11 +1,11 @@
 'use client';
 
-import { ChangeEvent, FormEvent, MouseEvent, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, MouseEvent, useRef, useState } from 'react';
 import Link from 'next/link';
 import { closestCenter, DndContext, DragEndEvent, DragOverlay, DragStartEvent, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, rectSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { AlertTriangle, CheckCircle2, Download, Eye, FileText, ImageIcon, LogIn, PackageCheck, Plus, RefreshCw, Sparkles, Trash2, Upload, X, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Download, Eye, FileText, GripVertical, ImageIcon, PackageCheck, Plus, RefreshCw, RotateCcw, RotateCw, Sparkles, Trash2, Upload, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -16,6 +16,9 @@ import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
 import { getNextPrintSize } from '@/lib/print-sizes';
 import { ETSY_MAX_DOWNLOAD_FILES, ETSY_MAX_FILE_SIZE_BYTES } from '@/lib/etsy-download-limits';
 import { LISTING_EDITOR_MAX_IMAGES, LISTING_IMAGE_GUIDE } from '@/lib/listing-image-limits';
+import { listingPrintCropDraftForSave, type ListingPrintCropDraft } from '@/lib/listing-print-crops';
+import { analyseListingThumbnailDimensions, type ListingThumbnailRatio } from '@/lib/listing-thumbnail-ratio';
+import { smallestPaperSizePerAspectRatio } from '@/lib/listing-paper-size-groups';
 import { buildAspectRatiosImagePrompt, buildBedroomDoorImagePrompt, buildBedroomImagePrompt, buildBesideBedImagePrompt, buildCustomisedPlayroomImagePrompt, buildCustomisedShelveImagePrompt, buildDigitalDownloadIncludedImagePrompt, buildFramesImagePrompt, buildHowToPrintIncludedImagePrompt, buildListingImagePrompt, buildNoFrameIncludedImagePrompt, buildPerfectGiftImagePrompt, buildPersonalUseIncludedImagePrompt, buildPlayroomImagePrompt, buildSizesImagePrompt, buildThreeFramesImagePrompt } from '@/lib/listing-prompts';
 import { buildDigitalDownloadGeneratePrompt } from '@/lib/digital-download-generate-prompt';
 import { buildDigitalDownloadGenerateSixPrompt } from '@/lib/digital-download-generate-six-prompt';
@@ -28,66 +31,45 @@ import { buildThumbnailGeneratePrompt, buildThumbnailIllustrationPrompt, buildTh
 import { loadBundledPersonalisationFont, prepareClipboardImage, type PreparedClipboardImage } from '@/lib/browser-personalisation';
 import { buildCameronsImagePrompt, buildGuysImagePrompt, buildIslasImagePrompt, buildVickiesImagePrompt, PERSONALISATION_SOURCE_HEIGHT_PX, PERSONALISATION_SOURCE_WIDTH_PX, prepareImagePersonalisationPrompt, type PersonalisationPromptMode } from '@/lib/image-personalisation-prompt';
 import { DEFAULT_PERSONALISATION_FONT_ID, getPersonalisationFont, PERSONALISATION_FONTS } from '@/lib/personalisation-fonts';
-import { getPrintableDownloadStatus, PRINTABLE_DOWNLOAD_SPECS, type PrintableDownloadRatio } from '@/lib/printable-download-specs';
-import {
-  buildListingDetailActionPrompt,
-  isListingDetailImageStale,
-  isCustomisedListingDetailImageKey,
-  LISTING_DETAIL_IMAGE_ROWS,
-  type ListingDetailImageKey,
-} from '@/lib/listing-detail-workflow';
+import { getPrintableDownloadRole, getPrintableDownloadStatus, PRINTABLE_DOWNLOAD_SPECS, type PrintableDownloadRatio, type PrintableDownloadRole } from '@/lib/printable-download-specs';
+import type { MockupRatio } from '@/lib/listing-mockup-tester';
+import { ListingPersonalisationPreviewDialog } from './ListingPersonalisationPreviewDialog';
+import { ListingMockupTesterDialog, type ListingMockupArtworkOption } from './ListingMockupTesterDialog';
+import { ListingPrintCropDialog } from './ListingPrintCropDialog';
+import { ListingTextAreasDialog } from './ListingTextAreasDialog';
 
 type ListingEditorClientProps = {
   initialData: ListingEditorData | null;
   showAdminEditSection?: boolean;
-  initialTab?: 'start' | 'thumbnail' | 'etsy-products' | 'images' | 'details' | 'tags' | 'downloads' | 'dropbox' | 'todo';
+  initialTab?: 'overview' | 'images' | 'details' | 'tags' | 'downloads' | 'dropbox' | 'todo';
 };
 
 type WorkflowTab = NonNullable<ListingEditorClientProps['initialTab']>;
-
-type EtsyProductsForm = {
-  listOnEtsy: boolean;
-  digitalDownload: boolean;
-  printsFrames: boolean;
-  customTop: boolean;
-  customBottom: boolean;
-  customisePrints: boolean;
-  giftMessageEnabled: boolean;
-  downloadSectionId: number | null;
-  returnPolicyId: string;
-  sizes: Record<string, boolean>;
-  frames: Record<string, boolean>;
-};
-
-type EtsyReturnPolicy = {
-  id: string;
-  label: string;
-  acceptsReturns: boolean;
-  acceptsExchanges: boolean;
-};
-
-type EtsyDownloadSection = { id: number; title: string };
 
 type EditorResponse = {
   data?: ListingEditorData | null;
   error?: string;
 };
 
-type ThumbnailAutomationJob = {
-  id: string;
-  listingId: string;
-  listingName: string;
-  workflow?: 'thumbnail' | 'listing_image' | 'listing_details' | 'listing_detail_step' | 'listing_text';
-  status: 'opening_browser' | 'waiting_for_login' | 'submitting_prompt' | 'generating' | 'downloading' | 'completed' | 'failed';
+type OverviewGenerationStageKey = 'images' | 'details' | 'downloads' | 'dropbox';
+type OverviewGenerationStageStatus = 'pending' | 'running' | 'complete' | 'failed';
+type OverviewGenerationStage = {
+  key: OverviewGenerationStageKey;
+  label: string;
+  status: OverviewGenerationStageStatus;
   message: string;
-  downloadFileName?: string;
-  downloadPath?: string;
-  detailKey?: string;
-  detailStepIndex?: number;
-  detailStepCount?: number;
-  createdAt: string;
-  updatedAt: string;
 };
+
+const OVERVIEW_GENERATION_STAGES: Array<Pick<OverviewGenerationStage, 'key' | 'label'>> = [
+  { key: 'images', label: 'Create Images' },
+  { key: 'details', label: 'Create Details and Tags' },
+  { key: 'downloads', label: 'Create Digital Downloads' },
+  { key: 'dropbox', label: 'Dropbox' },
+];
+
+function initialOverviewGenerationStages(): OverviewGenerationStage[] {
+  return OVERVIEW_GENERATION_STAGES.map((stage) => ({ ...stage, status: 'pending', message: 'Waiting' }));
+}
 
 type SortableListingImageProps = {
   image: Pick<ListingEditorData['images'][number], 'id' | 'fileName' | 'originalFileName'>;
@@ -128,6 +110,32 @@ function SortableListingImage({ image, index, disabled, imageUrl, onDelete, onPr
       >
         <Trash2 className="h-4 w-4" aria-hidden="true" />
       </Button>
+    </div>
+  );
+}
+
+function SortableGroupedListing({ id, name, position, imageUrl, disabled }: {
+  id: string;
+  name: string;
+  position: number;
+  imageUrl: string | null;
+  disabled: boolean;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`flex items-center gap-3 rounded-md border bg-card p-3 ${isDragging ? 'opacity-40' : ''} ${disabled ? '' : 'cursor-grab active:cursor-grabbing'}`}
+      {...attributes}
+      {...listeners}
+    >
+      <GripVertical className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">{position}</span>
+      {imageUrl ? <img src={imageUrl} alt="" className="h-16 w-16 shrink-0 rounded border object-cover" /> : (
+        <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded border bg-muted text-xs text-muted-foreground">No image</span>
+      )}
+      <span className="min-w-0 font-medium">{name}</span>
     </div>
   );
 }
@@ -206,22 +214,6 @@ function haveSameTags(first: string[], second: string[]) {
   return JSON.stringify(normalizeTags(first)) === JSON.stringify(normalizeTags(second));
 }
 
-function createEtsyProductsForm(data: ListingEditorData | null | undefined): EtsyProductsForm {
-  return {
-    listOnEtsy: data?.etsyProducts.config.listOnEtsy ?? true,
-    digitalDownload: data?.etsyProducts.config.digitalDownload ?? false,
-    printsFrames: data?.etsyProducts.config.printsFrames ?? true,
-    customTop: data?.etsyProducts.config.customTop ?? true,
-    customBottom: data?.etsyProducts.config.customBottom ?? true,
-    customisePrints: data?.etsyProducts.config.customisePrints ?? true,
-    giftMessageEnabled: data?.etsyProducts.config.giftMessageEnabled ?? false,
-    downloadSectionId: data?.etsyProducts.config.downloadSectionId ?? null,
-    returnPolicyId: data?.etsyProducts.config.returnPolicyId ?? '',
-    sizes: Object.fromEntries(data?.etsyProducts.sizes.map((size) => [size.key, size.enabled]) ?? []),
-    frames: Object.fromEntries(data?.etsyProducts.frames.map((frame) => [frame.key, frame.enabled]) ?? []),
-  };
-}
-
 function formatProductPrice(amountPence: number, currencyCode: string) {
   return new Intl.NumberFormat('en-GB', {
     style: 'currency',
@@ -229,16 +221,36 @@ function formatProductPrice(amountPence: number, currencyCode: string) {
   }).format(amountPence / 100);
 }
 
-export function ListingEditorClient({ initialData, showAdminEditSection = false, initialTab = 'start' }: ListingEditorClientProps) {
+function testerRatioFromDownloadRole(role: PrintableDownloadRole | null): MockupRatio | undefined {
+  if (!role || role === 'guide') return undefined;
+  if (role === 'iso-a1') return 'iso-a';
+  return role;
+}
+
+export function ListingEditorClient({ initialData, showAdminEditSection = false, initialTab = 'overview' }: ListingEditorClientProps) {
   const [data, setData] = useState(initialData);
   const [activeTab, setActiveTab] = useState<WorkflowTab>(initialTab);
   const [previewImage, setPreviewImage] = useState<{
     src: string;
     alt: string;
     type?: 'image' | 'document';
+    galleryImageId?: string;
   } | null>(null);
   const [deleteThumbnailOpen, setDeleteThumbnailOpen] = useState(false);
+  const [textAreasOpen, setTextAreasOpen] = useState(false);
+  const [printCropsOpen, setPrintCropsOpen] = useState(false);
+  const [personalisationPreviewOpen, setPersonalisationPreviewOpen] = useState(false);
+  const [mockupTesterOpen, setMockupTesterOpen] = useState(false);
+  const [pendingThumbnail, setPendingThumbnail] = useState<{
+    file: File;
+    url: string;
+    rotation: 0 | 90 | 180 | 270;
+    ratio: ListingThumbnailRatio;
+    width: number;
+    height: number;
+  } | null>(null);
   const [deleteAllDownloadsOpen, setDeleteAllDownloadsOpen] = useState(false);
+  const [downloadToDelete, setDownloadToDelete] = useState<{ id: string; name: string } | null>(null);
   const [promptsOpen, setPromptsOpen] = useState(false);
   const [selectedPromptRow, setSelectedPromptRow] = useState<string | null>(null);
   const [promptClipboardStatus, setPromptClipboardStatus] = useState<string | null>(null);
@@ -259,6 +271,12 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   const [etsyResyncMessage, setEtsyResyncMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  // React state does not update synchronously, so two quick clicks can enter
+  // separate generation workflows before the buttons become disabled.
+  const overviewActionRunning = useRef(false);
+  const [overviewGenerationStages, setOverviewGenerationStages] = useState<OverviewGenerationStage[] | null>(null);
+  const [overviewGenerationItem, setOverviewGenerationItem] = useState<string | null>(null);
+  const [overviewGenerationError, setOverviewGenerationError] = useState<{ stage: string; message: string } | null>(null);
   const [simpleInputs, setSimpleInputs] = useState({ tag: '', material: '', style: '' });
   const [tagDraft, setTagDraft] = useState<string[]>(() => initialData?.tags.map((tag) => tag.value) ?? []);
   const [zipAssignments, setZipAssignments] = useState<Record<string, string>>(() =>
@@ -268,30 +286,11 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   const [inventory, setInventory] = useState({ name: '', value: '', sku: '', price: '', quantity: '' });
   const [personalization, setPersonalization] = useState({ instructions: '', isRequired: false, charCountMax: '' });
   const [buyerPrice, setBuyerPrice] = useState({ amount: '', divisor: '100', currencyCode: 'GBP', note: '' });
-  const [etsyProductsForm, setEtsyProductsForm] = useState<EtsyProductsForm>(() => createEtsyProductsForm(initialData));
-  const [returnPolicies, setReturnPolicies] = useState<EtsyReturnPolicy[]>([]);
-  const [returnPoliciesLoading, setReturnPoliciesLoading] = useState(false);
-  const [returnPoliciesError, setReturnPoliciesError] = useState<string | null>(null);
-  const [downloadSections, setDownloadSections] = useState<EtsyDownloadSection[]>([]);
-  const [downloadSectionsLoading, setDownloadSectionsLoading] = useState(false);
-  const [downloadSectionsError, setDownloadSectionsError] = useState<string | null>(null);
-  const [createDownloadSectionOpen, setCreateDownloadSectionOpen] = useState(false);
-  const [newDownloadSectionName, setNewDownloadSectionName] = useState('');
-  const [createDownloadSectionError, setCreateDownloadSectionError] = useState<string | null>(null);
   const [listingDescription, setListingDescription] = useState(initialData?.listing.listingDescription ?? '');
+  const [listingOrientation, setListingOrientation] = useState<'portrait' | 'landscape'>(initialData?.listing.artworkOrientation ?? 'portrait');
   const [listingItem, setListingItem] = useState(initialData?.listing.listingItem ?? '');
+  const [groupSelection, setGroupSelection] = useState<string[]>(() => initialData?.groupItems.map((item) => item.id) ?? []);
   const [roomTheme, setRoomTheme] = useState(initialData?.listing.roomTheme ?? '');
-  const [thumbnailAutomationJob, setThumbnailAutomationJob] = useState<ThumbnailAutomationJob | null>(null);
-  const [thumbnailAutomationStarting, setThumbnailAutomationStarting] = useState(false);
-  const [listingImageAutomationStarting, setListingImageAutomationStarting] = useState(false);
-  const [listingDetailAutomationStarting, setListingDetailAutomationStarting] = useState(false);
-  const [listingCopyAutomationStarting, setListingCopyAutomationStarting] = useState(false);
-  const [thumbnailReviewJobId, setThumbnailReviewJobId] = useState<string | null>(null);
-  const [thumbnailReviewOpen, setThumbnailReviewOpen] = useState(false);
-  const [thumbnailReviewBusy, setThumbnailReviewBusy] = useState(false);
-  const [productConfirmationBusy, setProductConfirmationBusy] = useState(false);
-  const [chatGptSignInOpening, setChatGptSignInOpening] = useState(false);
-  const [chatGptSignInMessage, setChatGptSignInMessage] = useState<string | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -300,149 +299,6 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   const [activeDetailsVariant, setActiveDetailsVariant] = useState<'print' | 'digital'>(
     initialData?.listing.listingType === 'digital' ? 'digital' : 'print'
   );
-  const refreshedAutomationJobId = useRef<string | null>(null);
-
-  useEffect(() => {
-    const shopId = data?.context.shopId;
-    if (!shopId || data?.listing.listingType === 'digital') return;
-    const controller = new AbortController();
-    setReturnPoliciesLoading(true);
-    setReturnPoliciesError(null);
-    fetch(`/api/shops/listings/editor/return-policies?shopId=${encodeURIComponent(shopId)}`, {
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const payload = await response.json() as { policies?: EtsyReturnPolicy[]; error?: string };
-        if (!response.ok) throw new Error(payload.error ?? 'Unable to load Etsy return policies.');
-        const policies = payload.policies ?? [];
-        setReturnPolicies(policies);
-        const noReturnsPolicies = policies.filter((policy) => !policy.acceptsReturns && !policy.acceptsExchanges);
-        const defaultPolicy = noReturnsPolicies.length === 1
-          ? noReturnsPolicies[0]
-          : policies.length === 1
-            ? policies[0]
-            : null;
-        if (defaultPolicy) {
-          setEtsyProductsForm((current) => current.returnPolicyId
-            ? current
-            : { ...current, returnPolicyId: defaultPolicy.id });
-        }
-      })
-      .catch((caughtError) => {
-        if (caughtError instanceof DOMException && caughtError.name === 'AbortError') return;
-        setReturnPoliciesError(caughtError instanceof Error ? caughtError.message : 'Unable to load Etsy return policies.');
-      })
-      .finally(() => { if (!controller.signal.aborted) setReturnPoliciesLoading(false); });
-    return () => controller.abort();
-  }, [data?.context.shopId, data?.listing.listingType]);
-
-  useEffect(() => {
-    const shopId = data?.context.shopId;
-    if (!shopId || activeTab !== 'etsy-products') return;
-    const controller = new AbortController();
-    setDownloadSectionsLoading(true);
-    setDownloadSectionsError(null);
-    fetch(`/api/shops/listings/editor/download-sections?shopId=${encodeURIComponent(shopId)}`, { signal: controller.signal })
-      .then(async (response) => {
-        const payload = await response.json() as { sections?: EtsyDownloadSection[]; error?: string };
-        if (!response.ok) throw new Error(payload.error ?? 'Unable to load Etsy download sections.');
-        setDownloadSections(payload.sections ?? []);
-      })
-      .catch((caughtError) => {
-        if (caughtError instanceof DOMException && caughtError.name === 'AbortError') return;
-        setDownloadSectionsError(caughtError instanceof Error ? caughtError.message : 'Unable to load Etsy download sections.');
-      })
-      .finally(() => { if (!controller.signal.aborted) setDownloadSectionsLoading(false); });
-    return () => controller.abort();
-  }, [data?.context.shopId, activeTab]);
-
-  useEffect(() => {
-    const listingId = data?.listing.id;
-    if (!listingId) return;
-    const controller = new AbortController();
-
-    fetch(`/api/create-thumbnail?listingId=${encodeURIComponent(listingId)}`, {
-      cache: 'no-store',
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (response.status === 404) return null;
-        const payload = await response.json() as { job?: ThumbnailAutomationJob; error?: string };
-        if (!response.ok) throw new Error(payload.error ?? 'Unable to read thumbnail generation status.');
-        return payload.job ?? null;
-      })
-      .then((job) => { if (job) setThumbnailAutomationJob(job); })
-      .catch((caughtError) => {
-        if (caughtError instanceof DOMException && caughtError.name === 'AbortError') return;
-        setError(caughtError instanceof Error ? caughtError.message : 'Unable to read thumbnail generation status.');
-      });
-
-    return () => controller.abort();
-  }, [data?.listing.id]);
-
-  useEffect(() => {
-    const jobId = thumbnailAutomationJob?.id;
-    const status = thumbnailAutomationJob?.status;
-    if (!jobId || status === 'completed' || status === 'failed') return;
-
-    const controller = new AbortController();
-    const refreshStatus = async () => {
-      try {
-        const response = await fetch(`/api/create-thumbnail?jobId=${encodeURIComponent(jobId)}`, {
-          cache: 'no-store',
-          signal: controller.signal,
-        });
-        const payload = await response.json() as { job?: ThumbnailAutomationJob; error?: string };
-        if (!response.ok || !payload.job) throw new Error(payload.error ?? 'Unable to read thumbnail generation status.');
-        setThumbnailAutomationJob(payload.job);
-      } catch (caughtError) {
-        if (caughtError instanceof DOMException && caughtError.name === 'AbortError') return;
-        setError(caughtError instanceof Error ? caughtError.message : 'Unable to read thumbnail generation status.');
-      }
-    };
-
-    void refreshStatus();
-    const timer = window.setInterval(() => { void refreshStatus(); }, 2_000);
-    return () => {
-      window.clearInterval(timer);
-      controller.abort();
-    };
-  }, [thumbnailAutomationJob?.id, thumbnailAutomationJob?.status]);
-
-  useEffect(() => {
-    const job = thumbnailAutomationJob;
-    if (!job || job.status !== 'completed') return;
-    if (job.workflow === 'thumbnail' && thumbnailReviewJobId === job.id) {
-      setThumbnailReviewOpen(true);
-      return;
-    }
-    const completedListingImage = job.workflow === 'listing_details'
-      || (job.workflow === 'listing_detail_step'
-        && job.detailStepIndex === (job.detailStepCount ?? 0) - 1)
-      || job.workflow === 'listing_text';
-    if (!completedListingImage || refreshedAutomationJobId.current === job.id || !data) return;
-    refreshedAutomationJobId.current = job.id;
-    const controller = new AbortController();
-    fetch(`/api/shops/listings/editor?${new URLSearchParams(data.context)}`, {
-      cache: 'no-store',
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const payload = await response.json() as EditorResponse;
-        if (!response.ok) throw new Error(payload.error ?? 'Unable to refresh listing details.');
-        applyFreshData(payload.data);
-        if (job.workflow === 'listing_text' && payload.data) {
-          setForm(createDetailsForm(payload.data.listing));
-          setTagDraft(payload.data.tags.map((tag) => tag.value));
-          setSimpleInputs((inputs) => ({ ...inputs, tag: '' }));
-        }
-      })
-      .catch((caughtError) => {
-        if (caughtError instanceof DOMException && caughtError.name === 'AbortError') return;
-        setError(caughtError instanceof Error ? caughtError.message : 'Unable to refresh listing details.');
-      });
-    return () => controller.abort();
-  }, [thumbnailAutomationJob, thumbnailReviewJobId, data]);
 
   if (!data) {
     return (
@@ -456,6 +312,40 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   }
 
   const context = data.context;
+  const previewGalleryIndex = previewImage?.galleryImageId
+    ? data.images.findIndex((image) => image.id === previewImage.galleryImageId)
+    : -1;
+  const personalisationPreviewSizes = smallestPaperSizePerAspectRatio(
+    data.etsyProducts.sizes
+      .filter((size) => size.enabled)
+      .map(({ key, label }) => ({ key, label })),
+  );
+  const mockupTesterArtworkOptions: ListingMockupArtworkOption[] = [
+    ...(data.thumbnail ? [{
+      id: 'primary-artwork',
+      label: `Primary artwork — ${data.thumbnail.originalFileName ?? data.thumbnail.fileName}`,
+      url: getThumbnailUrl(),
+      primary: true,
+    }] : []),
+    ...data.files.flatMap((file) => {
+      const displayName = file.originalFileName ?? file.fileName;
+      const role = getPrintableDownloadRole(file);
+      const testerRatio = testerRatioFromDownloadRole(role);
+      if (!testerRatio || !/\.(?:jpe?g|png|webp)$/i.test(displayName)) return [];
+      const ratioLabel = PRINTABLE_DOWNLOAD_SPECS.find((spec) => spec.key === role)?.label ?? displayName;
+      return [{
+        id: `print-variant-${file.id}`,
+        label: `Print variant — ${ratioLabel}`,
+        url: getFileUrl(file.id),
+        ratio: testerRatio,
+      }];
+    }),
+    ...data.groupItems.flatMap((item) => item.thumbnailFileName ? [{
+      id: `group-artwork-${item.id}`,
+      label: `Grouped artwork ${item.position} — ${item.name}`,
+      url: groupedThumbnailUrl(item.id, false),
+    }] : []),
+  ];
   const usesDropboxPdfDownload = data.listing.includeAllItems
     || data.listing.numberOfItems === 3
     || data.listing.numberOfItems === 6
@@ -463,7 +353,6 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   const detailsChanged = JSON.stringify(form) !== JSON.stringify(createDetailsForm(data.listing));
   const desiredTags = uniqueTags([...tagDraft, ...parseTags(simpleInputs.tag)]);
   const tagsChanged = !haveSameTags(desiredTags, data.tags.map((tag) => tag.value));
-  const etsyProductsChanged = JSON.stringify(etsyProductsForm) !== JSON.stringify(createEtsyProductsForm(data));
   const listingDescriptionChanged = listingDescription.trim() !== data.listing.listingDescription;
   const listingItemChanged = listingItem.trim() !== data.listing.listingItem;
   const roomThemeChanged = roomTheme.trim() !== data.listing.roomTheme;
@@ -478,6 +367,12 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     && data.etsyProducts.config.listOnEtsy
     && (data.etsyProducts.config.printsFrames || data.etsyProducts.config.digitalDownload)
     && (!data.etsyProducts.config.printsFrames || data.section.hasEtsySection);
+  const listingCustomisationEnabled = Boolean(
+    data.template?.customisePrints && data.etsyProducts.config.customisePrints,
+  );
+  const thumbnailSizesSet = data.listing.printCropSettings !== null;
+  const textAreasSet = !listingCustomisationEnabled || data.listing.personalisationTextAreas !== null;
+  const thumbnailWorkflowReady = Boolean(data.thumbnail && thumbnailSizesSet && textAreasSet);
   const selectedPersonalisationFont = getPersonalisationFont(personalisationPromptSettings.fontId)
     ?? getPersonalisationFont(DEFAULT_PERSONALISATION_FONT_ID)!;
   const thumbnailGeneratePromptInput = {
@@ -494,18 +389,12 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     sectionName: data.section.sectionName,
   };
   const missingThumbnailIllustrationFields = missingThumbnailIllustrationPromptFields(thumbnailIllustrationPromptInput);
-  const thumbnailIllustrationPrompt = missingThumbnailIllustrationFields.length === 0
-    ? buildThumbnailIllustrationPrompt(thumbnailIllustrationPromptInput)
-    : '';
-  const listingImagePrompt = buildListingImagePrompt(data.listing.roomTheme);
-  const hasThumbnail = data.thumbnail !== null;
   const downloadDetailsFrameColours = data.etsyProducts.frames
-    .filter((frame) => frame.key !== 'no_frame' && etsyProductsForm.frames[frame.key])
+    .filter((frame) => frame.key !== 'no_frame' && frame.enabled)
     .map((frame) => frame.key === 'oak' ? 'Natural Oak' : frame.label);
   const detailsPrintSizes = data.etsyProducts.sizes
-    .filter((size) => etsyProductsForm.sizes[size.key])
+    .filter((size) => size.enabled)
     .map((size) => size.label);
-  const downloadDetailsImage = data.files.find((file) => file.widthPixels && file.heightPixels);
   const downloadDetailsPromptValues = {
     animalName: data.listing.listingItem,
     animalDescription: data.listing.listingDescription,
@@ -513,9 +402,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     frameColour: downloadDetailsFrameColours.includes('Natural Oak')
       ? 'Natural Oak'
       : downloadDetailsFrameColours[0] ?? 'Natural Oak',
-    orientation: (downloadDetailsImage?.widthPixels ?? 0) > (downloadDetailsImage?.heightPixels ?? 0)
-      ? 'landscape'
-      : 'portrait',
+    orientation: data.listing.artworkOrientation,
     fileType: 'jpeg',
     frameColours: downloadDetailsFrameColours.join(', ') || 'Natural Oak',
     filesIncluded: data.files.map((file) => file.originalFileName ?? file.fileName).join(', '),
@@ -526,10 +413,10 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   const expectedDigitalFiles = PRINTABLE_DOWNLOAD_SPECS.map((spec) => (
     `${spec.label} (${spec.portraitWidth} × ${spec.portraitHeight}px)`
   ));
-  const detailsPersonalisationAreas = etsyProductsForm.customisePrints
+  const detailsPersonalisationAreas = data.etsyProducts.config.customisePrints
     ? [
-      etsyProductsForm.customTop ? 'top' : null,
-      etsyProductsForm.customBottom ? 'bottom' : null,
+      data.etsyProducts.config.customTop ? 'top' : null,
+      data.etsyProducts.config.customBottom ? 'bottom' : null,
     ].filter((area): area is string => area !== null)
     : [];
   const combinedListingDetailsPromptValues = {
@@ -538,7 +425,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     animalName: data.listing.listingItem,
     animalDescription: data.listing.listingDescription,
     roomTheme: data.listing.roomTheme,
-    digitalDownload: etsyProductsForm.digitalDownload,
+    digitalDownload: data.etsyProducts.config.digitalDownload,
     paperDetails: data.materials.map((material) => material.value).join(', ')
       || 'Heavyweight matte art paper, at least 200gsm',
     printSizes: detailsPrintSizes.join(', '),
@@ -546,7 +433,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     personalisationDetails: detailsPersonalisationAreas.length > 0
       ? `Optional ${detailsPersonalisationAreas.join(' and ')} text personalisation is available.`
       : '',
-    giftMessageEnabled: etsyProductsForm.giftMessageEnabled,
+    giftMessageEnabled: data.etsyProducts.config.giftMessageEnabled,
     digitalFilesIncluded: expectedDigitalFiles.join(', '),
     orientation: downloadDetailsPromptValues.orientation,
     fileType: downloadDetailsPromptValues.fileType,
@@ -569,25 +456,61 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     referenceImage: 'the thumbnail image attached to this prompt',
   };
 
-  function getImageUrl(assetId: string) {
-    return `/api/shops/listings/editor/assets?${new URLSearchParams({ ...context, kind: 'image', assetId })}`;
+  function getImageUrl(assetId: string, preview = false, version?: string) {
+    return `/api/shops/listings/editor/assets?${new URLSearchParams({
+      ...context,
+      kind: 'image',
+      assetId,
+      ...(preview ? { preview: '1' } : {}),
+      ...(version ? { v: version } : {}),
+    })}`;
   }
 
-  function getFileUrl(assetId: string) {
-    return `/api/shops/listings/editor/assets?${new URLSearchParams({ ...context, kind: 'file', assetId })}`;
+  function getImageVersion(assetId: string) {
+    return data?.images.find((image) => image.id === assetId)?.updatedAt;
+  }
+
+  function previewListingImage(item: Pick<ListingEditorData['images'][number], 'id' | 'fileName' | 'originalFileName'>) {
+    setPreviewImage({
+      src: getImageUrl(item.id, true, getImageVersion(item.id)),
+      alt: item.originalFileName ?? item.fileName,
+      type: 'image',
+      galleryImageId: item.id,
+    });
+  }
+
+  function previewListingImageAt(index: number) {
+    const item = data?.images[index];
+    if (item) previewListingImage(item);
+  }
+
+  function getFileUrl(assetId: string, preview = false) {
+    return `/api/shops/listings/editor/assets?${new URLSearchParams({
+      ...context,
+      kind: 'file',
+      assetId,
+      ...(preview ? { preview: '1' } : {}),
+    })}`;
   }
 
   function previewFile(item: { id: string; fileName: string; originalFileName: string | null }) {
     const displayName = item.originalFileName ?? item.fileName;
+    const isImage = /\.(?:jpe?g|png|webp)$/i.test(displayName);
     setPreviewImage({
-      src: getFileUrl(item.id),
+      src: getFileUrl(item.id, isImage),
       alt: displayName,
-      type: /\.(?:jpe?g|png|webp)$/i.test(displayName) ? 'image' : 'document',
+      type: isImage ? 'image' : 'document',
     });
   }
 
-  function getThumbnailUrl() {
-    return `/api/shops/listings/editor/assets?${new URLSearchParams({ ...context, kind: 'thumbnail', assetId: 'thumbnail' })}`;
+  function getThumbnailUrl(preview = false) {
+    return `/api/shops/listings/editor/assets?${new URLSearchParams({
+      ...context,
+      kind: 'thumbnail',
+      assetId: 'thumbnail',
+      ...(preview ? { preview: '1' } : {}),
+      ...(data?.listing.thumbnailUpdatedAt ? { v: data.listing.thumbnailUpdatedAt } : {}),
+    })}`;
   }
 
   function promptRowProps(rowId: string) {
@@ -802,7 +725,9 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
 
     setData(nextData);
     setListingDescription(nextData.listing.listingDescription);
+    setListingOrientation(nextData.listing.artworkOrientation);
     setListingItem(nextData.listing.listingItem);
+    setGroupSelection(nextData.groupItems.map((item) => item.id));
     setRoomTheme(nextData.listing.roomTheme);
     setPersonalisationPromptSettings({
       headerText: nextData.listing.personalisationHeaderText,
@@ -811,7 +736,6 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     });
     setPreparedPersonalisationPrompt(null);
     personalisationSourceImage.current = null;
-    setEtsyProductsForm(createEtsyProductsForm(nextData));
     setZipAssignments((currentAssignments) => Object.fromEntries(
       nextData.files.map((file) => [
         file.id,
@@ -829,6 +753,45 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
 
     applyFreshData(payload.data);
     return payload.data;
+  }
+
+  async function saveTextAreas(value: NonNullable<ListingEditorData['listing']['personalisationTextAreas']>) {
+    setBusyKey('save-text-areas');
+    setError(null);
+    try {
+      const response = await fetch('/api/shops/listings/editor/text-areas', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, textAreas: value }),
+      });
+      await parseResponse(response, 'Unable to save the personalisation text areas.');
+      setTextAreasOpen(false);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the personalisation text areas.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function savePrintCrops(value: ListingPrintCropDraft) {
+    setBusyKey('save-print-crops');
+    setError(null);
+    try {
+      const response = await fetch('/api/shops/listings/editor/print-crops', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...context,
+          cropSettings: listingPrintCropDraftForSave(value),
+        }),
+      });
+      await parseResponse(response, 'Unable to save the print crop settings.');
+      setPrintCropsOpen(false);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the print crop settings.');
+    } finally {
+      setBusyKey(null);
+    }
   }
 
   async function saveDetails(event: FormEvent<HTMLFormElement>) {
@@ -876,46 +839,6 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to save listing details.');
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function setEtsyColoursFromThumbnail() {
-    setError(null);
-    setBusyKey('set-etsy-colours');
-
-    try {
-      const response = await fetch('/api/shops/listings/editor/colours', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(context),
-      });
-      const nextData = await parseResponse(response, 'Unable to set the Etsy colours from the thumbnail.');
-      if (nextData) setForm(createDetailsForm(nextData.listing));
-    } catch (caughtError) {
-      setError(caughtError instanceof Error
-        ? caughtError.message
-        : 'Unable to set the Etsy colours from the thumbnail.');
-    } finally {
-      setBusyKey(null);
-    }
-  }
-
-  async function setEtsySku() {
-    setError(null);
-    setBusyKey('set-etsy-sku');
-
-    try {
-      const response = await fetch('/api/shops/listings/editor/sku', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(context),
-      });
-      const nextData = await parseResponse(response, 'Unable to set the Etsy SKU.');
-      if (nextData) setForm(createDetailsForm(nextData.listing));
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to set the Etsy SKU.');
-    } finally {
-      setBusyKey(null);
     }
   }
 
@@ -999,23 +922,311 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     }
   }
 
-  async function saveEtsyProducts() {
-    setError(null);
-    setBusyKey('save-etsy-products');
+  function groupedThumbnailUrl(sourceListingId: string, preview = true) {
+    return `/api/shops/listings/editor/overview?${new URLSearchParams({
+      ...context,
+      sourceListingId,
+      ...(preview ? { preview: '1' } : {}),
+    }).toString()}`;
+  }
 
+  function toggleGroupedListing(sourceListingId: string, checked: boolean) {
+    const limit = data?.template?.itemCount ?? 0;
+    setGroupSelection((current) => {
+      if (!checked) return current.filter((id) => id !== sourceListingId);
+      if (current.includes(sourceListingId) || current.length >= limit) return current;
+      return [...current, sourceListingId];
+    });
+  }
+
+  function reorderGroupedListings(event: DragEndEvent) {
+    if (!event.over || event.active.id === event.over.id) return;
+    setGroupSelection((current) => {
+      const from = current.indexOf(String(event.active.id));
+      const to = current.indexOf(String(event.over!.id));
+      return from < 0 || to < 0 ? current : arrayMove(current, from, to);
+    });
+  }
+
+  async function saveGroupedListings() {
+    setError(null);
+    setBusyKey('save-groups');
     try {
-      const response = await fetch('/api/shops/listings/editor/products', {
+      const response = await fetch('/api/shops/listings/editor/overview', {
         method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, sourceListingIds: groupSelection }),
+      });
+      await parseResponse(response, 'Unable to save grouped listings.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save grouped listings.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function generateOverviewImages() {
+    if (overviewActionRunning.current) return;
+    overviewActionRunning.current = true;
+    setError(null);
+    setBusyKey('generate-overview-images');
+    try {
+      const clearResponse = await fetch('/api/shops/listings/editor/overview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, action: 'clear-images' }),
+      });
+      await parseResponse(clearResponse, 'Unable to remove the existing listing images.');
+      const response = await fetch('/api/shops/listings/editor/overview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, action: 'images' }),
+      });
+      await parseResponse(response, 'Unable to generate the template images.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to generate the template images.');
+    } finally {
+      overviewActionRunning.current = false;
+      setBusyKey(null);
+    }
+  }
+
+  async function generateOverviewImage(imageTemplateId: string, imageTemplateName: string) {
+    if (overviewActionRunning.current) return;
+    overviewActionRunning.current = true;
+    setError(null);
+    setOverviewGenerationItem(`image-${imageTemplateId}`);
+    setBusyKey(`generate-overview-image-${imageTemplateId}`);
+    try {
+      const response = await fetch('/api/shops/listings/editor/overview', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...context,
-          ...etsyProductsForm,
+          action: 'images',
+          imageTemplateId: Number(imageTemplateId),
         }),
       });
-      await parseResponse(response, 'Unable to save Etsy products.');
+      await parseResponse(response, `Unable to regenerate ${imageTemplateName}.`);
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save Etsy products.');
+      setError(caughtError instanceof Error ? caughtError.message : `Unable to regenerate ${imageTemplateName}.`);
     } finally {
+      overviewActionRunning.current = false;
+      setOverviewGenerationItem(null);
+      setBusyKey(null);
+    }
+  }
+
+  async function generateOverviewDetails() {
+    if (overviewActionRunning.current) return;
+    overviewActionRunning.current = true;
+    setError(null);
+    setBusyKey('generate-overview-details');
+    try {
+      const response = await fetch('/api/shops/listings/editor/overview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, action: 'details' }),
+      });
+      const nextData = await parseResponse(response, 'Unable to generate listing details with AWS Bedrock.');
+      if (nextData) {
+        setForm(createDetailsForm(nextData.listing));
+        setTagDraft(nextData.tags.map((tag) => tag.value));
+      }
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to generate listing details with AWS Bedrock.');
+    } finally {
+      overviewActionRunning.current = false;
+      setBusyKey(null);
+    }
+  }
+
+  async function generateGroupedInstructions() {
+    if (overviewActionRunning.current) return;
+    overviewActionRunning.current = true;
+    setError(null);
+    setBusyKey('generate-grouped-instructions');
+    try {
+      const response = await fetch('/api/shops/listings/editor/overview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, action: 'grouped-pdf' }),
+      });
+      await parseResponse(response, 'Unable to create the grouped download instructions PDF.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to create the grouped download instructions PDF.');
+    } finally {
+      overviewActionRunning.current = false;
+      setBusyKey(null);
+    }
+  }
+
+  async function generateSingleDownloadInstructions() {
+    if (!data || data.template?.templateType === 'multiple') return;
+    if (overviewActionRunning.current) return;
+    overviewActionRunning.current = true;
+    setError(null);
+    setBusyKey('generate-download-instructions');
+    try {
+      if (!data.dropbox.current) {
+        const dropboxResponse = await fetch('/api/shops/listings/dropbox', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...context, action: 'dropbox' }),
+        });
+        await parseResponse(dropboxResponse, 'Unable to create or update Dropbox before generating the instructions.');
+      }
+      const response = await fetch('/api/shops/listings/dropbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, action: 'pdf' }),
+      });
+      await parseResponse(response, 'Unable to create the download instructions PDF.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to create the download instructions PDF.');
+    } finally {
+      overviewActionRunning.current = false;
+      setBusyKey(null);
+    }
+  }
+
+  async function generateEntireOverview() {
+    if (!data?.template || overviewActionRunning.current) return;
+    overviewActionRunning.current = true;
+    setError(null);
+    setOverviewGenerationError(null);
+    setOverviewGenerationStages(initialOverviewGenerationStages());
+    setOverviewGenerationItem(null);
+    setBusyKey('generate-overview-all');
+    let activeStage: OverviewGenerationStageKey = 'images';
+
+    const updateStage = (
+      key: OverviewGenerationStageKey,
+      status: OverviewGenerationStageStatus,
+      message: string,
+    ) => {
+      setOverviewGenerationStages((current) => current?.map((stage) => (
+        stage.key === key ? { ...stage, status, message } : stage
+      )) ?? current);
+    };
+
+    const postOverview = async (
+      body: Record<string, unknown>,
+      fallbackMessage: string,
+    ) => {
+      const response = await fetch('/api/shops/listings/editor/overview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, ...body }),
+      });
+      return parseResponse(response, fallbackMessage);
+    };
+
+    try {
+      if (data.template.imageTemplates.length === 0) {
+        throw new Error('The selected template has no image templates.');
+      }
+      updateStage('images', 'running', 'Removing existing listing images');
+      await postOverview(
+        { action: 'clear-images' },
+        'Unable to remove the existing listing images.',
+      );
+      for (const [index, imageTemplate] of data.template.imageTemplates.entries()) {
+        setOverviewGenerationItem(`image-${imageTemplate.id}`);
+        updateStage('images', 'running', `Creating ${imageTemplate.name} (${index + 1} of ${data.template.imageTemplates.length})`);
+        await postOverview(
+          { action: 'images', imageTemplateId: Number(imageTemplate.id) },
+          `Unable to generate ${imageTemplate.name}.`,
+        );
+      }
+      setOverviewGenerationItem(null);
+      updateStage('images', 'complete', `${data.template.imageTemplates.length} ${data.template.imageTemplates.length === 1 ? 'image' : 'images'} created`);
+
+      activeStage = 'details';
+      setOverviewGenerationItem('details');
+      updateStage('details', 'running', 'Creating listing details and tags with AWS Bedrock');
+      const detailsData = await postOverview(
+        { action: 'details' },
+        'Unable to generate listing details and tags with AWS Bedrock.',
+      );
+      if (detailsData) {
+        setForm(createDetailsForm(detailsData.listing));
+        setTagDraft(detailsData.tags.map((tag) => tag.value));
+      }
+      setOverviewGenerationItem(null);
+      updateStage('details', 'complete', 'Listing details and tags created');
+
+      activeStage = 'downloads';
+      updateStage('downloads', 'running', data.template.templateType === 'multiple'
+        ? 'Preparing source Dropbox links and the grouped instruction PDF'
+        : 'Preparing digital downloads');
+      if (data.template.templateType === 'multiple') {
+        setOverviewGenerationItem('download-grouped-pdf');
+        await postOverview(
+          { action: 'grouped-pdf' },
+          'Unable to create the grouped download instructions PDF.',
+        );
+        updateStage('downloads', 'complete', 'Grouped instruction PDF created with all source Dropbox links');
+      } else {
+        for (const [index, spec] of PRINTABLE_DOWNLOAD_SPECS.entries()) {
+          setOverviewGenerationItem(`download-${spec.key}`);
+          updateStage('downloads', 'running', `Creating ${spec.label} (${index + 1} of ${PRINTABLE_DOWNLOAD_SPECS.length + 1})`);
+          const response = await fetch('/api/shops/listings/editor/downloads/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...context, ratio: spec.key }),
+          });
+          await parseResponse(response, `Unable to generate ${spec.label}.`);
+        }
+        setOverviewGenerationItem('download-guide');
+        updateStage('downloads', 'running', `Creating the How to Print guide (${PRINTABLE_DOWNLOAD_SPECS.length + 1} of ${PRINTABLE_DOWNLOAD_SPECS.length + 1})`);
+        const guideResponse = await fetch('/api/shops/listings/editor/downloads/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...context, ratio: 'guide' }),
+        });
+        await parseResponse(guideResponse, 'Unable to generate the How to Print guide.');
+        updateStage('downloads', 'complete', `${PRINTABLE_DOWNLOAD_SPECS.length} artwork files and the How to Print guide created`);
+      }
+      setOverviewGenerationItem(null);
+
+      activeStage = 'dropbox';
+      updateStage('dropbox', 'running', data.template.templateType === 'multiple'
+        ? 'Confirming the source Dropbox links'
+        : 'Uploading files and creating the download instructions');
+      if (data.template.templateType === 'multiple') {
+        updateStage('dropbox', 'complete', 'Source Dropbox links were prepared with the grouped instruction PDF');
+      } else {
+        setOverviewGenerationItem('dropbox');
+        const response = await fetch('/api/shops/listings/dropbox', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...context, action: 'dropbox' }),
+        });
+        await parseResponse(response, 'Unable to update Dropbox.');
+        setOverviewGenerationItem('download-instructions');
+        updateStage('dropbox', 'running', 'Creating the Download Instructions PDF');
+        const instructionsResponse = await fetch('/api/shops/listings/dropbox', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...context, action: 'pdf' }),
+        });
+        await parseResponse(instructionsResponse, 'Unable to create the Download Instructions PDF.');
+        updateStage('dropbox', 'complete', 'Dropbox and the Download Instructions PDF created');
+      }
+      await postOverview(
+        { action: 'mark-current' },
+        'The listing was generated, but its change-tracking state could not be saved.',
+      );
+      setOverviewGenerationItem(null);
+    } catch (caughtError) {
+      const message = caughtError instanceof Error ? caughtError.message : 'Unable to generate the complete listing.';
+      const stageLabel = OVERVIEW_GENERATION_STAGES.find((stage) => stage.key === activeStage)?.label ?? 'Generate Listing';
+      setOverviewGenerationItem(null);
+      updateStage(activeStage, 'failed', 'Stopped because an error occurred');
+      setOverviewGenerationError({ stage: stageLabel, message });
+    } finally {
+      overviewActionRunning.current = false;
       setBusyKey(null);
     }
   }
@@ -1041,170 +1252,9 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     }
   }
 
-  async function generateThumbnailInChatGpt() {
-    setError(null);
-    setChatGptSignInMessage(null);
-    setThumbnailAutomationStarting(true);
-
-    try {
-      const response = await fetch('/api/create-thumbnail', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...context,
-          prompt: thumbnailIllustrationPrompt,
-        }),
-      });
-      const payload = await response.json() as { job?: ThumbnailAutomationJob; error?: string };
-      if (!response.ok || !payload.job) {
-        throw new Error(payload.error ?? 'Unable to start thumbnail generation.');
-      }
-      setThumbnailAutomationJob(payload.job);
-      setThumbnailReviewJobId(payload.job.id);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to start thumbnail generation.');
-    } finally {
-      setThumbnailAutomationStarting(false);
-    }
-  }
-
-  async function generateListingImageInChatGpt() {
-    setError(null);
-    setChatGptSignInMessage(null);
-    setListingImageAutomationStarting(true);
-
-    try {
-      const response = await fetch('/api/create-listing-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...context,
-          prompt: listingImagePrompt,
-        }),
-      });
-      const payload = await response.json() as { job?: ThumbnailAutomationJob; error?: string };
-      if (!response.ok || !payload.job) {
-        throw new Error(payload.error ?? 'Unable to start listing image generation.');
-      }
-      setThumbnailAutomationJob(payload.job);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to start listing image generation.');
-    } finally {
-      setListingImageAutomationStarting(false);
-    }
-  }
-
-  async function generateListingDetailsInChatGpt(detailKeys: ListingDetailImageKey[]) {
-    setError(null);
-    setChatGptSignInMessage(null);
-    setListingDetailAutomationStarting(true);
-    try {
-      const response = await fetch('/api/create-listing-detail', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...context, detailKeys }),
-      });
-      const payload = await response.json() as { job?: ThumbnailAutomationJob; error?: string };
-      if (!response.ok || !payload.job) {
-        throw new Error(payload.error ?? 'Unable to start listing detail generation.');
-      }
-      setThumbnailAutomationJob(payload.job);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to start listing detail generation.');
-    } finally {
-      setListingDetailAutomationStarting(false);
-    }
-  }
-
-  async function generateListingCopyInChatGpt() {
-    setError(null);
-    setChatGptSignInMessage(null);
-    setListingCopyAutomationStarting(true);
-    try {
-      const response = await fetch('/api/create-listing-copy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(context),
-      });
-      const payload = await response.json() as { job?: ThumbnailAutomationJob; error?: string };
-      if (!response.ok || !payload.job) {
-        throw new Error(payload.error ?? 'Unable to start Etsy listing detail generation.');
-      }
-      setThumbnailAutomationJob(payload.job);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to start Etsy listing detail generation.');
-    } finally {
-      setListingCopyAutomationStarting(false);
-    }
-  }
-
-  async function downloadCustomisedListingSource(detailKey: ListingDetailImageKey, label: string) {
-    if (!isCustomisedListingDetailImageKey(detailKey)) return;
-    setError(null);
-    setBusyKey(`customised-source-${detailKey}`);
-    try {
-      const response = await fetch('/api/create-listing-detail/source', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...context, detailKey }),
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(payload.error ?? `Unable to prepare ${label}.`);
-      }
-      const blob = await response.blob();
-      const disposition = response.headers.get('content-disposition') ?? '';
-      const fileName = disposition.match(/filename="([^"]+)"/i)?.[1]
-        ?? `${detailKey}-source.png`;
-      const objectUrl = URL.createObjectURL(blob);
-      const download = document.createElement('a');
-      download.href = objectUrl;
-      download.download = fileName;
-      document.body.appendChild(download);
-      download.click();
-      download.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
-      setPromptClipboardStatus(`${fileName} is downloading to your browser's Downloads folder.`);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : `Unable to prepare ${label}.`);
-    } finally {
-      setBusyKey(null);
-    }
-  }
-
-  async function uploadListingDetailImage(
-    detailKey: ListingDetailImageKey,
-    label: string,
-    event: ChangeEvent<HTMLInputElement>,
-  ) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-
-    setError(null);
-    setBusyKey(`upload-listing-detail-${detailKey}`);
-    try {
-      const formData = new FormData();
-      formData.set('shopId', context.shopId);
-      formData.set('sectionId', context.sectionId);
-      formData.set('subSectionId', context.subSectionId);
-      formData.set('listingId', context.listingId);
-      formData.set('detailKey', detailKey);
-      formData.set('file', file);
-      const response = await fetch('/api/create-listing-detail/upload', {
-        method: 'POST',
-        body: formData,
-      });
-      await parseResponse(response, `Unable to upload ${label}.`);
-      setPromptClipboardStatus(`${label} was uploaded to image position ${LISTING_DETAIL_IMAGE_ROWS.find((row) => row.key === detailKey)?.position}.`);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : `Unable to upload ${label}.`);
-    } finally {
-      setBusyKey(null);
-    }
-  }
-
   async function generatePrintableDownload(ratio: PrintableDownloadRatio | 'guide') {
+    if (overviewActionRunning.current) return;
+    overviewActionRunning.current = true;
     setError(null);
     setBusyKey(`generate-download-${ratio}`);
     try {
@@ -1223,104 +1273,14 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           ? 'Unable to generate the How to Print guide.'
           : 'Unable to generate the printable download.');
     } finally {
-      setBusyKey(null);
-    }
-  }
-
-  async function confirmEtsyProductSettings() {
-    setError(null);
-    setProductConfirmationBusy(true);
-    try {
-      const response = await fetch('/api/shops/listings/editor/products', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(context),
-      });
-      await parseResponse(response, 'Unable to confirm Etsy Product settings.');
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to confirm Etsy Product settings.');
-    } finally {
-      setProductConfirmationBusy(false);
-    }
-  }
-
-  async function reviewGeneratedThumbnail(accepted: boolean) {
-    if (!thumbnailReviewJobId) return;
-    setThumbnailReviewBusy(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/create-thumbnail/result', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...context, jobId: thumbnailReviewJobId, accepted }),
-      });
-      const payload = await response.json() as EditorResponse;
-      if (!response.ok) throw new Error(payload.error ?? 'Unable to save the thumbnail choice.');
-      applyFreshData(payload.data);
-      setThumbnailReviewOpen(false);
-      setThumbnailReviewJobId(null);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the thumbnail choice.');
-    } finally {
-      setThumbnailReviewBusy(false);
-    }
-  }
-
-  async function openChatGptSignIn() {
-    setError(null);
-    setChatGptSignInMessage(null);
-    setChatGptSignInOpening(true);
-
-    try {
-      const response = await fetch('/api/create-thumbnail/sign-in', { method: 'POST' });
-      const payload = await response.json() as { message?: string; error?: string };
-      if (!response.ok) throw new Error(payload.error ?? 'Unable to open the ChatGPT sign-in browser.');
-      setChatGptSignInMessage(payload.message ?? 'Sign in to ChatGPT, close that browser, then generate the thumbnail.');
-      setThumbnailAutomationJob((current) => current && current.status !== 'completed'
-        ? {
-            ...current,
-            status: 'failed',
-            message: 'Sign in through the normal browser, close it, then press Generate thumbnail.',
-          }
-        : current);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to open the ChatGPT sign-in browser.');
-    } finally {
-      setChatGptSignInOpening(false);
-    }
-  }
-
-  async function createDownloadSection(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!newDownloadSectionName.trim()) {
-      setCreateDownloadSectionError('Enter a section name.');
-      return;
-    }
-    setCreateDownloadSectionError(null);
-    setBusyKey('create-download-section');
-    try {
-      const response = await fetch('/api/shops/listings/editor/download-sections', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shopId: context.shopId, title: newDownloadSectionName.trim() }),
-      });
-      const payload = await response.json() as { section?: EtsyDownloadSection; error?: string };
-      if (!response.ok || !payload.section) throw new Error(payload.error ?? 'Unable to create Etsy download section.');
-      const section = payload.section;
-      setDownloadSections((current) => [...current.filter((item) => item.id !== section.id), section]
-        .sort((first, second) => first.title.localeCompare(second.title)));
-      setEtsyProductsForm((current) => ({ ...current, downloadSectionId: section.id }));
-      setNewDownloadSectionName('');
-      setCreateDownloadSectionOpen(false);
-    } catch (caughtError) {
-      setCreateDownloadSectionError(caughtError instanceof Error ? caughtError.message : 'Unable to create Etsy download section.');
-    } finally {
+      overviewActionRunning.current = false;
       setBusyKey(null);
     }
   }
 
   async function runDropboxAction() {
-    if (!data?.dropbox.action) return;
+    if (!data?.dropbox.action || overviewActionRunning.current) return;
+    overviewActionRunning.current = true;
     setError(null);
     setBusyKey('dropbox');
 
@@ -1334,6 +1294,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to update Dropbox.');
     } finally {
+      overviewActionRunning.current = false;
       setBusyKey(null);
     }
   }
@@ -1521,10 +1482,105 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     }
   }
 
+  async function chooseThumbnail(file: File) {
+    const url = URL.createObjectURL(file);
+    try {
+      const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        image.onerror = () => reject(new Error('The selected thumbnail could not be read.'));
+        image.src = url;
+      });
+      const analysis = analyseListingThumbnailDimensions(dimensions.width, dimensions.height);
+      setError(null);
+      setPendingThumbnail({
+        file,
+        url,
+        rotation: 0,
+        ratio: analysis.ratio,
+        width: dimensions.width,
+        height: dimensions.height,
+      });
+    } catch (caughtError) {
+      URL.revokeObjectURL(url);
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to use that thumbnail.');
+    }
+  }
+
+  function closePendingThumbnail() {
+    if (pendingThumbnail) URL.revokeObjectURL(pendingThumbnail.url);
+    setPendingThumbnail(null);
+  }
+
+  async function savePendingThumbnail() {
+    if (!pendingThumbnail) return;
+    setError(null);
+    setBusyKey('upload-thumbnail');
+    try {
+      const formData = new FormData();
+      formData.set('shopId', context.shopId);
+      formData.set('sectionId', context.sectionId);
+      formData.set('subSectionId', context.subSectionId);
+      formData.set('listingId', context.listingId);
+      formData.set('kind', 'thumbnail');
+      formData.set('file', pendingThumbnail.file);
+      formData.set('thumbnailRotation', String(pendingThumbnail.rotation));
+      const response = await fetch('/api/shops/listings/editor/assets', { method: 'POST', body: formData });
+      await parseResponse(response, 'Unable to upload the thumbnail.');
+      closePendingThumbnail();
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to upload the thumbnail.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function saveListingCustomisation(next: {
+    customisePrints: boolean;
+    customTop: boolean;
+    customBottom: boolean;
+  }) {
+    setBusyKey('listing-customisation');
+    setError(null);
+    try {
+      const response = await fetch('/api/shops/listings/editor/customisation', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, ...next }),
+      });
+      await parseResponse(response, 'Unable to save the listing customisation settings.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the listing customisation settings.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   async function uploadAsset(kind: UploadKind, event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
     await uploadFiles(kind, files);
+  }
+
+  async function uploadDownloadRole(role: PrintableDownloadRole, file: File) {
+    setError(null);
+    setBusyKey(`upload-download-${role}`);
+    try {
+      const formData = new FormData();
+      formData.set('shopId', context.shopId);
+      formData.set('sectionId', context.sectionId);
+      formData.set('subSectionId', context.subSectionId);
+      formData.set('listingId', context.listingId);
+      formData.set('kind', 'file');
+      formData.set('downloadRole', role);
+      formData.set('file', file);
+      const response = await fetch('/api/shops/listings/editor/assets', { method: 'POST', body: formData });
+      await parseResponse(response, 'Unable to upload the digital download.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to upload the digital download.');
+    } finally {
+      setBusyKey(null);
+    }
   }
 
   async function deleteAsset(kind: UploadKind, assetId: string) {
@@ -1812,8 +1868,8 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                         image={item}
                         index={index}
                         disabled={busyKey !== null}
-                        imageUrl={getImageUrl(item.id)}
-                        onPreview={() => setPreviewImage({ src: getImageUrl(item.id), alt: item.originalFileName ?? item.fileName })}
+                        imageUrl={getImageUrl(item.id, true, getImageVersion(item.id))}
+                        onPreview={() => previewListingImage(item)}
                         onDelete={() => { void deleteAsset('image', item.id); }}
                       />
                     ))}
@@ -1832,7 +1888,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                     return activeImage ? (
                       <div className="h-32 w-32 overflow-hidden rounded-lg border-2 border-primary bg-muted shadow-xl">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={getImageUrl(activeImage.id)} alt={activeImage.originalFileName ?? activeImage.fileName} draggable={false} className="h-full w-full select-none object-cover" />
+                        <img src={getImageUrl(activeImage.id, true, getImageVersion(activeImage.id))} alt={activeImage.originalFileName ?? activeImage.fileName} draggable={false} className="h-full w-full select-none object-cover" />
                       </div>
                     ) : null;
                   })() : null}
@@ -1841,6 +1897,83 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               )}
             </div>
           </div>
+        </div>
+      );
+    }
+
+    if (kind === 'file') {
+      if (data?.template?.templateType === 'multiple') {
+        const pdfFiles = items.filter((item) => /\.pdf$/i.test(item.originalFileName ?? item.fileName));
+        return (
+          <div className="grid gap-4">
+            <div>
+              <h2 className="text-lg font-semibold">Digital Downloads</h2>
+              <p className="text-sm text-muted-foreground">The grouped Dropbox links are supplied in the generated instruction PDF.</p>
+            </div>
+            <Table>
+              <TableHeader><TableRow><TableHead>File</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+              <TableBody>{pdfFiles.length > 0 ? pdfFiles.map((item) => <TableRow key={item.id}>
+                <TableCell className="font-medium">{item.originalFileName ?? item.fileName}</TableCell>
+                <TableCell className="text-right"><div className="inline-flex gap-2">
+                  <Button type="button" size="icon" variant="outline" onClick={() => previewFile(item)} aria-label={`View ${item.originalFileName ?? item.fileName}`}><Eye className="h-4 w-4" aria-hidden="true" /></Button>
+                  <Button asChild size="icon" variant="outline"><a href={getFileUrl(item.id)} download={item.originalFileName ?? item.fileName} aria-label={`Download ${item.originalFileName ?? item.fileName}`}><Download className="h-4 w-4" aria-hidden="true" /></a></Button>
+                </div></TableCell>
+              </TableRow>) : <TableRow><TableCell colSpan={2} className="text-center text-muted-foreground">No instruction PDF has been created.</TableCell></TableRow>}</TableBody>
+            </Table>
+          </div>
+        );
+      }
+
+      const printableStatus = getPrintableDownloadStatus(items);
+      const instructionFile = items.find((item) => /instruction/i.test(item.originalFileName ?? item.fileName)) ?? null;
+      const rows: Array<{ role: PrintableDownloadRole | 'instructions'; label: string; file: typeof items[number] | null; expectedName: string; accept: string }> = [
+        ...printableStatus.items.map((item) => ({
+          role: item.key,
+          label: item.label,
+          file: item.file as typeof items[number] | null,
+          expectedName: `${(data?.listing.localDirectoryName ?? data?.listing.title ?? 'Listing').replace(/\s+/g, '')}_${PRINTABLE_DOWNLOAD_SPECS.find((spec) => spec.key === item.key)?.fileToken ?? item.key}.jpg`,
+          accept: 'image/jpeg,image/png,image/webp',
+        })),
+        {
+          role: 'guide',
+          label: 'How to print guide',
+          file: items.find((item) => /how[_ -]?to[_ -]?print/i.test(item.originalFileName ?? item.fileName)) ?? null,
+          expectedName: `${(data?.listing.localDirectoryName ?? data?.listing.title ?? 'Listing').replace(/\s+/g, '')}_HowToPrintGuide.pdf`,
+          accept: 'application/pdf',
+        },
+        {
+          role: 'instructions',
+          label: 'Download Instructions',
+          file: instructionFile,
+          expectedName: `${(data?.listing.localDirectoryName ?? data?.listing.title ?? 'Listing').replace(/\s+/g, '')}_DownloadInstructions.pdf`,
+          accept: 'application/pdf',
+        },
+      ];
+      return (
+        <div className="grid gap-4">
+          <div>
+            <h2 className="text-lg font-semibold">{title}</h2>
+            <p className="text-sm text-muted-foreground">Upload the original files without resizing, recompressing, or ZIP creation.</p>
+          </div>
+          <Table>
+            <TableHeader><TableRow><TableHead>File</TableHead><TableHead>Saved Name</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+            <TableBody>{rows.map((row) => <TableRow key={row.role}>
+              <TableCell className="font-medium">{row.label}</TableCell>
+              <TableCell className="text-muted-foreground">{row.file?.fileName ?? row.expectedName}</TableCell>
+              <TableCell className="text-right"><div className="inline-flex gap-2">
+                <Button type="button" size="icon" variant="outline" onClick={() => row.file && previewFile(row.file)} disabled={!row.file} aria-label={`View ${row.label}`}><Eye className="h-4 w-4" aria-hidden="true" /></Button>
+                <Button type="button" size="icon" variant="outline" onClick={() => row.file && setDownloadToDelete({ id: row.file.id, name: row.file.originalFileName ?? row.file.fileName })} disabled={!row.file || busyKey !== null} aria-label={`Delete ${row.label}`}><Trash2 className="h-4 w-4" aria-hidden="true" /></Button>
+                {row.role !== 'instructions' ? <label className={`inline-flex h-9 w-9 items-center justify-center rounded-md border border-input ${row.file || busyKey !== null ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-accent'}`} title={`Upload ${row.label}`}>
+                  <Upload className="h-4 w-4" aria-hidden="true" />
+                  <input type="file" className="sr-only" accept={row.accept} disabled={Boolean(row.file) || busyKey !== null} onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = '';
+                    if (file && row.role !== 'instructions') void uploadDownloadRole(row.role, file);
+                  }} />
+                </label> : <Button type="button" size="icon" variant="outline" disabled aria-label="Created by Dropbox"><Upload className="h-4 w-4" aria-hidden="true" /></Button>}
+              </div></TableCell>
+            </TableRow>)}</TableBody>
+          </Table>
         </div>
       );
     }
@@ -2084,809 +2217,339 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     );
   }
 
-  function renderStart() {
+  function renderOverview() {
     if (!data) return null;
-    const jobIsRunning = thumbnailAutomationJob !== null
-      && thumbnailAutomationJob.status !== 'completed'
-      && thumbnailAutomationJob.status !== 'failed';
-    const jobCompleted = thumbnailAutomationJob?.status === 'completed';
-    const jobFailed = thumbnailAutomationJob?.status === 'failed';
-    const jobOutputName = thumbnailAutomationJob?.workflow === 'listing_text'
-      ? 'Etsy listing details'
-      : thumbnailAutomationJob?.workflow === 'listing_details'
-      ? 'Listing details'
-      : thumbnailAutomationJob?.workflow === 'listing_detail_step'
-        ? 'Individual listing detail stage'
-      : thumbnailAutomationJob?.workflow === 'listing_image'
-        ? 'Listing image'
-        : 'Thumbnail';
-    const missingStartFields = [
-      !data.listing.listingItem.trim() ? 'Listing Item' : null,
-      !data.listing.roomTheme.trim() ? 'Room Theme' : null,
-      !data.listing.listingDescription.trim() ? 'Listing Description' : null,
-    ].filter((value): value is string => value !== null);
-    const workflowDisabled = missingStartFields.length > 0;
-    const imagesUseNumberedRanks = data.images.some((image) => (image.rank ?? 0) >= 1);
-    const imageRows = LISTING_DETAIL_IMAGE_ROWS.map((row) => {
-      const image = data.images.find((candidate) => candidate.rank === row.position)
-        ?? (!imagesUseNumberedRanks ? data.images[row.position - 1] : null)
-        ?? null;
-      const stale = image !== null && isListingDetailImageStale(image.updatedAt, data.listing.thumbnailUpdatedAt);
-      return { ...row, image, stale, needsCreation: image === null || stale };
+    const multiple = data.template?.templateType === 'multiple';
+    const requiredItems = data.template?.itemCount ?? 1;
+    const selectedCandidates = groupSelection.flatMap((id) => {
+      const candidate = data.groupCandidates.find((item) => item.id === id)
+        ?? data.groupItems.find((item) => item.id === id);
+      return candidate ? [candidate] : [];
     });
-    const rowsToRecreate = imageRows.filter((row) => row.needsCreation).map((row) => row.key);
+    const groupedChanged = JSON.stringify(groupSelection) !== JSON.stringify(data.groupItems.map((item) => item.id));
+    const printableStatus = getPrintableDownloadStatus(data.files);
     const detailsRows = [
-      {
-        key: 'details',
-        label: 'Set Details',
-        created: Boolean(
-          data.listing.title.trim()
-          && data.listing.description.trim()
-          && data.listing.digitalTitle.trim()
-          && data.listing.digitalDescription.trim()
-          && data.tags.length > 0
-        ),
-      },
-      { key: 'sku', label: 'Set Etsy SKU', created: Boolean(data.listing.etsySku.trim()) },
-      {
-        key: 'etsy-colours',
-        label: 'Set Etsy colours',
-        created: Boolean(data.listing.primaryColour.trim() && data.listing.secondaryColour.trim()),
-      },
+      ['Create details', multiple || Boolean(data.listing.title.trim() && data.listing.description.trim())],
+      ['Print Title', multiple || Boolean(data.listing.title.trim())],
+      ['Print Description', multiple || Boolean(data.listing.description.trim())],
+      ['Print Quantity', multiple || (data.listing.quantity ?? 0) > 0],
+      ['Digital Download Title', multiple || Boolean(data.listing.digitalTitle.trim())],
+      ['Digital Download Description', multiple || Boolean(data.listing.digitalDescription.trim())],
+      ['Digital Download Quantity', (data.listing.digitalQuantity ?? 0) > 0],
+      ['Etsy SKU', Boolean(data.listing.etsySku.trim())],
+      ['Primary Colour', Boolean(data.listing.primaryColour.trim())],
+      ['Secondary Colour', Boolean(data.listing.secondaryColour.trim())],
+    ] as const;
+    const stageStatus = (key: OverviewGenerationStageKey) => overviewGenerationStages?.find((stage) => stage.key === key)?.status;
+    const status = (created: boolean, working = false) => working
+      ? <RefreshCw className="h-5 w-5 animate-spin text-blue-700" aria-label="Working" />
+      : created
+        ? <CheckCircle2 className="h-5 w-5 text-green-700" aria-label="Created" />
+        : <XCircle className="h-5 w-5 text-red-700" aria-label="Not created" />;
+    const sourceReady = multiple
+      ? data.groupItems.length === requiredItems && data.groupItems.every((item) => item.thumbnailFileName)
+      : Boolean(data.thumbnail);
+    const templateCapabilities = [
+      { label: 'Print / Frames', enabled: data.template?.printsFrames ?? false },
+      { label: 'Customised Prints', enabled: data.template?.customisePrints ?? false },
+      { label: 'Digital Downloads', enabled: data.template?.digitalDownload ?? false },
     ];
-    const printableDownloadStatus = getPrintableDownloadStatus(data.files);
-    const downloadRows = printableDownloadStatus.items;
-    const allActionsDisabled = workflowDisabled
-      || data.etsyProducts.config.needsConfirmation
-      || chatGptSignInOpening
-      || thumbnailAutomationStarting
-      || listingImageAutomationStarting
-      || listingDetailAutomationStarting
-      || listingCopyAutomationStarting
-      || jobIsRunning;
-    const listingDetailJobVisible = listingDetailAutomationStarting
-      || listingCopyAutomationStarting
-      || thumbnailAutomationJob?.workflow === 'listing_details'
-      || thumbnailAutomationJob?.workflow === 'listing_detail_step'
-      || thumbnailAutomationJob?.workflow === 'listing_text';
-    const listingJobStarting = listingDetailAutomationStarting || listingCopyAutomationStarting;
-    const statusIcon = (created: boolean) => created
-      ? <CheckCircle2 className="h-5 w-5 text-green-700" aria-label="Created" />
-      : <XCircle className="h-5 w-5 text-red-700" aria-label="Not created" />;
 
     return (
       <div className="grid gap-6">
-        {workflowDisabled ? (
-          <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            <span>Complete and save {missingStartFields.join(', ')} on the Thumbnail tab before using this workflow.</span>
+        <section className="grid gap-4 rounded-lg border bg-card p-5" aria-labelledby="template-settings-heading">
+          <div>
+            <h2 id="template-settings-heading" className="text-lg font-semibold">Template Settings</h2>
+            <p className="text-sm text-muted-foreground">Template: {data.template?.name ?? 'No template selected'}</p>
           </div>
-        ) : null}
-
-        {data.etsyProducts.config.needsConfirmation ? (
-          <label className="flex items-start gap-3 rounded-lg border border-red-300 bg-red-50 p-4 text-sm font-medium text-red-900">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-700" aria-hidden="true" />
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 accent-red-700"
-              checked={false}
-              onChange={(event) => { if (event.target.checked) void confirmEtsyProductSettings(); }}
-              disabled={productConfirmationBusy}
-            />
-            <span>Confirm you are happy with the Etsy Product settings click the checkbox to continue</span>
-          </label>
-        ) : null}
-
-        <section className="rounded-lg border bg-card p-5">
-          <h2 className="text-lg font-semibold">Thumbnail</h2>
-          {!hasThumbnail ? <p className="mt-1 text-sm text-muted-foreground">No thumbnail exists</p> : null}
-          <div className="mt-5 flex flex-wrap items-start gap-4">
-            {hasThumbnail ? (
-              <div className="w-full max-w-xs shrink-0 overflow-hidden rounded-lg border bg-muted">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={getThumbnailUrl()} alt={`${data.listing.title} thumbnail`} className="aspect-square w-full object-contain" />
+          <div className="flex flex-wrap gap-x-8 gap-y-3">
+            {templateCapabilities.map(({ label, enabled }) => (
+              <div key={label} className="flex items-center gap-2 text-sm font-medium">
+                <span>{label}</span>
+                {enabled ? (
+                  <CheckCircle2 className="h-5 w-5 text-green-700" aria-label={`${label} enabled`} />
+                ) : (
+                  <XCircle className="h-5 w-5 text-red-700" aria-label={`${label} not enabled`} />
+                )}
               </div>
-            ) : null}
-            <div className="grid min-w-56 gap-2">
-              <Button
-                type="button"
-                onClick={generateThumbnailInChatGpt}
-                disabled={allActionsDisabled || missingThumbnailIllustrationFields.length > 0}
-                title={missingThumbnailIllustrationFields.length > 0
-                  ? `Fill in ${missingThumbnailIllustrationFields.join(', ')} first`
-                  : undefined}
-              >
-                <Sparkles className="h-4 w-4" aria-hidden="true" />
-                {thumbnailAutomationStarting ? 'Starting...' : hasThumbnail ? 'Regenerate thumbnail' : 'Create thumbnail'}
+            ))}
+          </div>
+          {data.template?.customisePrints ? <div className="grid gap-3 border-t pt-4">
+            <p className="text-sm text-muted-foreground">
+              The template sets the available options. These listing settings can switch personalisation off, but cannot enable an option disabled by the template.
+            </p>
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={data.etsyProducts.config.customisePrints}
+                disabled={busyKey !== null}
+                onChange={(event) => void saveListingCustomisation({
+                  customisePrints: event.target.checked,
+                  customTop: event.target.checked && data.template!.customTop,
+                  customBottom: event.target.checked && data.template!.customBottom,
+                })}
+              />
+              Customise
+            </label>
+            <div className="ml-6 flex flex-wrap gap-x-8 gap-y-3 border-l pl-4">
+              {data.template.customTop ? <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={data.etsyProducts.config.customisePrints && data.etsyProducts.config.customTop}
+                  disabled={busyKey !== null || !data.etsyProducts.config.customisePrints}
+                  onChange={(event) => void saveListingCustomisation({
+                    customisePrints: event.target.checked || data.etsyProducts.config.customBottom,
+                    customTop: event.target.checked,
+                    customBottom: data.etsyProducts.config.customBottom,
+                  })}
+                />
+                Top Text
+              </label> : null}
+              {data.template.customBottom ? <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={data.etsyProducts.config.customisePrints && data.etsyProducts.config.customBottom}
+                  disabled={busyKey !== null || !data.etsyProducts.config.customisePrints}
+                  onChange={(event) => void saveListingCustomisation({
+                    customisePrints: event.target.checked || data.etsyProducts.config.customTop,
+                    customTop: data.etsyProducts.config.customTop,
+                    customBottom: event.target.checked,
+                  })}
+                />
+                Bottom Text
+              </label> : null}
+            </div>
+            {busyKey === 'listing-customisation' ? <p className="text-xs text-muted-foreground">Saving customisation settings...</p> : null}
+          </div> : null}
+        </section>
+
+        <section className="grid gap-4 rounded-lg border bg-card p-5">
+          <h2 className="text-lg font-semibold">General Listing</h2>
+          <div className="grid gap-2">
+            <div className="flex items-end justify-between gap-4">
+              <label className="text-sm font-medium" htmlFor="overview-listing-name">Listing Name</label>
+              <span className="text-xs tabular-nums text-muted-foreground">{listingItem.length} / 100</span>
+            </div>
+            <Input id="overview-listing-name" value={listingItem} maxLength={100} onChange={(event) => setListingItem(event.target.value)} />
+            <div className="flex justify-end">
+              <Button type="button" size="sm" onClick={saveListingItem} disabled={busyKey !== null || !listingItemChanged}>
+                {busyKey === 'listing-item' ? 'Saving...' : 'Save Name'}
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => { void copyPromptText(thumbnailIllustrationPrompt, 'Thumbnail generation prompt'); }}
-                disabled={promptCopying !== null || missingThumbnailIllustrationFields.length > 0}
-                title={missingThumbnailIllustrationFields.length > 0
-                  ? `Fill in ${missingThumbnailIllustrationFields.join(', ')} first`
-                  : 'Copy the exact thumbnail generation prompt'}
-              >
-                <FileText className="h-4 w-4" aria-hidden="true" />
-                {promptCopying === 'text' ? 'Copying...' : 'Prompt to Clipboard'}
-              </Button>
-              {hasThumbnail ? (
-                <>
-                  <Button type="button" variant="outline" onClick={downloadPromptThumbnail}>
-                    <Download className="h-4 w-4" aria-hidden="true" />
-                    Download image
-                  </Button>
-                  <Button type="button" variant="outline" asChild>
-                    <a href={selectedPersonalisationFont.assetPath} download={selectedPersonalisationFont.downloadFileName}>
-                      <Download className="h-4 w-4" aria-hidden="true" />
-                      Download font
-                    </a>
-                  </Button>
-                </>
-              ) : null}
             </div>
           </div>
-          {promptClipboardStatus ? (
-            <p className="mt-3 text-sm text-muted-foreground" role="status">{promptClipboardStatus}</p>
-          ) : null}
+          <div className="grid gap-2">
+            <div className="flex items-end justify-between gap-4">
+              <label className="text-sm font-medium" htmlFor="overview-listing-description">Listing description</label>
+              <span className="text-xs tabular-nums text-muted-foreground">{listingDescription.length} / 1000</span>
+            </div>
+            <textarea id="overview-listing-description" value={listingDescription} maxLength={1000} onChange={(event) => setListingDescription(event.target.value)} className={textAreaClassName} />
+            <div className="flex justify-end">
+              <Button type="button" size="sm" onClick={saveListingDescription} disabled={busyKey !== null || !listingDescriptionChanged}>
+                {busyKey === 'listing-description' ? 'Saving...' : 'Save Description'}
+              </Button>
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <label className="text-sm font-medium" htmlFor="overview-listing-orientation">Listing orientation</label>
+            <Input
+              id="overview-listing-orientation"
+              className="max-w-xs capitalize"
+              value={listingOrientation}
+              readOnly
+              aria-readonly="true"
+            />
+            <p className="text-xs text-muted-foreground">
+              Orientation is detected from the saved thumbnail.
+            </p>
+          </div>
+
+          {!multiple ? <div className="grid gap-3 border-t pt-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold">Thumbnail</h3>
+                <p className="text-sm text-muted-foreground">Upload the source artwork used by this template.</p>
+              </div>
+              <div className="grid w-40 gap-2">
+                <Button type="button" size="sm" variant="outline" onClick={() => setPrintCropsOpen(true)} disabled={busyKey !== null || !data.thumbnail}>
+                  Set Size
+                </Button>
+                {listingCustomisationEnabled ? <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setTextAreasOpen(true)}
+                  disabled={busyKey !== null || !data.thumbnail || !thumbnailSizesSet}
+                  title={!data.thumbnail
+                    ? 'Upload a thumbnail first.'
+                    : !thumbnailSizesSet ? 'Run Set Size before setting text areas.' : undefined}
+                >
+                  Set Text Areas
+                </Button> : null}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPersonalisationPreviewOpen(true)}
+                  disabled={busyKey !== null || !thumbnailWorkflowReady || personalisationPreviewSizes.length === 0}
+                  title={!data.thumbnail
+                    ? 'Upload a thumbnail before viewing paper-size images.'
+                    : !thumbnailSizesSet ? 'Run Set Size first.'
+                    : !textAreasSet ? 'Run Set Text Areas first.'
+                    : personalisationPreviewSizes.length === 0 ? 'The assigned template has no enabled paper sizes.' : undefined}
+                >
+                  View Images
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setMockupTesterOpen(true)}
+                  disabled={busyKey !== null}
+                >
+                  Tester
+                </Button>
+              </div>
+            </div>
+            {data.thumbnail ? <div className="grid w-48 gap-2">
+              <div className="group relative h-48 w-48 overflow-hidden rounded-lg border bg-muted">
+                <img src={getThumbnailUrl(true)} alt={data.thumbnail.originalFileName ?? 'Thumbnail'} className="h-full w-full object-contain" />
+                <Button type="button" variant="destructive" size="icon" className="absolute bottom-2 right-2 h-8 w-8" onClick={() => setDeleteThumbnailOpen(true)} disabled={busyKey !== null} aria-label="Delete thumbnail">
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </div>
+            </div> : <label className="flex min-h-32 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
+              <Upload className="h-5 w-5" aria-hidden="true" />
+              Choose thumbnail image
+              <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) void chooseThumbnail(file);
+              }} />
+            </label>}
+          </div> : <div className="grid gap-4 border-t pt-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold">Select listings to group</h3>
+                <p className="text-sm text-muted-foreground">Select exactly {requiredItems} listings that use the followed template, then drag the thumbnails into image order.</p>
+              </div>
+              <Button type="button" size="sm" variant="outline" onClick={() => setMockupTesterOpen(true)} disabled={busyKey !== null}>
+                Tester
+              </Button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {data.groupCandidates.length > 0 ? data.groupCandidates.map((candidate) => {
+                const checked = groupSelection.includes(candidate.id);
+                return <label key={candidate.id} className="flex items-center gap-3 rounded-md border p-3 text-sm">
+                  <input type="checkbox" checked={checked} disabled={!checked && groupSelection.length >= requiredItems} onChange={(event) => toggleGroupedListing(candidate.id, event.target.checked)} />
+                  <span>{candidate.name}</span>
+                </label>;
+              }) : <p className="text-sm text-muted-foreground">No listings use the followed single template yet.</p>}
+            </div>
+            {selectedCandidates.length > 0 ? <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={reorderGroupedListings}>
+              <SortableContext items={groupSelection} strategy={rectSortingStrategy}>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {selectedCandidates.map((item, index) => <SortableGroupedListing
+                    key={item.id}
+                    id={item.id}
+                    name={item.name}
+                    position={index + 1}
+                    imageUrl={item.thumbnailFileName ? groupedThumbnailUrl(item.id) : null}
+                    disabled={busyKey !== null}
+                  />)}
+                </div>
+              </SortableContext>
+            </DndContext> : null}
+            <div className="flex items-center justify-between gap-3">
+              <span className={`text-sm ${groupSelection.length === requiredItems ? 'text-green-700' : 'text-amber-700'}`}>{groupSelection.length} / {requiredItems} selected</span>
+              <Button type="button" size="sm" onClick={saveGroupedListings} disabled={busyKey !== null || groupSelection.length !== requiredItems || !groupedChanged}>
+                {busyKey === 'save-groups' ? 'Saving...' : 'Save Selection'}
+              </Button>
+            </div>
+          </div>}
         </section>
 
         <section className="rounded-lg border bg-card p-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <h2 className="text-lg font-semibold">Listing Details</h2>
-            <Button
-              type="button"
-              onClick={() => generateListingDetailsInChatGpt(rowsToRecreate)}
-              disabled={allActionsDisabled || !hasThumbnail || rowsToRecreate.length === 0}
-            >
-              <RefreshCw className="h-4 w-4" aria-hidden="true" />
-              {listingDetailAutomationStarting
-                ? 'Starting...'
-                : jobIsRunning && thumbnailAutomationJob?.workflow === 'listing_details'
-                  ? 'Running...'
-                  : 'Recreate'}
-            </Button>
-          </div>
-
-          {listingDetailJobVisible ? (
-            <div
-              className={`mt-5 flex items-start gap-3 rounded-md border p-4 text-sm ${
-                listingJobStarting || jobIsRunning
-                  ? 'border-amber-200 bg-amber-50 text-amber-800'
-                  : jobFailed
-                    ? 'border-red-200 bg-red-50 text-red-800'
-                    : 'border-green-200 bg-green-50 text-green-800'
-              }`}
-              role="status"
-              aria-live="polite"
-            >
-              {listingJobStarting || jobIsRunning ? (
-                <RefreshCw className="mt-0.5 h-5 w-5 shrink-0 animate-spin" aria-hidden="true" />
-              ) : jobFailed ? (
-                <XCircle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
-              ) : (
-                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
-              )}
-              <div>
-                <p className="font-semibold">
-                  {listingJobStarting
-                    ? `Starting ${listingCopyAutomationStarting ? 'Etsy listing details' : 'listing image'} creation`
-                    : jobIsRunning
-                      ? `${jobOutputName} creation is running`
-                      : jobFailed
-                        ? `${jobOutputName} creation failed`
-                        : `${jobOutputName} creation complete`}
-                </p>
-                <p className="mt-1">
-                  {listingJobStarting
-                    ? listingCopyAutomationStarting
-                      ? 'Preparing the combined Print and Digital Download prompt for ChatGPT.'
-                      : 'Preparing the prompt and source files for ChatGPT.'
-                    : thumbnailAutomationJob?.message}
-                </p>
-              </div>
+            <div>
+              <h2 className="text-lg font-semibold">Generate Listing</h2>
+              <p className="text-sm text-muted-foreground">Template: {data.template?.name ?? 'No template selected'}</p>
             </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button type="button" variant="outline" onClick={generateOverviewImages} disabled={busyKey !== null || !sourceReady || !data.template || (!multiple && !thumbnailWorkflowReady)}>
+                {busyKey === 'generate-overview-images'
+                  ? <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  : <ImageIcon className="h-4 w-4" aria-hidden="true" />}
+                {busyKey === 'generate-overview-images' ? 'Generating Images...' : 'Generate Images'}
+              </Button>
+              <Button type="button" onClick={generateEntireOverview} disabled={busyKey !== null || !sourceReady || !data.template || (!multiple && !thumbnailWorkflowReady)}>
+                {busyKey === 'generate-overview-all'
+                  ? <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  : <Sparkles className="h-4 w-4" aria-hidden="true" />}
+                {busyKey === 'generate-overview-all' ? 'Generating...' : 'Generate'}
+              </Button>
+            </div>
+          </div>
+          {overviewGenerationStages ? (
+            <ol className="mt-5 grid gap-2 rounded-md border bg-muted/30 p-4 sm:grid-cols-2" aria-label="Listing generation progress" aria-live="polite">
+              {overviewGenerationStages.map((stage) => (
+                <li key={stage.key} className="flex min-w-0 items-start gap-3 rounded-md bg-background p-3">
+                  {stage.status === 'running' ? <RefreshCw className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-blue-700" aria-hidden="true" /> : null}
+                  {stage.status === 'complete' ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-green-700" aria-hidden="true" /> : null}
+                  {stage.status === 'failed' ? <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-700" aria-hidden="true" /> : null}
+                  {stage.status === 'pending' ? <span className="mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 border-muted-foreground/40" aria-hidden="true" /> : null}
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">{stage.label}</span>
+                    <span className="block text-xs text-muted-foreground">{stage.message}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
           ) : null}
-
-          <div className="mt-5 overflow-x-auto rounded-lg border">
+          <div className="mt-5 overflow-x-auto rounded-md border">
             <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-14">Status</TableHead>
-                  <TableHead>Detail</TableHead>
-                  <TableHead className="w-36">Actions</TableHead>
-                  <TableHead className="w-36 text-right">Create</TableHead>
-                </TableRow>
-              </TableHeader>
+              <TableHeader><TableRow><TableHead>Details</TableHead><TableHead className="w-24">Status</TableHead><TableHead className="w-28 text-right">Run</TableHead></TableRow></TableHeader>
               <TableBody>
-                <TableRow className="bg-muted/50"><TableCell colSpan={4} className="font-semibold">Etsy images</TableCell></TableRow>
-                {imageRows.map((row) => (
-                    <TableRow key={row.key}>
-                      <TableCell>{statusIcon(row.image !== null)}</TableCell>
-                      <TableCell>
-                        <span className="font-medium">{row.label}</span>
-                        {row.stale ? <span className="ml-2 text-xs text-amber-700">Needs recreating</span> : null}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="outline"
-                            aria-label={isCustomisedListingDetailImageKey(row.key)
-                              ? `Create and download the upscaled personalised source for ${row.label}`
-                              : `Download the thumbnail for ${row.label}`}
-                            title={isCustomisedListingDetailImageKey(row.key)
-                              ? 'Upscale thumbnail, add text and download image'
-                              : 'Download thumbnail'}
-                            onClick={isCustomisedListingDetailImageKey(row.key)
-                              ? () => { void downloadCustomisedListingSource(row.key, row.label); }
-                              : downloadPromptThumbnail}
-                            disabled={!hasThumbnail || busyKey !== null}
-                          >
-                            {busyKey === `customised-source-${row.key}`
-                              ? <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
-                              : <Download className="h-4 w-4" aria-hidden="true" />}
-                          </Button>
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="outline"
-                            aria-label={`Copy ${row.label} prompt`}
-                            title={`Copy ${row.label} prompt to clipboard`}
-                            onClick={() => copyPromptText(buildListingDetailActionPrompt(row.key, {
-                              roomTheme: data.listing.roomTheme,
-                              listingItem: data.listing.listingItem,
-                              listingDescription: data.listing.listingDescription,
-                              sectionName: data.section.sectionName,
-                            }), `${row.label} prompt`)}
-                            disabled={workflowDisabled || promptCopying !== null}
-                          >
-                            <FileText className="h-4 w-4" aria-hidden="true" />
-                          </Button>
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="outline"
-                            aria-label={`Upload ${row.label}`}
-                            title={`Select and upload ${row.label}`}
-                            onClick={() => document.getElementById(`listing-detail-upload-${row.key}`)?.click()}
-                            disabled={busyKey !== null || listingDetailAutomationStarting || jobIsRunning}
-                          >
-                            {busyKey === `upload-listing-detail-${row.key}`
-                              ? <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
-                              : <Upload className="h-4 w-4" aria-hidden="true" />}
-                          </Button>
-                          <input
-                            id={`listing-detail-upload-${row.key}`}
-                            type="file"
-                            className="sr-only"
-                            accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-                            onChange={(event) => { void uploadListingDetailImage(row.key, row.label, event); }}
-                            disabled={busyKey !== null || listingDetailAutomationStarting || jobIsRunning}
-                          />
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={row.image ? 'outline' : 'default'}
-                          onClick={() => generateListingDetailsInChatGpt([row.key])}
-                          disabled={allActionsDisabled || !hasThumbnail || (row.image !== null && !row.stale)}
-                        >
-                          {row.image ? 'Recreate' : 'Create'}
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                ))}
-                <TableRow className="bg-muted/50"><TableCell colSpan={4} className="font-semibold">Details</TableCell></TableRow>
-                {detailsRows.map((row) => (
-                  <TableRow key={row.key}>
-                    <TableCell>{statusIcon(row.created)}</TableCell>
-                    <TableCell>{row.label}</TableCell>
-                    <TableCell>
-                      {row.key === 'details' ? (
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="outline"
-                            disabled={missingCombinedDetailsFields.length > 0 || promptCopying !== null}
-                            onClick={() => { void copyPromptText(setDetailsClipboardPrompt, 'Set Details prompt'); }}
-                            aria-label="Copy combined listing details prompt"
-                            title="Copy Set Details prompt to clipboard"
-                          >
-                            <FileText className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="outline"
-                            disabled={busyKey !== null}
-                            onClick={() => {
-                              setSetDetailsImportOutput('');
-                              setSetDetailsImportError(null);
-                              setSetDetailsImportOpen(true);
-                            }}
-                            aria-label="Upload Set Details output"
-                            title="Paste and upload Set Details output"
-                          >
-                            <Upload className="h-4 w-4" aria-hidden="true" />
-                          </Button>
-                        </div>
-                      ) : null}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={row.created ? 'outline' : 'default'}
-                        onClick={row.key === 'etsy-colours'
-                          ? () => { void setEtsyColoursFromThumbnail(); }
-                          : row.key === 'sku'
-                            ? () => { void setEtsySku(); }
-                            : row.key === 'details'
-                              ? () => { void generateListingCopyInChatGpt(); }
-                            : undefined}
-                        disabled={
-                          (row.key !== 'etsy-colours' && row.key !== 'sku' && row.key !== 'details')
-                          || (row.key === 'etsy-colours' && !hasThumbnail)
-                          || (row.key === 'details' && (allActionsDisabled || etsyProductsChanged || missingCombinedDetailsFields.length > 0))
-                          || busyKey !== null
-                        }
-                        title={row.key === 'etsy-colours' && !hasThumbnail
-                          ? 'Create or upload a thumbnail first.'
-                          : row.key === 'details' && etsyProductsChanged
-                            ? 'Save the Etsy Products changes first.'
-                            : row.key === 'details' && missingCombinedDetailsFields.length > 0
-                              ? `Complete ${missingCombinedDetailsFields.join(', ')} first.`
-                              : undefined}
-                      >
-                        {row.key === 'etsy-colours' && busyKey === 'set-etsy-colours' ? (
-                          <><RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" /> Setting...</>
-                        ) : row.key === 'sku' && busyKey === 'set-etsy-sku' ? (
-                          <><RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" /> Setting...</>
-                        ) : row.key === 'details' && (listingCopyAutomationStarting
-                          || (jobIsRunning && thumbnailAutomationJob?.workflow === 'listing_text')) ? (
-                          <><RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" /> Running...</>
-                        ) : row.created ? 'Recreate' : 'Create'}
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                <TableRow className="bg-muted/50"><TableCell colSpan={4} className="font-semibold">Digital Downloads</TableCell></TableRow>
-                {downloadRows.map((row) => (
-                  <TableRow key={row.label}>
-                    <TableCell>{statusIcon(row.created)}</TableCell>
-                    <TableCell>{row.label}</TableCell>
-                    <TableCell />
-                    <TableCell className="text-right">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={row.created ? 'outline' : 'default'}
-                        onClick={() => { void generatePrintableDownload(row.key); }}
-                        disabled={!hasThumbnail || busyKey !== null}
-                      >
-                        {busyKey === `generate-download-${row.key}` ? (
-                          <><RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" /> Generating...</>
-                        ) : row.created ? 'Recreate' : 'Create'}
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Images</TableCell></TableRow>
+                {(data.template?.imageTemplates ?? []).map((imageTemplate) => <TableRow key={imageTemplate.id}>
+                  <TableCell>{imageTemplate.name}</TableCell><TableCell>{status(imageTemplate.generated, overviewGenerationItem === `image-${imageTemplate.id}`)}</TableCell>
+                  <TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generateOverviewImage(imageTemplate.id, imageTemplate.name)} disabled={busyKey !== null || !sourceReady || (!multiple && !thumbnailWorkflowReady)}>{busyKey === `generate-overview-image-${imageTemplate.id}` ? 'Running...' : 'Run'}</Button></TableCell>
+                </TableRow>)}
+                {(data.template?.imageTemplates.length ?? 0) === 0 ? <TableRow><TableCell colSpan={3} className="text-muted-foreground">No image templates configured.</TableCell></TableRow> : null}
+
+                <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Details</TableCell></TableRow>
+                {detailsRows.map(([label, created], index) => <TableRow key={label}><TableCell>{label}</TableCell><TableCell>{status(created, stageStatus('details') === 'running')}</TableCell><TableCell className="text-right">{index === 0 && !multiple ? <Button type="button" size="sm" variant="outline" onClick={generateOverviewDetails} disabled={busyKey !== null || !data.thumbnail}>{busyKey === 'generate-overview-details' ? 'Running...' : 'Run'}</Button> : null}</TableCell></TableRow>)}
+
+                <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Tags</TableCell></TableRow>
+                <TableRow><TableCell>Add tags</TableCell><TableCell>{status(multiple || data.tags.length > 0, stageStatus('details') === 'running')}</TableCell><TableCell /></TableRow>
+
+                <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Digital Downloads</TableCell></TableRow>
+                {!multiple ? <>{printableStatus.items.map((item) => <TableRow key={item.key}><TableCell>{item.label}</TableCell><TableCell>{status(item.created, overviewGenerationItem === `download-${item.key}`)}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generatePrintableDownload(item.key)} disabled={busyKey !== null || !data.thumbnail}>Run</Button></TableCell></TableRow>)}
+                  <TableRow><TableCell>How to print guide</TableCell><TableCell>{status(printableStatus.guideCreated, overviewGenerationItem === 'download-guide')}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generatePrintableDownload('guide')} disabled={busyKey !== null}>Run</Button></TableCell></TableRow></> : null}
                 <TableRow>
-                  <TableCell>{statusIcon(printableDownloadStatus.guideCreated)}</TableCell>
-                  <TableCell>How to Print guide</TableCell>
-                  <TableCell />
+                  <TableCell>Download Instructions</TableCell>
+                  <TableCell>{status(
+                    data.files.some((file) => /instruction/i.test(file.originalFileName ?? file.fileName)),
+                    overviewGenerationItem === 'download-grouped-pdf' || overviewGenerationItem === 'download-instructions',
+                  )}</TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={printableDownloadStatus.guideCreated ? 'outline' : 'default'}
-                      onClick={() => { void generatePrintableDownload('guide'); }}
-                      disabled={!hasThumbnail || busyKey !== null}
-                    >
-                      {busyKey === 'generate-download-guide' ? (
-                        <><RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" /> Generating...</>
-                      ) : printableDownloadStatus.guideCreated ? 'Recreate' : 'Create'}
-                    </Button>
+                    {multiple ? (
+                      <Button type="button" size="sm" variant="outline" onClick={generateGroupedInstructions} disabled={busyKey !== null || data.groupItems.length !== requiredItems}>
+                        {busyKey === 'generate-grouped-instructions' ? 'Running...' : 'Run'}
+                      </Button>
+                    ) : (
+                      <Button type="button" size="sm" variant="outline" onClick={generateSingleDownloadInstructions} disabled={busyKey !== null}>
+                        {busyKey === 'generate-download-instructions' ? 'Running...' : 'Run'}
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
+
+                {!multiple ? <><TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Dropbox</TableCell></TableRow>
+                  <TableRow><TableCell>Create Dropbox / Upload files / Create download instructions PDF</TableCell><TableCell>{status(data.dropbox.current, overviewGenerationItem === 'dropbox')}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={runDropboxAction} disabled={busyKey !== null || !data.dropbox.action}>Run</Button></TableCell></TableRow></> : null}
               </TableBody>
             </Table>
           </div>
         </section>
-
-        <section className="rounded-lg border bg-card p-5">
-          <div className="grid gap-1">
-            <h2 className="text-lg font-semibold">ChatGPT browser</h2>
-            <p className="text-sm text-muted-foreground">Sign in once so the image workflow can reuse the saved ChatGPT session.</p>
-          </div>
-
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <Button type="button" variant="outline" onClick={openChatGptSignIn} disabled={chatGptSignInOpening || jobIsRunning}>
-              <LogIn className="h-4 w-4" aria-hidden="true" />
-              {chatGptSignInOpening ? 'Opening...' : 'Sign in to ChatGPT'}
-            </Button>
-            <Button type="button" variant="outline" disabled title="The upscale workflow has not been configured yet.">
-              <RefreshCw className="h-4 w-4" aria-hidden="true" />
-              Upscale thumbnail
-            </Button>
-          </div>
-
-          {chatGptSignInMessage ? (
-            <div className="mt-5 flex items-start gap-3 rounded-md border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800" role="status">
-              <LogIn className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
-              <div>
-                <p className="font-semibold">Complete ChatGPT sign-in</p>
-                <p className="mt-1">{chatGptSignInMessage}</p>
-              </div>
-            </div>
-          ) : null}
-
-          {thumbnailAutomationJob ? (
-            <div
-              className={`mt-5 flex items-start gap-3 rounded-md border p-4 text-sm ${
-                jobCompleted
-                  ? 'border-green-200 bg-green-50 text-green-800'
-                  : jobFailed
-                    ? 'border-red-200 bg-red-50 text-red-800'
-                    : 'border-amber-200 bg-amber-50 text-amber-800'
-              }`}
-              role="status"
-              aria-live="polite"
-            >
-              {jobCompleted ? (
-                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
-              ) : jobFailed ? (
-                <XCircle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
-              ) : (
-                <RefreshCw className="mt-0.5 h-5 w-5 shrink-0 animate-spin" aria-hidden="true" />
-              )}
-              <div>
-                <p className="font-semibold">
-                  {jobCompleted ? `${jobOutputName} generation complete` : jobFailed ? `${jobOutputName} generation failed` : `${jobOutputName} generation in progress`}
-                </p>
-                <p className="mt-1">{thumbnailAutomationJob.message}</p>
-              </div>
-            </div>
-          ) : null}
-
-          <p className="mt-4 text-xs text-muted-foreground">
-            Sign in through the normal browser first. Close that sign-in browser before generating so Playwright can reuse its saved ChatGPT session.
-          </p>
-        </section>
-      </div>
-    );
-  }
-
-  function renderThumbnail() {
-    if (!data) return null;
-    return (
-      <div className="grid gap-6">
-        <section className="grid gap-2">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <h3 className="text-lg font-semibold">Listing Item</h3>
-              <p className="text-sm text-muted-foreground">
-                {data.listing.listingItemInherited
-                  ? 'Using the first 100 characters of the listing name.'
-                  : 'A custom listing item is set for this listing.'}
-              </p>
-            </div>
-            <span className="text-xs tabular-nums text-muted-foreground">{listingItem.length} / 100</span>
-          </div>
-          <Input
-            value={listingItem}
-            maxLength={100}
-            onChange={(event) => setListingItem(event.target.value)}
-            placeholder="Enter the listing item"
-            disabled={busyKey === 'listing-item'}
-          />
-          <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setListingItem(data.listing.listingItem)}
-              disabled={busyKey !== null || !listingItemChanged}
-            >
-              Undo
-            </Button>
-            <Button type="button" onClick={saveListingItem} disabled={busyKey !== null || !listingItemChanged}>
-              {busyKey === 'listing-item' ? 'Saving...' : 'Save'}
-            </Button>
-          </div>
-        </section>
-        <div className="border-t" />
-        <section className="grid gap-2">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <h3 className="text-lg font-semibold">Room Theme</h3>
-              <p className="text-sm text-muted-foreground">
-                {data.listing.roomThemeInherited
-                  ? `Using the section default: ${data.section.roomTheme}`
-                  : 'Override the section room theme for this listing.'}
-              </p>
-            </div>
-            <span className="text-xs tabular-nums text-muted-foreground">{roomTheme.length} / 200</span>
-          </div>
-          <textarea
-            value={roomTheme}
-            maxLength={200}
-            onChange={(event) => setRoomTheme(event.target.value)}
-            className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            placeholder="Enter the room theme"
-            disabled={busyKey === 'room-theme'}
-          />
-          <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setRoomTheme(data.listing.roomTheme)}
-              disabled={busyKey !== null || !roomThemeChanged}
-            >
-              Undo
-            </Button>
-            <Button type="button" onClick={saveRoomTheme} disabled={busyKey !== null || !roomThemeChanged}>
-              {busyKey === 'room-theme' ? 'Saving...' : 'Save'}
-            </Button>
-          </div>
-        </section>
-        <div className="border-t" />
-        <section className="grid gap-2">
-          <div className="flex items-end justify-between gap-4">
-            <div>
-              <h3 className="text-lg font-semibold">Listing description</h3>
-              <p className="text-sm text-muted-foreground">Describe this listing in up to 1,000 characters.</p>
-            </div>
-            <span className="text-xs tabular-nums text-muted-foreground">{listingDescription.length} / 1000</span>
-          </div>
-          <textarea
-            value={listingDescription}
-            maxLength={1000}
-            onChange={(event) => setListingDescription(event.target.value)}
-            className={textAreaClassName}
-            placeholder="Enter the listing description"
-            disabled={busyKey === 'listing-description'}
-          />
-          <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setListingDescription(data.listing.listingDescription)}
-              disabled={busyKey !== null || !listingDescriptionChanged}
-            >
-              Undo
-            </Button>
-            <Button
-              type="button"
-              onClick={saveListingDescription}
-              disabled={busyKey !== null || !listingDescriptionChanged}
-            >
-              {busyKey === 'listing-description' ? 'Saving...' : 'Save'}
-            </Button>
-          </div>
-        </section>
-        <div className="border-t" />
-        <div>
-          <h3 className="text-lg font-semibold">Thumbnail</h3>
-          <p className="text-sm text-muted-foreground">
-            This thumbnail is used to generate the artwork and the downloadable items. It is not uploaded to Etsy.
-          </p>
-        </div>
-        {data?.thumbnail ? (
-          <div
-            className="group relative h-48 w-48 overflow-hidden rounded-lg border border-border bg-muted"
-            onDoubleClick={() => setPreviewImage({
-              src: getThumbnailUrl(),
-              alt: data.thumbnail?.originalFileName ?? data.thumbnail?.fileName ?? 'Thumbnail',
-            })}
-            title="Double-click to enlarge"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={getThumbnailUrl()}
-              alt={data.thumbnail.originalFileName ?? data.thumbnail.fileName}
-              className="h-full w-full object-cover"
-            />
-            <Button
-              type="button"
-              variant="destructive"
-              size="icon"
-              className="absolute bottom-2 right-2 h-8 w-8 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
-              aria-label="Delete thumbnail"
-              onClick={() => setDeleteThumbnailOpen(true)}
-              disabled={busyKey !== null}
-            >
-              <Trash2 className="h-4 w-4" aria-hidden="true" />
-            </Button>
-          </div>
-        ) : (
-          <div
-            className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-border p-5"
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => {
-              event.preventDefault();
-              if (busyKey !== null) return;
-              const image = Array.from(event.dataTransfer.files).find((file) => file.type.startsWith('image/'));
-              if (image) void uploadFiles('thumbnail', [image]);
-            }}
-          >
-            <label className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-muted px-5 py-3 text-sm font-semibold hover:bg-accent">
-              <Plus className="h-5 w-5" aria-hidden="true" /> Add photo
-              <input
-                type="file"
-                className="sr-only"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={(event) => uploadAsset('thumbnail', event)}
-                disabled={busyKey !== null}
-              />
-            </label>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  function renderEtsyProducts() {
-    if (!data) return null;
-    const checkbox = (
-      checked: boolean,
-      label: string,
-      onChange: (checked: boolean) => void
-    ) => (
-      <label key={label} className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted/60">
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(event) => onChange(event.target.checked)}
-          disabled={busyKey !== null}
-          className="h-4 w-4 rounded border-input accent-primary"
-        />
-        <span>{label}</span>
-      </label>
-    );
-
-    return (
-      <div className="grid gap-6">
-        <div>
-          <h3 className="text-lg font-semibold">Etsy Products</h3>
-          <p className="text-sm text-muted-foreground">Choose exactly what customers can buy from this listing.</p>
-        </div>
-        <div className="rounded-lg border bg-muted/20 p-3">
-          {checkbox(etsyProductsForm.listOnEtsy, 'List this listing on Etsy', (checked) =>
-            setEtsyProductsForm((current) => ({ ...current, listOnEtsy: checked }))
-          )}
-        </div>
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-          <section className="rounded-lg border p-4">
-            <h4 className="mb-2 font-semibold">Downloads</h4>
-            {checkbox(etsyProductsForm.digitalDownload, 'Digital Download', (checked) =>
-              setEtsyProductsForm((current) => ({ ...current, digitalDownload: checked }))
-            )}
-            <div className="my-2 border-t" />
-            <label htmlFor="download-section" className="block text-sm font-medium">Download Section</label>
-            <div className="mt-2 flex gap-2">
-              <select
-                id="download-section"
-                className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm"
-                value={etsyProductsForm.downloadSectionId ?? ''}
-                onChange={(event) => setEtsyProductsForm((current) => ({
-                  ...current,
-                  downloadSectionId: event.target.value ? Number(event.target.value) : null,
-                }))}
-                disabled={busyKey !== null || downloadSectionsLoading}
-              >
-                <option value="">{downloadSectionsLoading ? 'Loading Etsy sections...' : 'Choose a section'}</option>
-                {etsyProductsForm.downloadSectionId !== null
-                  && !downloadSections.some((section) => section.id === etsyProductsForm.downloadSectionId)
-                  ? <option value={etsyProductsForm.downloadSectionId}>Section #{etsyProductsForm.downloadSectionId} (not found)</option>
-                  : null}
-                {downloadSections.map((section) => <option key={section.id} value={section.id}>{section.title}</option>)}
-              </select>
-              <Button type="button" size="icon" variant="outline" onClick={() => setCreateDownloadSectionOpen(true)} disabled={busyKey !== null} aria-label="Create download section" title="Create download section">
-                <Plus className="h-4 w-4" aria-hidden="true" />
-              </Button>
-            </div>
-            {downloadSectionsError ? <p className="mt-2 text-xs text-destructive">{downloadSectionsError}</p> : null}
-            {!downloadSectionsLoading && !downloadSectionsError && downloadSections.length === 0 ? (
-              <p className="mt-2 text-xs text-muted-foreground">No Download Sections yet. Use + to create one.</p>
-            ) : null}
-            {etsyProductsForm.downloadSectionId === null ? <p className="mt-2 text-xs text-amber-700">Required to complete this listing.</p> : null}
-          </section>
-          <section className="rounded-lg border p-4">
-            <h4 className="mb-2 font-semibold">Prints / Frames</h4>
-            {checkbox(etsyProductsForm.printsFrames, 'Prints / Frames', (checked) =>
-              setEtsyProductsForm((current) => ({ ...current, printsFrames: checked }))
-            )}
-            <div className="my-2 border-t" />
-            <h5 className="mb-2 text-sm font-semibold">Sizes</h5>
-            {data.etsyProducts.sizes.map((size) => checkbox(
-              etsyProductsForm.sizes[size.key] ?? false,
-              size.label,
-              (checked) => setEtsyProductsForm((current) => ({
-                ...current,
-                sizes: { ...current.sizes, [size.key]: checked },
-              }))
-            ))}
-          </section>
-          <section className="rounded-lg border p-4">
-            <h4 className="mb-2 font-semibold">Frames</h4>
-            {data.etsyProducts.frames.map((frame) => checkbox(
-              etsyProductsForm.frames[frame.key] ?? false,
-              frame.label,
-              (checked) => setEtsyProductsForm((current) => ({
-                ...current,
-                frames: { ...current.frames, [frame.key]: checked },
-              }))
-            ))}
-          </section>
-          <section className="rounded-lg border p-4">
-            <h4 className="mb-2 font-semibold">Customised</h4>
-            <p className="mb-2 text-xs text-muted-foreground">
-              Leave both unchecked for no customisation. Top and bottom are separate optional text boxes with no additional fee.
-            </p>
-            {checkbox(etsyProductsForm.customTop, 'Top of image', (checked) =>
-              setEtsyProductsForm((current) => ({ ...current, customTop: checked }))
-            )}
-            {checkbox(etsyProductsForm.customBottom, 'Bottom of image', (checked) =>
-              setEtsyProductsForm((current) => ({ ...current, customBottom: checked }))
-            )}
-            <div className="my-2 border-t" />
-            {checkbox(etsyProductsForm.customisePrints, 'Customise prints', (checked) =>
-              setEtsyProductsForm((current) => ({ ...current, customisePrints: checked }))
-            )}
-          </section>
-        </div>
-        {data.listing.listingType !== 'digital' ? (
-          <section className="rounded-lg border p-4">
-            <h4 className="font-semibold">Physical delivery</h4>
-            <p className="mt-1 text-xs text-muted-foreground">Choose the Etsy return policy applied when this physical listing is synced.</p>
-            <label className="mt-3 grid gap-2 text-sm font-medium">
-              Return policy
-              <select
-                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                value={etsyProductsForm.returnPolicyId}
-                onChange={(event) => setEtsyProductsForm((current) => ({ ...current, returnPolicyId: event.target.value }))}
-                disabled={busyKey !== null || returnPoliciesLoading}
-              >
-                <option value="">{returnPoliciesLoading ? 'Loading Etsy policies...' : 'Choose a return policy'}</option>
-                {returnPolicies.map((policy) => <option key={policy.id} value={policy.id}>{policy.label}</option>)}
-              </select>
-            </label>
-            {returnPoliciesError ? <p className="mt-2 text-sm text-destructive">{returnPoliciesError}</p> : null}
-            {!returnPoliciesLoading && !returnPoliciesError && returnPolicies.length === 0 ? (
-              <p className="mt-2 text-sm text-amber-700">Create a return policy in Etsy Policy settings, then reload this page.</p>
-            ) : null}
-            <div className="my-4 border-t" />
-            <h5 className="font-semibold">Gift Message</h5>
-            <p className="mt-1 text-sm">If you want to accept gift messages then follow the below</p>
-            <ol className="my-3 list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
-              <li>Open <strong>Shop Manager → Settings → Options</strong>.</li>
-              <li>Find <strong>Offer gift messages</strong>.</li>
-              <li>Select <strong>Enabled</strong>.</li>
-            </ol>
-            {checkbox(etsyProductsForm.giftMessageEnabled, 'Gift message enabled', (checked) =>
-              setEtsyProductsForm((current) => ({ ...current, giftMessageEnabled: checked }))
-            )}
-          </section>
-        ) : null}
-        <div className="flex justify-end gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setEtsyProductsForm(createEtsyProductsForm(data))}
-            disabled={busyKey !== null || !etsyProductsChanged}
-          >
-            Undo
-          </Button>
-          <Button type="button" onClick={saveEtsyProducts} disabled={busyKey !== null || !etsyProductsChanged}>
-            {busyKey === 'save-etsy-products' ? 'Saving...' : 'Save'}
-          </Button>
-        </div>
       </div>
     );
   }
@@ -3001,7 +2664,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 {item.label}
               </span>
               <Button type="button" size="sm" variant="outline" onClick={() => setActiveTab(item.tab)}>
-                Open {item.tab === 'etsy-products' ? 'Etsy Products' : item.tab === 'downloads' ? 'Digital Downloads' : item.tab.charAt(0).toUpperCase() + item.tab.slice(1)}
+                Open {item.tab === 'downloads' ? 'Digital Downloads' : item.tab.charAt(0).toUpperCase() + item.tab.slice(1)}
               </Button>
             </li>
           ))}
@@ -3131,14 +2794,12 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           </div>
           <div className="flex flex-wrap gap-1 border-b border-border" role="tablist" aria-label="Listing editor sections">
             {([
-              ['start', 'Start'],
-              ['thumbnail', 'Thumbnail'],
-              ['etsy-products', 'Etsy Products'],
+              ['overview', 'Overview'],
               ['images', 'Images'],
               ['details', 'Details'],
               ['tags', 'Tags'],
               ['downloads', 'Digital Downloads'],
-              ['dropbox', 'Dropbox'],
+              ...(data.template?.templateType === 'multiple' ? [] : [['dropbox', 'Dropbox'] as const]),
               ['todo', 'Todo'],
             ] as const).map(([value, label]) => (
               <button
@@ -3152,7 +2813,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 }`}
               >
                 {label}
-                {label !== 'Todo' && label !== 'Start' && data.pendingChanges.includes(label) ? (
+                {label !== 'Todo' && data.pendingChanges.includes(label as never) ? (
                   <span className="ml-1 text-amber-600" aria-label="Changed">●</span>
                 ) : null}
               </button>
@@ -3160,9 +2821,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           </div>
         </CardHeader>
         <CardContent className="pt-6">
-          {activeTab === 'start' ? renderStart() : null}
-          {activeTab === 'thumbnail' ? renderThumbnail() : null}
-          {activeTab === 'etsy-products' ? renderEtsyProducts() : null}
+          {activeTab === 'overview' ? renderOverview() : null}
           {activeTab === 'images' ? renderWorkflowAssetTable('image', 'Images', data.images) : null}
           {activeTab === 'downloads' ? renderWorkflowAssetTable('file', 'Digital Downloads', data.files) : null}
           {activeTab === 'dropbox' ? renderDropbox() : null}
@@ -3244,11 +2903,10 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                     Etsy SKU
                     <Input
                       value={form.etsySku}
-                      maxLength={32}
-                      onChange={(event) => updateForm('etsySku', event.target.value)}
-                      placeholder="Enter one SKU for this listing"
+                      readOnly
+                      placeholder="Assigned automatically"
                     />
-                    <span className="text-xs font-normal text-muted-foreground">The same SKU is sent for every size and frame variation when syncing to Etsy.</span>
+                    <span className="text-xs font-normal text-muted-foreground">Assigned automatically as SKU_000001 onwards. The same SKU is sent for every size and frame variation.</span>
                   </label>
                 </div>
                 <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
@@ -3320,39 +2978,6 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           ) : null}
         </CardContent>
       </Card>
-
-      <Dialog
-        open={thumbnailReviewOpen}
-        onOpenChange={(open) => {
-          if (open) setThumbnailReviewOpen(true);
-          else if (!thumbnailReviewBusy) void reviewGeneratedThumbnail(false);
-        }}
-      >
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Replace the thumbnail?</DialogTitle>
-            <DialogDescription>
-              Review the generated image. Choosing Yes replaces the saved thumbnail and marks the listing details for recreation. Choosing No deletes this generated image.
-            </DialogDescription>
-          </DialogHeader>
-          {thumbnailReviewJobId ? (
-            <div className="overflow-hidden rounded-lg border bg-muted">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`/api/create-thumbnail/result?jobId=${encodeURIComponent(thumbnailReviewJobId)}`}
-                alt="Generated thumbnail preview"
-                className="max-h-[65vh] w-full object-contain"
-              />
-            </div>
-          ) : null}
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => reviewGeneratedThumbnail(false)} disabled={thumbnailReviewBusy}>No</Button>
-            <Button type="button" onClick={() => reviewGeneratedThumbnail(true)} disabled={thumbnailReviewBusy}>
-              {thumbnailReviewBusy ? 'Saving...' : 'Yes'}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <Dialog
         open={promptsOpen}
@@ -4372,33 +3997,28 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
         </DialogContent>
       </Dialog>
 
-      <Dialog open={createDownloadSectionOpen} onOpenChange={(open) => {
-        if (busyKey !== 'create-download-section') {
-          setCreateDownloadSectionOpen(open);
-          if (!open) setCreateDownloadSectionError(null);
-        }
-      }}>
+      <Dialog open={overviewGenerationError !== null} onOpenChange={(open) => { if (!open) setOverviewGenerationError(null); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create Download Section</DialogTitle>
-            <DialogDescription>Create a new section in your Etsy shop. It will be selected here; click Save to apply it to this listing.</DialogDescription>
+            <DialogTitle>Listing generation stopped</DialogTitle>
+            <DialogDescription>
+              {overviewGenerationError?.stage} could not be completed. No later generation stages were started.
+            </DialogDescription>
           </DialogHeader>
-          <form onSubmit={createDownloadSection} className="grid gap-4">
-            <label className="grid gap-2 text-sm font-medium">
-              Section name
-              <Input value={newDownloadSectionName} onChange={(event) => setNewDownloadSectionName(event.target.value)} disabled={busyKey === 'create-download-section'} autoFocus />
-            </label>
-            {createDownloadSectionError ? <p className="text-sm text-destructive" role="alert">{createDownloadSectionError}</p> : null}
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setCreateDownloadSectionOpen(false)} disabled={busyKey === 'create-download-section'}>Cancel</Button>
-              <Button type="submit" disabled={busyKey === 'create-download-section'}>{busyKey === 'create-download-section' ? 'Creating...' : 'Create'}</Button>
-            </div>
-          </form>
+          <div className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm">
+            <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" aria-hidden="true" />
+            <p>{overviewGenerationError?.message}</p>
+          </div>
+          <div className="flex justify-end">
+            <Button type="button" onClick={() => setOverviewGenerationError(null)}>Close</Button>
+          </div>
         </DialogContent>
       </Dialog>
 
       <Dialog open={previewImage !== null} onOpenChange={(open) => { if (!open) setPreviewImage(null); }}>
-        <DialogContent className="max-h-[80vh] w-[80vw] max-w-[80vw] overflow-hidden p-4">
+        <DialogContent className={previewImage?.galleryImageId
+          ? 'max-h-[80vh] w-fit max-w-[calc(100vw-2rem)] overflow-hidden p-4 sm:max-w-[calc(100vw-2rem)]'
+          : 'max-h-[80vh] w-[80vw] max-w-[80vw] overflow-hidden p-4'}>
           <DialogHeader>
             <DialogTitle>{previewImage?.alt ?? 'Image preview'}</DialogTitle>
           </DialogHeader>
@@ -4409,11 +4029,140 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               className="h-[calc(80vh-5rem)] w-full rounded-md border bg-white"
             />
           ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={previewImage.src} alt={previewImage.alt} className="max-h-[calc(80vh-5rem)] max-w-full object-contain" />
+            <div className="flex min-h-0 items-center justify-center gap-3">
+              {previewGalleryIndex >= 0 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0"
+                  onClick={() => previewListingImageAt(previewGalleryIndex - 1)}
+                  disabled={previewGalleryIndex === 0}
+                  aria-label="Previous image"
+                  title="Previous image"
+                >
+                  <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                </Button>
+              ) : null}
+              <div className="flex min-h-0 min-w-0 flex-none flex-col items-center gap-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={previewImage.src} alt={previewImage.alt} className="h-auto w-auto max-h-[calc(80vh-8rem)] max-w-[calc(100vw-10rem)] object-contain" />
+                {previewGalleryIndex >= 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    {previewGalleryIndex + 1} of {data.images.length}
+                  </p>
+                ) : null}
+              </div>
+              {previewGalleryIndex >= 0 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0"
+                  onClick={() => previewListingImageAt(previewGalleryIndex + 1)}
+                  disabled={previewGalleryIndex === data.images.length - 1}
+                  aria-label="Next image"
+                  title="Next image"
+                >
+                  <ChevronRight className="h-5 w-5" aria-hidden="true" />
+                </Button>
+              ) : null}
+            </div>
           ) : null}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={pendingThumbnail !== null} onOpenChange={(open) => { if (!open && busyKey !== 'upload-thumbnail') closePendingThumbnail(); }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Confirm thumbnail</DialogTitle>
+            <DialogDescription>
+              The image is approximately {pendingThumbnail?.ratio === '2x3' ? '2:3' : '4:5'}. Rotate it if needed, then save it. A small rounding difference will be resized to the exact ratio.
+            </DialogDescription>
+          </DialogHeader>
+          {pendingThumbnail ? <div className="grid gap-4">
+            <div className="flex min-h-96 items-center justify-center overflow-hidden rounded-lg border bg-muted p-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={pendingThumbnail.url}
+                alt="Selected thumbnail"
+                className="max-h-[55vh] max-w-full object-contain transition-transform"
+                style={{ transform: `rotate(${pendingThumbnail.rotation}deg)` }}
+              />
+            </div>
+            <p className="text-center text-sm text-muted-foreground">
+              {pendingThumbnail.rotation % 180 === 0
+                ? `${pendingThumbnail.width} × ${pendingThumbnail.height}`
+                : `${pendingThumbnail.height} × ${pendingThumbnail.width}`}
+              {' · '}{pendingThumbnail.rotation % 180 === 0
+                ? pendingThumbnail.width > pendingThumbnail.height ? 'Landscape' : 'Portrait'
+                : pendingThumbnail.height > pendingThumbnail.width ? 'Landscape' : 'Portrait'}
+            </p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={() => setPendingThumbnail((current) => current ? ({ ...current, rotation: ((current.rotation + 270) % 360) as 0 | 90 | 180 | 270 }) : null)} disabled={busyKey !== null}>
+                  <RotateCcw className="h-4 w-4" aria-hidden="true" /> Rotate left
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setPendingThumbnail((current) => current ? ({ ...current, rotation: ((current.rotation + 90) % 360) as 0 | 90 | 180 | 270 }) : null)} disabled={busyKey !== null}>
+                  <RotateCw className="h-4 w-4" aria-hidden="true" /> Rotate right
+                </Button>
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={closePendingThumbnail} disabled={busyKey !== null}>Cancel</Button>
+                <Button type="button" onClick={() => void savePendingThumbnail()} disabled={busyKey !== null}>
+                  {busyKey === 'upload-thumbnail' ? 'Saving...' : 'Save thumbnail'}
+                </Button>
+              </div>
+            </div>
+          </div> : null}
+        </DialogContent>
+      </Dialog>
+
+      {data.thumbnail ? (
+        <ListingPrintCropDialog
+          open={printCropsOpen}
+          onOpenChange={setPrintCropsOpen}
+          imageUrl={getThumbnailUrl(true)}
+          context={context}
+          orientation={data.listing.artworkOrientation}
+          initialSettings={data.listing.printCropSettings}
+          saving={busyKey === 'save-print-crops'}
+          onSave={(value) => { void savePrintCrops(value); }}
+        />
+      ) : null}
+
+      {data.thumbnail && data.listing.printCropSettings ? (
+        <ListingTextAreasDialog
+          open={textAreasOpen}
+          onOpenChange={setTextAreasOpen}
+          imageUrl={getThumbnailUrl(true)}
+          cropSettings={data.listing.printCropSettings}
+          initialAreas={data.listing.personalisationTextAreas}
+          allowTop={listingCustomisationEnabled && data.etsyProducts.config.customTop}
+          allowBottom={listingCustomisationEnabled && data.etsyProducts.config.customBottom}
+          saving={busyKey === 'save-text-areas'}
+          onSave={(value) => { void saveTextAreas(value); }}
+        />
+      ) : null}
+
+      {data.thumbnail ? (
+        <ListingPersonalisationPreviewDialog
+          open={personalisationPreviewOpen}
+          onOpenChange={setPersonalisationPreviewOpen}
+          context={context}
+          sizes={personalisationPreviewSizes}
+          allowTop={listingCustomisationEnabled && data.etsyProducts.config.customTop}
+          allowBottom={listingCustomisationEnabled && data.etsyProducts.config.customBottom}
+        />
+      ) : null}
+
+      <ListingMockupTesterDialog
+        open={mockupTesterOpen}
+        onOpenChange={setMockupTesterOpen}
+        context={context}
+        listingName={data.listing.listingItem || data.listing.localDirectoryName || data.listing.title}
+        artworkOptions={mockupTesterArtworkOptions}
+      />
 
       <Dialog
         open={deleteThumbnailOpen}
@@ -4440,6 +4189,19 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
             >
               {busyKey === 'thumbnail-thumbnail' ? 'Deleting...' : 'Delete'}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={downloadToDelete !== null} onOpenChange={(open) => { if (!open && busyKey === null) setDownloadToDelete(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Delete digital download?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">Are you sure you want to delete <strong>{downloadToDelete?.name}</strong>?</p>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => setDownloadToDelete(null)} disabled={busyKey !== null}>Cancel</Button>
+            <Button type="button" variant="destructive" disabled={busyKey !== null} onClick={async () => {
+              if (downloadToDelete && await deleteAsset('file', downloadToDelete.id)) setDownloadToDelete(null);
+            }}>{busyKey?.startsWith('file-') ? 'Deleting...' : 'Delete'}</Button>
           </div>
         </DialogContent>
       </Dialog>

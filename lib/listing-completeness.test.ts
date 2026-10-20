@@ -4,11 +4,11 @@ import { getListingTodoItems, isListingComplete, type ListingCompletionState } f
 const completeState: ListingCompletionState = {
   hasListingDescription: true,
   hasThumbnail: true,
+  hasThumbnailSizes: true,
   hasRequiredImages: true,
   hasRequiredDigitalDownloads: true,
   hasCurrentZips: true,
   hasCurrentDropbox: true,
-  hasEtsyProducts: true,
   hasDownloadSection: true,
   hasTags: true,
   hasTitle: true,
@@ -24,26 +24,38 @@ describe('listing completeness', () => {
   it('requires the listing description', () => {
     const state = { ...completeState, hasListingDescription: false };
     expect(isListingComplete(state)).toBe(false);
-    expect(getListingTodoItems(state)).toEqual([{ label: 'Add the listing description', tab: 'thumbnail' }]);
+    expect(getListingTodoItems(state)).toEqual([{ label: 'Add the listing description', tab: 'overview' }]);
   });
 
   it('reports when fewer than 15 listing images are uploaded', () => {
     const state = { ...completeState, hasRequiredImages: false };
     expect(isListingComplete(state)).toBe(false);
-    expect(getListingTodoItems(state)).toEqual([{ label: 'Upload at least 15 listing images', tab: 'images' }]);
+    expect(getListingTodoItems(state)).toEqual([{ label: 'Generate every template image', tab: 'overview' }]);
+  });
+
+  it('requires the thumbnail sizes to be set', () => {
+    const state = { ...completeState, hasThumbnailSizes: false };
+    expect(isListingComplete(state)).toBe(false);
+    expect(getListingTodoItems(state)).toEqual([{ label: 'Set the thumbnail sizes', tab: 'overview' }]);
+  });
+
+  it('requires text areas only when listing customisation is enabled', () => {
+    const state = { ...completeState, requiresTextAreas: true, hasTextAreas: false };
+    expect(getListingTodoItems(state)).toContainEqual({ label: 'Set the personalisation text areas', tab: 'overview' });
+    expect(isListingComplete({ ...completeState, requiresTextAreas: false, hasTextAreas: false })).toBe(true);
   });
 
   it('requires a download section', () => {
     const state = { ...completeState, hasDownloadSection: false };
     expect(isListingComplete(state)).toBe(false);
-    expect(getListingTodoItems(state)).toEqual([{ label: 'Select a download section', tab: 'etsy-products' }]);
+    expect(getListingTodoItems(state)).toEqual([{ label: 'Select a download section on the template', tab: 'overview' }]);
   });
 
   it('requires all six printable downloads and the How to Print guide', () => {
     const state = { ...completeState, hasRequiredDigitalDownloads: false };
     expect(isListingComplete(state)).toBe(false);
     expect(getListingTodoItems(state)).toEqual([
-      { label: 'Create all 6 printable downloads and the How to Print guide', tab: 'downloads' },
+      { label: 'Create all printable downloads and the How to Print guide', tab: 'downloads' },
     ]);
   });
 
@@ -59,7 +71,7 @@ describe('listing completeness', () => {
 
   it('reports every incomplete requirement and accepts a complete listing', () => {
     expect(getListingTodoItems({ ...completeState, hasThumbnail: false, hasTags: false })).toEqual([
-      { label: 'Upload the thumbnail', tab: 'thumbnail' },
+      { label: 'Upload the thumbnail', tab: 'overview' },
       { label: 'Add at least one tag', tab: 'tags' },
     ]);
     expect(isListingComplete(completeState)).toBe(true);

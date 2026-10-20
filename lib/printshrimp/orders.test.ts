@@ -74,6 +74,8 @@ function previewListing() {
   return {
     title: 'Green Sea Turtle',
     localDirectoryName: 'Green-Sea-Turtle',
+    personalisationTextAreas: null,
+    ourCategory: { customisePrints: true, customTop: true, customBottom: true },
     productConfig: { sku: 'SEA_CREATURES_GREEN_SEA_TURTLE' },
     subSection: {
       name: 'Turtles',
@@ -299,6 +301,49 @@ describe('PrintShrimp orders', () => {
       },
     });
     expect(result.payload.products[0]).not.toHaveProperty('sku');
+  });
+
+  it('passes saved proportional text areas into customised artwork generation', async () => {
+    const listing = {
+      ...previewListing(),
+      personalisationTextAreas: {
+        showTop: true,
+        showBottom: false,
+        top: { x: 0.05, y: 0.25, width: 0.9, height: 0.12 },
+        bottom: { x: 0, y: 0.85, width: 1, height: 0.1 },
+      },
+    };
+    mocks.findUnique.mockResolvedValue(listing);
+    const personalise = vi.fn().mockResolvedValue({
+      buffer: Buffer.from('personalised'),
+      width: 7016,
+      height: 9933,
+      density: 300,
+      fontSize: 200,
+      textColour: '#334433',
+      headerText: 'Welcome',
+      footerText: '',
+    });
+
+    await createPrintShrimpOrderPreview(
+      previewInput({ topText: 'Welcome', bottomText: 'Hidden' }),
+      {
+        readStorageFile: vi.fn().mockResolvedValue(Buffer.from('source')),
+        readFont: vi.fn().mockResolvedValue(Buffer.from('font')),
+        personalise,
+        convert: vi.fn().mockResolvedValue({ jpeg: Buffer.from('jpeg'), width: 7016, height: 9933, density: 300 }),
+      },
+    );
+
+    expect(personalise).toHaveBeenCalledWith(
+      Buffer.from('source'),
+      Buffer.from('font'),
+      { headerText: 'Welcome', footerText: '', textTransform: 'NONE' },
+      expect.objectContaining({
+        headerTextArea: { x: 0.05, y: 0.25, width: 0.9, height: 0.12 },
+      }),
+    );
+    expect(personalise.mock.calls[0][3]).not.toHaveProperty('footerTextArea');
   });
 
   it('stores custom artwork in the public PrintShrimp S3 bucket without Dropbox', async () => {

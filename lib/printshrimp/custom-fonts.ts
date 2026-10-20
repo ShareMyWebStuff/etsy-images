@@ -45,6 +45,8 @@ export const PRINTSHRIMP_CUSTOM_FONTS = [
 
 export type PrintShrimpCustomFontId = typeof PRINTSHRIMP_CUSTOM_FONTS[number]['id'];
 
+export const DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID: PrintShrimpCustomFontId = 'nunito-semibold';
+
 export function getPrintShrimpCustomFont(value: unknown) {
   return PRINTSHRIMP_CUSTOM_FONTS.find((font) => font.id === value) ?? null;
 }

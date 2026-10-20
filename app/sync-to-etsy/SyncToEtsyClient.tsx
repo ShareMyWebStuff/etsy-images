@@ -110,7 +110,7 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
         const response = await fetch('/api/etsy/upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ listingId: listings[index].id }),
+          body: JSON.stringify({ listingId: listings[index].id, variants: listings[index].syncVariants }),
         });
         const result = (await response.json()) as { data?: SyncToEtsyData; error?: string };
         if (!response.ok) throw new Error(result.error ?? `Unable to sync ${listings[index].listingName}.`);
@@ -144,7 +144,7 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
         <h1 className="text-2xl font-semibold">{mode === 'sync' ? 'Sync to Etsy' : 'Publish to Etsy'}</h1>
         <p className="mt-2 text-muted-foreground">
           {mode === 'sync'
-            ? 'From this screen you can sync the selected products to Etsy as draft listings.'
+            ? 'Categories come from each listing’s assigned template. Add any missing category to Etsy, then sync its listings.'
             : 'From this screen you can publish your synced draft listings on Etsy.'}
         </p>
       </div>
@@ -178,63 +178,70 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
           {mode === 'publish' ? <Button
             type="button"
             variant="outline"
-            onClick={() => runAction('/api/etsy/check-statuses', { sectionId: section.id }, `check-statuses-${section.id}`, 'Unable to check Etsy listing statuses.')}
+            onClick={() => runAction('/api/etsy/check-statuses', { listingIds: section.listings.map((listing) => listing.id) }, `check-statuses-${section.id}`, 'Unable to check Etsy listing statuses.')}
             disabled={busy !== null || !section.listings.some((listing) => listing.hasEtsyListing)}
           >
             <RefreshCw className={`mr-2 h-4 w-4 ${busy === `check-statuses-${section.id}` ? 'animate-spin' : ''}`} aria-hidden="true" />
             {busy === `check-statuses-${section.id}` ? 'Checking...' : 'Check statuses'}
           </Button> : null}
           {mode === 'sync' ? <div className="flex items-center gap-2">
-            <Button
-              type="button"
+            {!section.hasEtsySection ? <Button
               variant="outline"
-              size="icon"
-              aria-label={`Refresh Etsy section for ${section.sectionName} listings`}
-              title={section.hasEtsySection ? 'Refresh listing section assignments on Etsy' : 'Add this section to Etsy first'}
-              onClick={() => runAction('/api/etsy/shop-sections', { sectionId: section.id }, `refresh-section-${section.id}`, 'Unable to refresh Etsy section assignments.', 'PATCH')}
-              disabled={!section.hasEtsySection || busy !== null}
+              onClick={() => runAction(
+                '/api/etsy/template-categories',
+                { shopId: section.shopId, categoryId: section.categoryId },
+                `add-category-${section.id}`,
+                'Unable to add the category to Etsy.',
+              )}
+              disabled={busy !== null}
             >
-              <RefreshCw className={`h-4 w-4 ${busy === `refresh-section-${section.id}` ? 'animate-spin' : ''}`} aria-hidden="true" />
-            </Button>
+              {busy === `add-category-${section.id}` ? 'Adding...' : 'Add Category to Etsy'}
+            </Button> : <>
+              <span className="inline-flex items-center gap-1 text-sm font-medium text-green-600">
+                <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> On Etsy
+              </span>
+              <Button
+                variant="outline"
+                onClick={() => runAction(
+                  '/api/etsy/template-categories',
+                  { shopId: section.shopId, categoryId: section.categoryId },
+                  `add-category-${section.id}`,
+                  'Unable to sync the category to Etsy.',
+                )}
+                disabled={busy !== null}
+              >
+                {busy === `add-category-${section.id}` ? 'Syncing Category...' : 'Sync Category'}
+              </Button>
+            </>}
             {section.listings.some((listing) => listing.canSync) ? (
               <Button
                 variant="outline"
                 onClick={() => syncAllSection(section)}
                 disabled={busy !== null || !section.listings.some((listing) => listing.canSync)}
               >
-                {busy === `sync-all-${section.id}` ? 'Syncing...' : 'Sync All'}
+                {busy === `sync-all-${section.id}`
+                  ? 'Syncing...'
+                  : section.listings.every((listing) => listing.syncVariants.length === 1 && listing.syncVariants[0] === 'download')
+                    ? 'Sync All Digital'
+                    : section.listings.every((listing) => listing.syncVariants.length === 1 && listing.syncVariants[0] === 'print')
+                      ? 'Sync All Prints'
+                      : 'Sync All'}
               </Button>
             ) : null}
-            {section.hasEtsySection && !section.hasSyncedListings ? (
-              <Button
-                variant="destructive"
-                onClick={() => runAction('/api/etsy/shop-sections', { sectionId: section.id }, `delete-section-${section.id}`, 'Unable to delete Etsy section.', 'DELETE')}
-                disabled={busy !== null}
-              >
-                {busy === `delete-section-${section.id}` ? 'Deleting...' : 'Delete from Etsy'}
-              </Button>
-            ) : (
-              <Button
-                onClick={() => runAction('/api/etsy/upload', { sectionId: section.id }, `section-${section.id}`, 'Unable to create Etsy section.')}
-                disabled={section.hasEtsySection || busy !== null}
-              >
-                {busy === `section-${section.id}` ? 'Creating...' : section.hasEtsySection ? 'Added to Etsy' : `Add ${section.sectionName} to Etsy`}
-              </Button>
-            )}
           </div> : null}
         </CardHeader>
         {isExpanded ? <CardContent id={`section-listings-${section.id}`}>
-          <Table><TableHeader><TableRow>{showSubject ? <TableHead>Subject</TableHead> : null}<TableHead>Listing Name</TableHead><TableHead>Etsy Product</TableHead><TableHead>Etsy Category</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>
+          <Table><TableHeader><TableRow>{showSubject ? <TableHead>Subject</TableHead> : null}<TableHead>Listing Name</TableHead><TableHead>Etsy Product</TableHead><TableHead>Template Use</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>
             {visibleListings.map((listing) => <TableRow key={listing.id}>
               {showSubject ? <TableCell>{listing.subjectName}</TableCell> : null}
               <TableCell className="font-medium">{listing.listingName}</TableCell>
               <TableCell>{listing.etsyListingMode === 'both'
                 ? 'Print + Digital (2 listings)'
                 : listing.etsyListingMode === 'download' ? 'Digital' : 'Print'}</TableCell>
-              <TableCell>{listing.etsyCategory}</TableCell>
-              <TableCell>{!listing.isComplete ? <span className="inline-flex items-center gap-2 text-destructive"><XCircle className="h-4 w-4" /> Listing incomplete</span> : listing.pendingChanges.length > 0 ? <span className="inline-flex items-center gap-2 text-amber-600"><XCircle className="h-4 w-4" /> Needs sync: {listing.pendingChanges.join(', ')}</span> : listing.isPublished ? <span className="inline-flex items-center gap-2 text-green-600"><CheckCircle2 className="h-4 w-4" /> Published</span> : listing.hasActiveEtsyListing ? <span className="inline-flex items-center gap-2 text-amber-600"><XCircle className="h-4 w-4" /> Partially published</span> : listing.isInactive ? <span className="inline-flex items-center gap-2 text-amber-600"><XCircle className="h-4 w-4" /> Inactive</span> : listing.isSynced ? <span className="inline-flex items-center gap-2 text-green-600"><CheckCircle2 className="h-4 w-4" /> Synced</span> : <span className="inline-flex items-center gap-2 text-destructive"><XCircle className="h-4 w-4" /> Not synced</span>}</TableCell>
+              <TableCell>{listing.categoryUses.join(' + ')}</TableCell>
+              <TableCell>{!listing.isComplete ? <span className="inline-flex items-center gap-2 text-destructive"><XCircle className="h-4 w-4" /> Listing incomplete</span> : listing.isPublished ? <span className="inline-flex items-center gap-2 text-green-600"><CheckCircle2 className="h-4 w-4" /> Published</span> : listing.hasActiveEtsyListing ? <span className="inline-flex items-center gap-2 text-amber-600"><XCircle className="h-4 w-4" /> Partially published</span> : listing.isInactive ? <span className="inline-flex items-center gap-2 text-amber-600"><XCircle className="h-4 w-4" /> Inactive</span> : listing.isSynced ? <span className="inline-flex items-center gap-2 text-green-600"><CheckCircle2 className="h-4 w-4" /> Synced</span> : !listing.canSync && listing.syncDisabledReason ? <span className="inline-flex items-center gap-2 text-destructive"><XCircle className="h-4 w-4" /> {listing.syncDisabledReason}</span> : listing.pendingChanges.length > 0 ? <span className="inline-flex items-center gap-2 text-amber-600"><XCircle className="h-4 w-4" /> Needs sync: {listing.pendingChanges.join(', ')}</span> : <span className="inline-flex items-center gap-2 text-destructive"><XCircle className="h-4 w-4" /> Not synced</span>}</TableCell>
               <TableCell className="text-right"><div className="flex justify-end gap-2">
-                {mode === 'sync' && (!listing.hasEtsyListing || listing.canSync) ? <Button className="w-36" title={listing.syncDisabledReason ?? undefined} onClick={() => runAction('/api/etsy/upload', { listingId: listing.id }, `listing-${listing.id}`, 'Unable to sync listing.')} disabled={!listing.canSync || busy !== null}>{busy === `listing-${listing.id}` ? 'Syncing...' : 'Sync'}</Button> : null}
+                {mode === 'sync' && (!listing.hasEtsyListing || listing.canSync) ? <Button className="w-36" title={listing.syncDisabledReason ?? undefined} onClick={() => runAction('/api/etsy/upload', { listingId: listing.id, variants: listing.syncVariants }, `listing-${listing.id}`, 'Unable to sync listing.')} disabled={!listing.canSync || busy !== null}>{busy === `listing-${listing.id}` ? 'Syncing...' : listing.syncVariants.length > 1 ? 'Sync All' : listing.syncVariants[0] === 'download' ? 'Sync Digital' : listing.syncVariants[0] === 'customised' ? 'Sync Customised' : 'Sync Print'}</Button> : null}
                 {mode === 'sync' && listing.hasEtsyListing ? <Button className="w-36" variant="destructive" onClick={() => setDeleteTarget({ id: listing.id, listingName: listing.listingName })} disabled={listing.hasActiveEtsyListing || busy !== null}>{busy === `delete-${listing.id}` ? 'Deleting...' : 'Delete from Etsy'}</Button> : null}
                 {mode === 'publish' && !listing.isPublished ? <Button className="w-36" onClick={() => setPublishTarget({ id: listing.id, listingName: listing.listingName })} disabled={!listing.hasEtsyListing || busy !== null}>{busy === `publish-${listing.id}` ? 'Publishing...' : 'Publish'}</Button> : null}
                 {mode === 'publish' && listing.isPublished ? <Button className="w-36" variant="outline" onClick={() => setInactiveTarget({ id: listing.id, listingName: listing.listingName })} disabled={busy !== null}>{busy === `inactive-${listing.id}` ? 'Updating...' : 'Make Inactive'}</Button> : null}

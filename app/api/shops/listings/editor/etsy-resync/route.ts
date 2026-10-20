@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getListingEditorData, type ListingEditorContext } from '@/lib/listing-editor';
-import { syncListingToEtsy } from '@/lib/local-listings';
+import { syncOneListing } from '@/lib/sync-to-etsy';
 
 type EtsyResyncRequest = Partial<ListingEditorContext>;
 
@@ -30,17 +30,15 @@ export async function POST(request: Request) {
     if (!current.etsyProducts.config.listOnEtsy) {
       return NextResponse.json({ error: 'Enable List this listing on Etsy before syncing.' }, { status: 409 });
     }
-    if (!current.etsyProducts.config.printsFrames && !current.etsyProducts.config.digitalDownload) {
+    if (!current.template?.printsFrames && !current.etsyProducts.config.customisePrints && !current.template?.digitalDownload) {
       return NextResponse.json(
-        { error: 'Enable Prints / Frames or Digital Download before syncing.' },
+        { error: 'Enable Prints / Frames, Customised Prints or Digital Download before syncing.' },
         { status: 409 },
       );
     }
-    if (current.etsyProducts.config.printsFrames && !current.section.hasEtsySection) {
-      return NextResponse.json({ error: 'Create the print section on Etsy before syncing.' }, { status: 409 });
-    }
-
-    await syncListingToEtsy(context.shopId, context.sectionId, context.subSectionId, context.listingId);
+    // Use the same template-category-aware workflow as the Sync to Etsy page.
+    // It creates or updates each distinct Print, Customised and Digital target.
+    await syncOneListing(context.listingId);
     const data = await getListingEditorData(context);
     if (!data) {
       throw new Error('The listing was synced, but its refreshed details could not be loaded.');

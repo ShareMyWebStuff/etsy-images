@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => {
     etsyListing: {
       create: vi.fn(),
     },
+    ourCategory: {
+      findFirst: vi.fn(),
+    },
   };
   return {
     tx,
@@ -17,11 +20,13 @@ const mocks = vi.hoisted(() => {
     subSectionFindFirst: vi.fn(),
     listingFindFirst: vi.fn(),
     listingFindMany: vi.fn(),
+    listingDelete: vi.fn(),
     createListingDirectory: vi.fn(),
     createSubSectionDirectory: vi.fn(),
     listingDirectoryExists: vi.fn(),
     listingDirectoryIsEmpty: vi.fn(),
     ensureDefaultsInTransaction: vi.fn(),
+    saveListingProducts: vi.fn(),
   };
 });
 
@@ -34,6 +39,7 @@ vi.mock('@/lib/prisma', () => ({
     etsyListing: {
       findFirst: mocks.listingFindFirst,
       findMany: mocks.listingFindMany,
+      delete: mocks.listingDelete,
     },
   },
 }));
@@ -48,8 +54,10 @@ vi.mock('@/lib/local-shop-directory', () => ({
 }));
 
 vi.mock('@/lib/listing-products', () => ({
+  ETSY_PRODUCT_SIZES: [{ key: 'a4', label: 'A4' }],
   ensureListingProductDefaults: vi.fn(),
   ensureListingProductDefaultsInTransaction: mocks.ensureDefaultsInTransaction,
+  saveListingProducts: mocks.saveListingProducts,
 }));
 
 vi.mock('@/lib/s3-listing-storage', () => ({ readFile: vi.fn() }));
@@ -87,7 +95,10 @@ describe('single local listing creation recovery', () => {
     mocks.listingDirectoryIsEmpty.mockResolvedValue(true);
     mocks.tx.adminProductPrice.findMany.mockResolvedValue([]);
     mocks.tx.etsyListing.create.mockResolvedValue({ id: 79 });
+    mocks.tx.ourCategory.findFirst.mockResolvedValue(null);
     mocks.ensureDefaultsInTransaction.mockResolvedValue(undefined);
+    mocks.saveListingProducts.mockResolvedValue(undefined);
+    mocks.listingDelete.mockResolvedValue({ id: 79 });
   });
 
   it('creates the listing row and its product defaults in the same transaction', async () => {
@@ -177,5 +188,64 @@ describe('single local listing creation recovery', () => {
     expect(mocks.tx.etsyListing.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ priceAmount: 825, etsyProductType: 'digital' }),
     }));
+  });
+
+  it('uses the Etsy section id when applying a template download section', async () => {
+    mocks.tx.ourCategory.findFirst.mockResolvedValue({
+      id: 12,
+      templateType: 'multiple',
+      itemCount: 3,
+      roomTheme: null,
+      printsFrames: true,
+      customisePrints: true,
+      digitalDownload: true,
+      customTop: true,
+      customBottom: true,
+      downloadSectionId: 4,
+      downloadSection: { etsyShopSectionId: 60449656 },
+      sizes: {},
+      frames: {},
+    });
+
+    await expect(createLocalListing('66615491', '2', '3', 'Three sea creatures', {
+      numberOfItems: 3,
+      includeAllItems: false,
+      etsyProductType: 'physical',
+      ourCategoryId: 12,
+    })).resolves.toEqual({ id: 79 });
+
+    expect(mocks.saveListingProducts).toHaveBeenCalledWith(expect.objectContaining({
+      listingId: '79',
+      digitalDownload: true,
+      downloadSectionId: 60449656,
+    }));
+  });
+
+  it('removes the new listing row if template product setup fails', async () => {
+    mocks.tx.ourCategory.findFirst.mockResolvedValue({
+      id: 12,
+      templateType: 'multiple',
+      itemCount: 3,
+      roomTheme: null,
+      printsFrames: true,
+      customisePrints: true,
+      digitalDownload: true,
+      customTop: true,
+      customBottom: true,
+      downloadSectionId: 4,
+      downloadSection: { etsyShopSectionId: 60449656 },
+      sizes: {},
+      frames: {},
+    });
+    mocks.saveListingProducts.mockRejectedValue(new Error('Product setup failed'));
+
+    await expect(createLocalListing('66615491', '2', '3', 'Three sea creatures', {
+      numberOfItems: 3,
+      includeAllItems: false,
+      etsyProductType: 'physical',
+      ourCategoryId: 12,
+    })).rejects.toThrow('Product setup failed');
+
+    expect(mocks.listingDelete).toHaveBeenCalledWith({ where: { id: 79 } });
   });
 });

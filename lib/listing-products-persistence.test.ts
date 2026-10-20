@@ -38,7 +38,6 @@ describe('multi-listing product type reconciliation', () => {
       .mockResolvedValueOnce([]);
     const productUpsert = vi.fn().mockResolvedValue({});
     const configUpsert = vi.fn().mockResolvedValue({});
-    const frameUpsert = vi.fn().mockResolvedValue({});
     const tx = {
       etsyListing: {
         findUnique: vi.fn().mockResolvedValue({
@@ -62,21 +61,22 @@ describe('multi-listing product type reconciliation', () => {
             returnPolicyId: null,
             sku: null,
           },
-          sizeOptions: [{ sizeKey: 'a4', enabled: false }],
-          frameOptions: [{ frameKey: 'black', enabled: true }],
+          ourCategory: {
+            printsFrames: false,
+            customisePrints: false,
+            digitalDownload: true,
+            customTop: true,
+            customBottom: true,
+            sizes: { a4: false },
+            frames: { no_frame: false, black: false, white: false, oak: false },
+            downloadSection: { etsyShopSectionId: 123456 },
+          },
           products: existingProducts,
         }),
         update: vi.fn().mockResolvedValue({}),
       },
+      etsySkuAllocation: { upsert: vi.fn().mockResolvedValue({ sequenceNumber: 1 }) },
       etsyListingProductConfig: { upsert: configUpsert },
-      etsyListingSizeOption: {
-        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
-        upsert: vi.fn().mockResolvedValue({}),
-      },
-      etsyListingFrameOption: {
-        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
-        upsert: frameUpsert,
-      },
       etsyListingProduct: {
         findMany: productFindMany,
         deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -95,25 +95,98 @@ describe('multi-listing product type reconciliation', () => {
       update: expect.objectContaining({
         listOnEtsy: true,
         digitalDownload: true,
-        printsFrames: true,
+        printsFrames: false,
         customTop: true,
         customBottom: true,
-        customisePrints: true,
+        customisePrints: false,
         giftMessageEnabled: false,
         downloadSectionId: 123456,
         returnPolicyId: null,
-        sku: 'DONKEY-SET',
+        sku: 'SKU_000001',
       }),
     }));
-    expect(frameUpsert).toHaveBeenCalledTimes(4);
-    expect(frameUpsert.mock.calls.every(([call]) => call.update.enabled === false)).toBe(true);
     expect(productUpsert).toHaveBeenCalledTimes(1);
     expect(productUpsert).toHaveBeenCalledWith(expect.objectContaining({
       where: { listingId_productKey: { listingId: 79, productKey: 'digital' } },
-      update: expect.objectContaining({ sku: 'DG-DONKEY-SET-79', productType: 'digital', etsyListingId: '5678' }),
+      update: expect.objectContaining({ sku: 'DG-SKU-000001-79', productType: 'digital', etsyListingId: '5678' }),
     }));
     const update = productUpsert.mock.calls[0][0].update;
     expect(update).not.toHaveProperty('etsyProductId');
     expect(update).not.toHaveProperty('etsyOfferingId');
+  });
+
+  it('rebuilds stale listing products from the assigned template product modes', async () => {
+    const configUpsert = vi.fn().mockResolvedValue({});
+    const productUpsert = vi.fn().mockResolvedValue({});
+    const tx = {
+      etsyListing: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 11,
+          etsyId: '4592566093',
+          etsyDownloadId: '4541724479',
+          title: 'Albertosaurus',
+          localDirectoryName: 'Albertosaurus',
+          numberOfItems: 1,
+          includeAllItems: false,
+          etsyProductType: 'physical',
+          productConfig: {
+            listOnEtsy: true,
+            digitalDownload: false,
+            printsFrames: true,
+            customTop: true,
+            customBottom: true,
+            customisePrints: true,
+            giftMessageEnabled: false,
+            downloadSectionId: 60449656,
+            returnPolicyId: null,
+            sku: 'DINOSAUR_ALBERTOSAURUS',
+          },
+          ourCategory: {
+            printsFrames: true,
+            customisePrints: true,
+            digitalDownload: true,
+            customTop: true,
+            customBottom: true,
+            sizes: { a4: true },
+            frames: { no_frame: true, black: true, white: false, oak: false },
+            downloadSection: { etsyShopSectionId: 60449656 },
+          },
+          products: [],
+        }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      etsySkuAllocation: { upsert: vi.fn().mockResolvedValue({ sequenceNumber: 11 }) },
+      etsyListingProductConfig: { upsert: configUpsert },
+      etsyListingProduct: {
+        findMany: vi.fn().mockResolvedValue([]),
+        deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+        update: vi.fn().mockResolvedValue({}),
+        upsert: productUpsert,
+      },
+    };
+
+    await ensureListingProductDefaultsInTransaction(tx as never, 11);
+
+    expect(configUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({
+        digitalDownload: true,
+        printsFrames: true,
+        customisePrints: true,
+        downloadSectionId: 60449656,
+      }),
+    }));
+    expect(productUpsert.mock.calls.some(([call]) => (
+      call.where.listingId_productKey.productKey === 'digital'
+      && call.update.productType === 'digital'
+      && call.update.etsyListingId === '4541724479'
+    ))).toBe(true);
+    expect(productUpsert.mock.calls.some(([call]) => (
+      call.where.listingId_productKey.productKey === 'unframed_a4'
+      && call.update.frameKey === 'no_frame'
+    ))).toBe(true);
+    expect(productUpsert.mock.calls.some(([call]) => (
+      call.where.listingId_productKey.productKey === 'framed_a4'
+      && call.update.frameKey === 'frame'
+    ))).toBe(true);
   });
 });

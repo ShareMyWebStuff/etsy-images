@@ -9,7 +9,7 @@ type CreateListingRequest = {
   listingName?: string;
   numberOfItems?: number | null;
   includeAllItems?: boolean;
-  etsyProductType?: string;
+  ourCategoryId?: number;
 };
 
 type DeleteListingRequest = {
@@ -18,6 +18,25 @@ type DeleteListingRequest = {
   subSectionId?: string;
   listingId?: string;
 };
+
+export async function GET(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const shopId = searchParams.get('shopId');
+    const sectionId = searchParams.get('sectionId');
+    const subSectionId = searchParams.get('subSectionId');
+    if (!shopId || !sectionId || !subSectionId) {
+      return NextResponse.json({ error: 'Missing listing context.' }, { status: 400 });
+    }
+    return NextResponse.json({ data: await getSubSectionListingsPageData(shopId, sectionId, subSectionId) });
+  } catch (error) {
+    console.error('Failed to load local listings:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Unable to load listings.' },
+      { status: 500 },
+    );
+  }
+}
 
 export async function POST(request: Request) {
   try {
@@ -38,16 +57,17 @@ export async function POST(request: Request) {
     const includeAllItems = body.includeAllItems === true;
     const numberOfItems = includeAllItems ? null : Number(body.numberOfItems);
     if (!includeAllItems && (numberOfItems === null || ![1, 3, 6, 12].includes(numberOfItems))) {
-      return NextResponse.json({ error: 'Choose 1, 3, 6, 12, or All items.' }, { status: 400 });
+      return NextResponse.json({ error: 'Choose 1, 3, 6, or 12 items.' }, { status: 400 });
     }
-    if (body.etsyProductType !== 'physical' && body.etsyProductType !== 'digital') {
-      return NextResponse.json({ error: 'Choose a Physical or Digital Etsy product.' }, { status: 400 });
+    if (!Number.isSafeInteger(body.ourCategoryId) || !body.ourCategoryId) {
+      return NextResponse.json({ error: 'Choose a template.' }, { status: 400 });
     }
 
     await createLocalListing(body.shopId, body.sectionId, body.subSectionId, body.listingName ?? '', {
       numberOfItems,
       includeAllItems,
-      etsyProductType: body.etsyProductType,
+      etsyProductType: 'physical',
+      ourCategoryId: body.ourCategoryId,
     });
     const data = await getSubSectionListingsPageData(body.shopId, body.sectionId, body.subSectionId);
 

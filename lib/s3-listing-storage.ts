@@ -8,12 +8,16 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import sharp from 'sharp';
 import { ETSY_LISTINGS_DIRECTORY } from '@/lib/config';
 
 const bucket = process.env.ETSY_LISTINGS_S3_BUCKET ?? 'etsy-listings-216211142709-eu-west-2';
 const region = process.env.AWS_REGION ?? 'eu-west-2';
 if (!process.env.AWS_PROFILE && !process.env.AWS_ACCESS_KEY_ID) process.env.AWS_PROFILE = 'etsy-listings-app';
 const client = new S3Client({ region });
+const APP_PREVIEW_PREFIX = '.app-previews/';
+const APP_PREVIEW_MAX_SIZE = 512;
+const IMAGE_KEY_PATTERN = /\.(?:jpe?g|png|webp)$/i;
 
 function storageError(code: string, message: string) {
   return Object.assign(new Error(message), { code });
@@ -40,6 +44,46 @@ async function objectExists(key: string) {
   }
 }
 
+function isImageKey(key: string) {
+  return !key.startsWith(APP_PREVIEW_PREFIX) && IMAGE_KEY_PATTERN.test(key);
+}
+
+function previewKeyForKey(key: string) {
+  return `${APP_PREVIEW_PREFIX}${key}.webp`;
+}
+
+async function readKey(key: string) {
+  try {
+    const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    if (!result.Body) throw storageError('ENOENT', `S3 object not found: ${key}`);
+    return Buffer.from(await result.Body.transformToByteArray());
+  } catch (error) {
+    const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+    if (status === 404 || (error as { name?: string }).name === 'NoSuchKey') {
+      throw storageError('ENOENT', `S3 object not found: ${key}`);
+    }
+    throw error;
+  }
+}
+
+async function putKey(key: string, body: Buffer | Uint8Array) {
+  await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body }));
+}
+
+async function createAppPreview(contents: Buffer | Uint8Array) {
+  return sharp(contents, { failOn: 'error' })
+    .rotate()
+    .resize({
+      width: APP_PREVIEW_MAX_SIZE,
+      height: APP_PREVIEW_MAX_SIZE,
+      fit: 'inside',
+      withoutEnlargement: true,
+      kernel: sharp.kernel.lanczos3,
+    })
+    .webp({ quality: 78, effort: 4 })
+    .toBuffer();
+}
+
 async function listKeys(prefix: string) {
   const keys: string[] = [];
   let continuationToken: string | undefined;
@@ -57,23 +101,39 @@ async function listKeys(prefix: string) {
 
 export async function readFile(filePath: string) {
   const key = keyFromPath(filePath);
+  return readKey(key);
+}
+
+/**
+ * Returns the lightweight app version of an image. Older images are
+ * backfilled on first use, while newly written images receive one eagerly.
+ */
+export async function readImagePreview(filePath: string) {
+  const key = keyFromPath(filePath);
+  if (!isImageKey(key)) throw new Error(`An app preview cannot be created for a non-image file: ${filePath}`);
+  const previewKey = previewKeyForKey(key);
   try {
-    const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-    if (!result.Body) throw storageError('ENOENT', `S3 object not found: ${key}`);
-    return Buffer.from(await result.Body.transformToByteArray());
+    return await readKey(previewKey);
   } catch (error) {
-    const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
-    if (status === 404 || (error as { name?: string }).name === 'NoSuchKey') {
-      throw storageError('ENOENT', `S3 object not found: ${key}`);
-    }
-    throw error;
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
+  const preview = await createAppPreview(await readKey(key));
+  await putKey(previewKey, preview);
+  return preview;
 }
 
 export async function writeFile(filePath: string, contents: Buffer | Uint8Array | string, encoding?: BufferEncoding) {
   const key = keyFromPath(filePath);
   const body = typeof contents === 'string' ? Buffer.from(contents, encoding ?? 'utf8') : contents;
-  await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body }));
+  if (isImageKey(key)) {
+    const preview = await createAppPreview(body);
+    await Promise.all([
+      putKey(key, body),
+      putKey(previewKeyForKey(key), preview),
+    ]);
+    return;
+  }
+  await putKey(key, body);
 }
 
 export async function mkdir(directoryPath: string, _options?: { recursive?: boolean }) {
@@ -124,7 +184,12 @@ export async function readdir(directoryPath: string, options?: { withFileTypes?:
 export async function unlink(filePath: string) {
   const key = keyFromPath(filePath);
   if (!await objectExists(key)) throw storageError('ENOENT', `S3 object not found: ${key}`);
-  await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+  await Promise.all([
+    client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })),
+    ...(isImageKey(key)
+      ? [client.send(new DeleteObjectCommand({ Bucket: bucket, Key: previewKeyForKey(key) }))]
+      : []),
+  ]);
 }
 
 export async function copyFile(sourcePath: string, destinationPath: string) {
@@ -136,6 +201,23 @@ export async function copyFile(sourcePath: string, destinationPath: string) {
     Key: destinationKey,
     CopySource: `${bucket}/${sourceKey.split('/').map(encodeURIComponent).join('/')}`,
   }));
+  if (isImageKey(sourceKey) && isImageKey(destinationKey)) {
+    const sourcePreviewKey = previewKeyForKey(sourceKey);
+    const destinationPreviewKey = previewKeyForKey(destinationKey);
+    if (await objectExists(sourcePreviewKey)) {
+      await client.send(new CopyObjectCommand({
+        Bucket: bucket,
+        Key: destinationPreviewKey,
+        CopySource: `${bucket}/${sourcePreviewKey.split('/').map(encodeURIComponent).join('/')}`,
+      }));
+    } else {
+      const preview = await createAppPreview(await readKey(sourceKey));
+      await Promise.all([
+        putKey(sourcePreviewKey, preview),
+        putKey(destinationPreviewKey, preview),
+      ]);
+    }
+  }
 }
 
 export async function rename(sourcePath: string, destinationPath: string) {
@@ -143,7 +225,7 @@ export async function rename(sourcePath: string, destinationPath: string) {
   const destinationKey = keyFromPath(destinationPath);
   if (await objectExists(sourceKey)) {
     await copyFile(sourcePath, destinationPath);
-    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: sourceKey }));
+    await unlink(sourcePath);
     return;
   }
   const sourcePrefix = `${sourceKey}/`;
@@ -157,7 +239,18 @@ export async function rename(sourcePath: string, destinationPath: string) {
       CopySource: `${bucket}/${key.split('/').map(encodeURIComponent).join('/')}`,
     }));
   }
+  const sourcePreviewPrefix = `${APP_PREVIEW_PREFIX}${sourcePrefix}`;
+  const previewKeys = await listKeys(sourcePreviewPrefix);
+  for (const key of previewKeys) {
+    const target = `${APP_PREVIEW_PREFIX}${destinationKey}/${key.slice(sourcePreviewPrefix.length)}`;
+    await client.send(new CopyObjectCommand({
+      Bucket: bucket,
+      Key: target,
+      CopySource: `${bucket}/${key.split('/').map(encodeURIComponent).join('/')}`,
+    }));
+  }
   await deleteKeys(keys);
+  await deleteKeys(previewKeys);
 }
 
 async function deleteKeys(keys: string[]) {
@@ -174,8 +267,12 @@ export async function rm(storagePath: string, options?: { recursive?: boolean; f
   if (options?.recursive) {
     const keys = await listKeys(key ? `${key}/` : '');
     if (await objectExists(key)) keys.push(key);
+    if (key && !key.startsWith(APP_PREVIEW_PREFIX)) {
+      keys.push(...await listKeys(`${APP_PREVIEW_PREFIX}${key}/`));
+      if (isImageKey(key) && await objectExists(previewKeyForKey(key))) keys.push(previewKeyForKey(key));
+    }
     if (keys.length === 0 && !options.force) throw storageError('ENOENT', `S3 path not found: ${key}`);
-    await deleteKeys(keys);
+    await deleteKeys([...new Set(keys)]);
     return;
   }
   try {

@@ -26,16 +26,16 @@ export const NAV_GROUPS = [
   {
     title: 'Local',
     items: [
-      { label: 'Categories', href: '/categories' },
-      { label: 'Listings', href: '/listings' },
-      { label: 'Price Update', href: '/price-update' },
       { label: 'Shops', href: '/shops' },
+      { label: 'Our Templates', href: '/our-templates' },
+      { label: 'Backdrop Images', href: '/backdrop-images' },
     ],
   },
   {
     title: 'Etsy',
     items: [
       { label: 'Orders', href: '/etsy/orders' },
+      { label: 'Etsy Categories', href: '/etsy/categories' },
       { label: 'Sync to Etsy', href: '/sync-to-etsy' },
       { label: 'Publish to Etsy', href: '/publish-to-etsy' },
       { label: 'Compare', href: '/compare' },
@@ -71,13 +71,12 @@ export const NAV_GROUPS = [
       { label: 'Backup', href: '/admin/backup' },
       { label: 'Edit Listing', href: '/admin/edit-listing' },
       { label: 'Connect Etsy', href: '/connect-etsy' },
-      { label: 'Test', href: '/test' },
     ],
   },
 ] satisfies NavGroup[];
 
 export function Navbar() {
-  const pathname = usePathname();
+  const pathname = usePathname() ?? '';
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border bg-card/90 backdrop-blur">

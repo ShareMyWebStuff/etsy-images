@@ -97,14 +97,13 @@ export async function getMultiListingWizardData(
     const sourceSections = await prisma.etsyShopSection.findMany({
       where: {
         OR: [{ shopId: context.shop.id }, { etsyShopId: context.shop.etsyShopId }],
-        numberOfDownloads: 1,
-        includeAllDownloads: false,
+        subSections: { some: { numberOfDownloads: 1, includeAllDownloads: false } },
       },
       orderBy: { title: 'asc' },
       select: {
         id: true,
         title: true,
-        subSections: { select: { listings: {
+        subSections: { where: { numberOfDownloads: 1, includeAllDownloads: false }, select: { listings: {
           where: { localDirectoryName: { not: null } },
           orderBy: { localDirectoryName: 'asc' },
           select: {
@@ -147,8 +146,7 @@ async function getSourceSection(context: Context, sourceSectionId: string) {
     where: {
       id,
       OR: [{ shopId: context.shop.id }, { etsyShopId: context.shop.etsyShopId }],
-      numberOfDownloads: 1,
-      includeAllDownloads: false,
+      subSections: { some: { numberOfDownloads: 1, includeAllDownloads: false } },
     },
     select: { id: true, title: true },
   });

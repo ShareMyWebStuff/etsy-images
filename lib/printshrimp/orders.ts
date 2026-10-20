@@ -8,6 +8,9 @@ import {
 } from '@/lib/dropbox-bundle';
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';
 import { prisma } from '@/lib/prisma';
+import { effectiveListingPersonalisationTextAreas } from '@/lib/personalisation-text-areas';
+import type { PrintableDownloadRatio } from '@/lib/printable-download-specs';
+import { effectiveListingCustomisation } from '@/lib/listing-customisation';
 import {
   convertPrintShrimpArtwork,
   getPrintShrimpRatioForSize,
@@ -312,12 +315,15 @@ function safeFilePart(value: string) {
 }
 
 async function loadOrderListing(listingId: number) {
-  return prisma.etsyListing.findUnique({
+  const listing = await prisma.etsyListing.findUnique({
     where: { id: listingId },
     select: {
       title: true,
       localDirectoryName: true,
-      productConfig: { select: { sku: true } },
+      ourCategory: {
+        select: { customisePrints: true, customTop: true, customBottom: true },
+      },
+      productConfig: { select: { sku: true, customisePrints: true, customTop: true, customBottom: true } },
       subSection: {
         select: {
           name: true,
@@ -341,9 +347,42 @@ async function loadOrderListing(listingId: number) {
       },
     },
   });
+  if (!listing) return null;
+  const rows = typeof prisma.$queryRaw === 'function'
+    ? await prisma.$queryRaw<Array<{ personalisationTextAreas: unknown }>>`
+      SELECT personalisationTextAreas
+      FROM etsy_listings
+      WHERE id = ${listingId}
+    `
+    : [];
+  const selectedValue = (listing as typeof listing & { personalisationTextAreas?: unknown }).personalisationTextAreas;
+  return { ...listing, personalisationTextAreas: rows[0]?.personalisationTextAreas ?? selectedValue ?? null };
 }
 
 type OrderListing = NonNullable<Awaited<ReturnType<typeof loadOrderListing>>>;
+
+function printableDownloadRatioForPrintShrimp(
+  ratio: ReturnType<typeof getPrintShrimpRatioForSize>,
+): PrintableDownloadRatio {
+  if (!ratio) return '2x3';
+  return ratio === 'A' ? 'iso-a1' : ratio;
+}
+
+function resolvedOrderPersonalisation(
+  listing: OrderListing,
+  topText: string,
+  bottomText: string,
+  ratio: PrintableDownloadRatio = '2x3',
+) {
+  const permissions = effectiveListingCustomisation(listing.ourCategory, listing.productConfig);
+  const areas = effectiveListingPersonalisationTextAreas(listing.personalisationTextAreas, permissions, ratio);
+  return {
+    topText: areas.showTop ? topText : '',
+    bottomText: areas.showBottom ? bottomText : '',
+    headerTextArea: areas.saved && areas.showTop ? areas.top : undefined,
+    footerTextArea: areas.saved && areas.showBottom ? areas.bottom : undefined,
+  };
+}
 
 async function renderCustomOrderArtwork(input: {
   listing: OrderListing;
@@ -377,10 +416,19 @@ async function renderCustomOrderArtwork(input: {
     input.dependencies.readStorageFile(path.join(listingPath, 'downloads', sourceFile.localFileName)),
     input.dependencies.readFont(path.join(process.cwd(), 'public', 'fonts', ...fontChoice.relativePath)),
   ]);
+  const personalisation = resolvedOrderPersonalisation(
+    input.listing,
+    input.topText,
+    input.bottomText,
+    printableDownloadRatioForPrintShrimp(ratio),
+  );
+  if (!personalisation.topText && !personalisation.bottomText) {
+    throw new Error('The assigned template and listing text-area settings do not allow the supplied customised text.');
+  }
   const personalised = await input.dependencies.personalise(
     source,
     font,
-    { headerText: input.topText, footerText: input.bottomText, textTransform: 'NONE' },
+    { headerText: personalisation.topText, footerText: personalisation.bottomText, textTransform: 'NONE' },
     {
       width: sourceFile.widthPixels,
       height: sourceFile.heightPixels,
@@ -388,6 +436,8 @@ async function renderCustomOrderArtwork(input: {
       requireSourceAlpha: false,
       fontFamily: fontChoice.family,
       fontWeight: fontChoice.weight,
+      ...(personalisation.headerTextArea ? { headerTextArea: personalisation.headerTextArea } : {}),
+      ...(personalisation.footerTextArea ? { footerTextArea: personalisation.footerTextArea } : {}),
     },
   );
   const converted = await input.dependencies.convert(personalised.buffer);
@@ -427,7 +477,13 @@ export async function createPrintShrimpOrderPreview(
   const listing = await loadOrderListing(listingId);
   if (!listing) throw new Error('The selected listing no longer exists.');
   const sku = validatePrintShrimpBaseSku(listing.productConfig?.sku);
-  const custom = Boolean(topText || bottomText);
+  const allowedPersonalisation = resolvedOrderPersonalisation(
+    listing,
+    topText,
+    bottomText,
+    printableDownloadRatioForPrintShrimp(getPrintShrimpRatioForSize(input.size)),
+  );
+  const custom = Boolean(allowedPersonalisation.topText || allowedPersonalisation.bottomText);
   let customArtwork: Awaited<ReturnType<typeof renderCustomOrderArtwork>> | null = null;
 
   if (custom) {
@@ -635,6 +691,15 @@ export async function generatePrintShrimpCustomArtworkPreview(
   const externalOrderNumber = textValue(input.externalOrderNumber, 'ORDER No', 100);
   const listing = await loadOrderListing(listingId);
   if (!listing) throw new Error('The selected listing no longer exists.');
+  const allowedPersonalisation = resolvedOrderPersonalisation(
+    listing,
+    topText,
+    bottomText,
+    printableDownloadRatioForPrintShrimp(getPrintShrimpRatioForSize(input.size)),
+  );
+  if (!allowedPersonalisation.topText && !allowedPersonalisation.bottomText) {
+    throw new Error('The assigned template and listing text-area settings do not allow the supplied customised text.');
+  }
   const sku = validatePrintShrimpBaseSku(listing.productConfig?.sku);
   return renderCustomOrderArtwork({
     listing,

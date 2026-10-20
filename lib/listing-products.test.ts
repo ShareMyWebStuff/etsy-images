@@ -4,6 +4,7 @@ import {
   ETSY_PRODUCT_SIZES,
   buildListingProductDefinitions,
   buildListingProductTypeDefaults,
+  getTemplateProductOptions,
   validateListingProductsInput,
 } from '@/lib/listing-products';
 import { PRICE_OPTIONS } from '@/lib/set-prices-core';
@@ -35,6 +36,18 @@ describe('listing Etsy product configuration', () => {
       .filter((option) => option.category === 'unframed' || option.category === 'framed')
       .map((option) => option.key.replace(/^(?:unframed|framed)_/, '')));
     expect(new Set(ETSY_PRODUCT_SIZES.map(({ key }) => key))).toEqual(pricedSizes);
+  });
+
+  it('uses the assigned template as the source for sizes and frames', () => {
+    const options = getTemplateProductOptions({
+      sizes: { a5: false, a4: true },
+      frames: { no_frame: true, black: false, white: true, oak: false },
+    });
+
+    expect(options.sizes.a5).toBe(false);
+    expect(options.sizes.a4).toBe(true);
+    expect(options.sizes.a3).toBe(false);
+    expect(options.frames).toEqual({ no_frame: true, black: false, white: true, oak: false });
   });
 
   it('uses clean, type-specific defaults when a rerun changes product type', () => {

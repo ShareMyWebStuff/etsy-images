@@ -1,32 +1,33 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { createEtsyListingSku } from '@/lib/etsy-listing-sku';
+import { formatEtsyListingSku, getOrCreateEtsyListingSku, isGeneratedEtsyListingSku } from '@/lib/etsy-listing-sku';
 
 describe('Etsy listing SKU generation', () => {
-  it('creates a readable SKU from the section and listing names', () => {
-    expect(createEtsyListingSku({
-      sectionName: 'Sea Creatures Wall Art Listings',
-      listingName: 'Green Sea Turtle',
-      listingId: 342,
-    })).toBe('SEA_CREATURES_GREEN_SEA_TURTLE');
+  it('formats the database sequence as a six-digit SKU', () => {
+    expect(formatEtsyListingSku(1)).toBe('SKU_000001');
+    expect(formatEtsyListingSku(342)).toBe('SKU_000342');
   });
 
-  it('removes accents and unsupported characters and stays within 32 characters', () => {
-    const sku = createEtsyListingSku({
-      sectionName: 'Créatures très longues Wall Art',
-      listingName: "Rory's exceptionally long turtle",
-      listingId: 342,
+  it('recognises only the generated SKU format', () => {
+    expect(isGeneratedEtsyListingSku('SKU_000001')).toBe(true);
+    expect(isGeneratedEtsyListingSku('SKU_00001')).toBe(false);
+    expect(isGeneratedEtsyListingSku('DINOSAUR_001')).toBe(false);
+  });
+
+  it('rejects values outside the six-digit sequence', () => {
+    expect(() => formatEtsyListingSku(0)).toThrow(/between 1 and 999999/);
+    expect(() => formatEtsyListingSku(1_000_000)).toThrow(/between 1 and 999999/);
+  });
+
+  it('reuses the listing allocation returned by the database', async () => {
+    const upsert = vi.fn().mockResolvedValue({ sequenceNumber: 48 });
+    await expect(getOrCreateEtsyListingSku({ etsySkuAllocation: { upsert } } as never, 502))
+      .resolves.toBe('SKU_000048');
+    expect(upsert).toHaveBeenCalledWith({
+      where: { listingId: 502 },
+      create: { listingId: 502 },
+      update: {},
+      select: { sequenceNumber: true },
     });
-    expect(sku).toMatch(/^[A-Z0-9_]+$/);
-    expect(sku.length).toBeLessThanOrEqual(32);
-  });
-
-  it('adds a stable listing suffix when the readable SKU is already used', () => {
-    expect(createEtsyListingSku({
-      sectionName: 'Sea Creatures Wall Art',
-      listingName: 'Green Sea Turtle',
-      listingId: 342,
-      usedSkus: ['sea_creatures_green_sea_turtle'],
-    })).toBe('SEA_CREATURES_GREEN_SEA_TURT_342');
   });
 });

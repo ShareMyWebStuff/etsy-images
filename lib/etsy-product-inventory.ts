@@ -1,3 +1,5 @@
+import { ETSY_PRODUCT_SIZES } from '@/lib/listing-products';
+
 export const ETSY_DIGITAL_PRINTS_TAXONOMY_ID = 2078;
 export const ETSY_GICLEE_PRINTS_TAXONOMY_ID = 121;
 export const APP_SKU_MAX_LENGTH = 32;
@@ -15,20 +17,12 @@ export function resolveEtsyListingMode(etsyProductType: string, digitalDownload:
   throw new Error(`Unsupported Etsy product type: ${etsyProductType}.`);
 }
 
-const SIZE_LABELS: Record<string, string> = {
-  a4: 'A4',
-  a3: 'A3',
-  a2: 'A2',
-  '5x7': '5 x 7',
-  '8x10': '8 x 10',
-  '11x14': '11 x 14',
-  '12x16': '12 x 16',
-  '12x18': '12 x 18',
-  '16x20': '16 x 20',
-  '18x24': '18 x 24',
-  '20x28': '20 x 28',
-  '24x36': '24 x 36',
-};
+// Keep Etsy's inventory variations in step with the sizes offered throughout
+// the application. Etsy's variation text uses a plain `x`, while the UI uses
+// the multiplication symbol for display.
+const SIZE_LABELS: Record<string, string> = Object.fromEntries(
+  ETSY_PRODUCT_SIZES.map(({ key, label }) => [key, label.replaceAll('×', 'x')]),
+);
 
 const FRAME_LABELS: Record<string, string> = {
   no_frame: 'No Frame',
@@ -36,6 +30,8 @@ const FRAME_LABELS: Record<string, string> = {
   white: 'White',
   oak: 'Oak',
 };
+
+const BORDER_LABELS = ['No', 'Yes'] as const;
 
 export type LocalSellableProduct = {
   key: string;
@@ -102,6 +98,7 @@ export function buildEtsyInventoryPlan(
         property_values: [
           { property_id: 513, property_name: 'Size', value_ids: [], values: ['Digital Download'] },
           { property_id: 514, property_name: 'Frame', value_ids: [], values: ['No Frame'] },
+          { property_id: 516, property_name: 'Border', value_ids: [], values: ['No'] },
         ],
         offerings: [{
           price: product.amountPence / 100,
@@ -121,20 +118,23 @@ export function buildEtsyInventoryPlan(
     for (const frameKey of frameKeys) {
       const sizeLabel = SIZE_LABELS[product.sizeKey];
       if (!sizeLabel) throw new Error(`Unsupported Etsy product size: ${product.sizeKey}.`);
-      concreteProducts.push({
-        localProductKey: product.key,
-        sku: product.sku,
-        property_values: [
-          { property_id: 513, property_name: 'Size', value_ids: [], values: [sizeLabel] },
-          { property_id: 514, property_name: 'Frame', value_ids: [], values: [FRAME_LABELS[frameKey]] },
-        ],
-        offerings: [{
-          price: product.amountPence / 100,
-          quantity: Math.max(1, Math.trunc(quantity || 1)),
-          is_enabled: true,
-          ...(readinessStateId === undefined ? {} : { readiness_state_id: readinessStateId }),
-        }],
-      });
+      for (const borderLabel of BORDER_LABELS) {
+        concreteProducts.push({
+          localProductKey: product.key,
+          sku: product.sku,
+          property_values: [
+            { property_id: 513, property_name: 'Size', value_ids: [], values: [sizeLabel] },
+            { property_id: 514, property_name: 'Frame', value_ids: [], values: [FRAME_LABELS[frameKey]] },
+            { property_id: 516, property_name: 'Border', value_ids: [], values: [borderLabel] },
+          ],
+          offerings: [{
+            price: product.amountPence / 100,
+            quantity: Math.max(1, Math.trunc(quantity || 1)),
+            is_enabled: true,
+            ...(readinessStateId === undefined ? {} : { readiness_state_id: readinessStateId }),
+          }],
+        });
+      }
     }
   }
 
@@ -146,7 +146,9 @@ export function buildEtsyInventoryPlan(
     concreteProducts,
     body: {
       products: concreteProducts.map(({ localProductKey: _localProductKey, ...product }) => product),
-      price_on_property: [513, 514],
+      // Etsy requires zero, one, or all three property ids here when a listing
+      // uses three variations. Border has the same price for No and Yes.
+      price_on_property: [513, 514, 516],
       quantity_on_property: [],
       // PrintShrimp matches one artwork SKU across every size and frame option.
       sku_on_property: [],

@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { getOrCreateEtsyListingSku } from '@/lib/etsy-listing-sku';
 import { digitalPriceKeyForSection } from '@/lib/set-prices-core';
+import { getTemplateDownloadSectionId } from '@/lib/template-download-section';
+import { effectiveListingCustomisation, type ListingCustomisationSettings } from '@/lib/listing-customisation';
 
 export const ETSY_PRODUCT_SIZES = [
   { key: 'a5', label: 'A5' },
@@ -103,6 +106,39 @@ const ALL_PRODUCT_KEYS = new Set<string>([
   'digital',
   ...SIZE_KEYS.flatMap((sizeKey) => [`unframed_${sizeKey}`, `framed_${sizeKey}`]),
 ]);
+
+export type TemplateProductOptionsSource = {
+  sizes: unknown;
+  frames: unknown;
+} | null | undefined;
+
+function templateBooleanOptions<TKey extends string>(
+  value: unknown,
+  keys: readonly TKey[],
+): Record<TKey, boolean> {
+  const record = isPlainRecord(value) ? value : {};
+  return Object.fromEntries(keys.map((key) => [key, record[key] === true])) as Record<TKey, boolean>;
+}
+
+/** Listing sizes and frames are owned by the assigned template. */
+export function getTemplateProductOptions(
+  template: TemplateProductOptionsSource,
+  fallbackProductType: 'physical' | 'digital' = 'physical',
+) {
+  if (template) {
+    return {
+      sizes: templateBooleanOptions(template.sizes, SIZE_KEYS),
+      frames: templateBooleanOptions(template.frames, FRAME_KEYS),
+    };
+  }
+  return {
+    sizes: Object.fromEntries(SIZE_KEYS.map((key) => [key, true])) as Record<EtsyProductSizeKey, boolean>,
+    frames: Object.fromEntries(ETSY_PRODUCT_FRAMES.map(({ key, defaultEnabled }) => [
+      key,
+      fallbackProductType === 'physical' ? defaultEnabled : false,
+    ])) as Record<EtsyProductFrameKey, boolean>,
+  };
+}
 
 export function buildListingProductTypeDefaults(
   etsyProductType: 'physical' | 'digital',
@@ -305,7 +341,7 @@ async function persistListingProducts(
   ]);
   const existingByKey = new Map(existingProducts.map((product) => [product.productKey, product]));
   const usedSkus = new Set(otherSkus.map(({ sku }) => sku.toLocaleLowerCase()));
-  const listingSku = listing.productConfig?.sku ?? skuSlug(listing.localDirectoryName ?? listing.title).slice(0, 32);
+  const listingSku = await getOrCreateEtsyListingSku(tx, listing.id);
   const listingWithSku = { ...listing, productConfig: { sku: listingSku } };
   const desiredProducts = definitions.map((definition) => {
     const hasSubmittedSku = Object.prototype.hasOwnProperty.call(config.skus, definition.productKey);
@@ -351,31 +387,8 @@ async function persistListingProducts(
       downloadSectionId: config.downloadSectionId,
       returnPolicyId: config.returnPolicyId,
       sku: listingSku,
-      confirmedAt: null,
     },
   });
-
-  await tx.etsyListingSizeOption.deleteMany({
-    where: { listingId: listing.id, sizeKey: { notIn: SIZE_KEYS } },
-  });
-  for (const [position, sizeKey] of SIZE_KEYS.entries()) {
-    await tx.etsyListingSizeOption.upsert({
-      where: { listingId_sizeKey: { listingId: listing.id, sizeKey } },
-      create: { listingId: listing.id, sizeKey, enabled: config.sizes[sizeKey], position },
-      update: { enabled: config.sizes[sizeKey], position },
-    });
-  }
-
-  await tx.etsyListingFrameOption.deleteMany({
-    where: { listingId: listing.id, frameKey: { notIn: FRAME_KEYS } },
-  });
-  for (const [position, frameKey] of FRAME_KEYS.entries()) {
-    await tx.etsyListingFrameOption.upsert({
-      where: { listingId_frameKey: { listingId: listing.id, frameKey } },
-      create: { listingId: listing.id, frameKey, enabled: config.frames[frameKey], position },
-      update: { enabled: config.frames[frameKey], position },
-    });
-  }
 
   if (desiredKeys.length > 0) {
     await tx.etsyListingProduct.deleteMany({
@@ -484,7 +497,19 @@ async function loadListingForContext(tx: Prisma.TransactionClient, context: List
       numberOfItems: true,
       includeAllItems: true,
       etsyProductType: true,
-      productConfig: { select: { sku: true } },
+      productConfig: true,
+      ourCategory: {
+        select: {
+          printsFrames: true,
+          customisePrints: true,
+          digitalDownload: true,
+          customTop: true,
+          customBottom: true,
+          sizes: true,
+          frames: true,
+          downloadSection: { select: { etsyShopSectionId: true } },
+        },
+      },
     },
   });
   if (!listing) throw new Error('Listing not found.');
@@ -492,10 +517,25 @@ async function loadListingForContext(tx: Prisma.TransactionClient, context: List
 }
 
 export async function saveListingProducts(input: SaveListingProductsInput) {
-  const config = validateListingProductsInput(input);
+  const submittedConfig = validateListingProductsInput(input);
   try {
     await prisma.$transaction(async (tx) => {
       const listing = await loadListingForContext(tx, input);
+      const templateOptions = getTemplateProductOptions(listing.ourCategory, listing.etsyProductType === 'digital' ? 'digital' : 'physical');
+      const customisation = effectiveListingCustomisation(listing.ourCategory, submittedConfig);
+      const config = {
+        ...submittedConfig,
+        ...(listing.ourCategory ? {
+          digitalDownload: listing.ourCategory.digitalDownload,
+          printsFrames: listing.ourCategory.printsFrames || customisation.customisePrints,
+          ...customisation,
+        } : {}),
+        ...templateOptions,
+        downloadSectionId: getTemplateDownloadSectionId(listing.ourCategory),
+      };
+      if (config.digitalDownload && config.downloadSectionId === null) {
+        throw new Error('Select a Digital Download Section on the assigned template before enabling downloads.');
+      }
       if (config.downloadSectionId !== null) {
         const section = await tx.etsyDownloadSection.findUnique({
           where: {
@@ -518,62 +558,58 @@ export async function saveListingProducts(input: SaveListingProductsInput) {
   }
 }
 
-export async function confirmListingProducts(context: ListingProductsContext) {
-  await prisma.$transaction(async (tx) => {
-    const listing = await loadListingForContext(tx, context);
-    const config = await tx.etsyListingProductConfig.findUnique({
-      where: { listingId: listing.id },
-      select: { id: true },
-    });
-    if (!config) throw new Error('Save the Etsy Product settings before confirming them.');
-    await tx.etsyListingProductConfig.update({
-      where: { listingId: listing.id },
-      data: { confirmedAt: new Date() },
-    });
+async function persistGeneratedListingSku(
+  tx: Prisma.TransactionClient,
+  listing: Awaited<ReturnType<typeof loadListingForContext>>,
+  sku: string,
+) {
+  const configuration = await tx.etsyListing.findUnique({
+    where: { id: listing.id },
+    select: {
+      productConfig: true,
+    },
+  });
+  if (!configuration?.productConfig) throw new Error('Save the Etsy Products options before setting the SKU.');
+  const templateOptions = getTemplateProductOptions(
+    listing.ourCategory,
+    listing.etsyProductType === 'digital' ? 'digital' : 'physical',
+  );
+  await persistListingProducts(tx, { ...listing, productConfig: { sku } }, {
+    listOnEtsy: configuration.productConfig.listOnEtsy,
+    digitalDownload: configuration.productConfig.digitalDownload,
+    printsFrames: configuration.productConfig.printsFrames,
+    customTop: configuration.productConfig.customTop,
+    customBottom: configuration.productConfig.customBottom,
+    customisePrints: configuration.productConfig.customisePrints,
+    giftMessageEnabled: configuration.productConfig.giftMessageEnabled,
+    downloadSectionId: getTemplateDownloadSectionId(listing.ourCategory),
+    returnPolicyId: configuration.productConfig.returnPolicyId,
+    ...templateOptions,
+    skus: {},
   });
 }
 
+export async function assignGeneratedListingSku(context: ListingProductsContext) {
+  return prisma.$transaction(async (tx) => {
+    const listing = await loadListingForContext(tx, context);
+    const sku = await getOrCreateEtsyListingSku(tx, listing.id);
+    await persistGeneratedListingSku(tx, listing, sku);
+    return sku;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
 export async function saveListingSku(context: ListingProductsContext, value: string) {
-  const sku = value.trim();
-  if (!sku) throw new Error('Enter an Etsy SKU.');
-  if (Array.from(sku).length > 32) throw new Error('The Etsy SKU cannot be longer than 32 characters.');
+  const suppliedSku = value.trim();
+  if (!suppliedSku) throw new Error('Enter an Etsy SKU.');
 
   try {
     await prisma.$transaction(async (tx) => {
       const listing = await loadListingForContext(tx, context);
-      const configuration = await tx.etsyListing.findUnique({
-        where: { id: listing.id },
-        select: {
-          productConfig: true,
-          sizeOptions: true,
-          frameOptions: true,
-        },
-      });
-      if (!configuration?.productConfig) throw new Error('Save the Etsy Products options before setting the SKU.');
-      await tx.etsyListingProductConfig.update({
-        where: { listingId: listing.id },
-        data: { sku },
-      });
-      await persistListingProducts(tx, { ...listing, productConfig: { sku } }, {
-        listOnEtsy: configuration.productConfig.listOnEtsy,
-        digitalDownload: configuration.productConfig.digitalDownload,
-        printsFrames: configuration.productConfig.printsFrames,
-        customTop: configuration.productConfig.customTop,
-        customBottom: configuration.productConfig.customBottom,
-        customisePrints: configuration.productConfig.customisePrints,
-        giftMessageEnabled: configuration.productConfig.giftMessageEnabled,
-        downloadSectionId: configuration.productConfig.downloadSectionId,
-        returnPolicyId: configuration.productConfig.returnPolicyId,
-        sizes: Object.fromEntries(SIZE_KEYS.map((key) => [
-          key,
-          configuration.sizeOptions.find((option) => option.sizeKey === key)?.enabled ?? true,
-        ])) as Record<EtsyProductSizeKey, boolean>,
-        frames: Object.fromEntries(ETSY_PRODUCT_FRAMES.map(({ key, defaultEnabled }) => [
-          key,
-          configuration.frameOptions.find((option) => option.frameKey === key)?.enabled ?? defaultEnabled,
-        ])) as Record<EtsyProductFrameKey, boolean>,
-        skus: {},
-      });
+      const sku = await getOrCreateEtsyListingSku(tx, listing.id);
+      if (suppliedSku !== sku) {
+        throw new Error(`The Etsy SKU is assigned automatically and must remain ${sku}.`);
+      }
+      await persistGeneratedListingSku(tx, listing, sku);
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -601,8 +637,18 @@ export async function ensureListingProductDefaultsInTransaction(
       includeAllItems: true,
       etsyProductType: true,
       productConfig: true,
-      sizeOptions: true,
-      frameOptions: true,
+      ourCategory: {
+        select: {
+          printsFrames: true,
+          customisePrints: true,
+          digitalDownload: true,
+          customTop: true,
+          customBottom: true,
+          sizes: true,
+          frames: true,
+          downloadSection: { select: { etsyShopSectionId: true } },
+        },
+      },
       products: {
         select: {
           productKey: true,
@@ -619,38 +665,47 @@ export async function ensureListingProductDefaultsInTransaction(
   });
   if (!listing) throw new Error('Listing not found.');
 
-  const existingSizes = new Map(listing.sizeOptions.map(({ sizeKey, enabled }) => [sizeKey, enabled]));
-  const existingFrames = new Map(listing.frameOptions.map(({ frameKey, enabled }) => [frameKey, enabled]));
   if (options?.resetToProductType && options.resetToProductType !== listing.etsyProductType) {
     throw new Error('The requested Etsy product defaults do not match the listing product type.');
   }
-  const defaults: NormalizedListingProducts = options?.resetToProductType
-    ? { ...buildListingProductTypeDefaults(options.resetToProductType), downloadSectionId: listing.productConfig?.downloadSectionId ?? null }
-    : {
-        listOnEtsy: listing.productConfig?.listOnEtsy ?? true,
-        digitalDownload: listing.productConfig?.digitalDownload
-          ?? options?.digitalDownload
-          ?? listing.etsyProductType === 'digital',
-        printsFrames: listing.productConfig?.printsFrames ?? true,
-        customTop: listing.productConfig?.customTop ?? true,
-        customBottom: listing.productConfig?.customBottom ?? true,
-        customisePrints: listing.productConfig?.customisePrints ?? true,
-        giftMessageEnabled: listing.productConfig?.giftMessageEnabled ?? false,
-        downloadSectionId: listing.productConfig?.downloadSectionId ?? null,
-        returnPolicyId: listing.productConfig?.returnPolicyId ?? null,
-        sizes: Object.fromEntries(SIZE_KEYS.map((key) => [key, existingSizes.get(key) ?? true])) as Record<EtsyProductSizeKey, boolean>,
-        frames: Object.fromEntries(ETSY_PRODUCT_FRAMES.map(({ key, defaultEnabled }) => [
-          key,
-          existingFrames.get(key) ?? (listing.etsyProductType === 'digital' ? false : defaultEnabled),
-        ])) as Record<EtsyProductFrameKey, boolean>,
+  const resetDefaults = options?.resetToProductType
+    ? buildListingProductTypeDefaults(options.resetToProductType)
+    : null;
+  const templateDownloadSectionId = getTemplateDownloadSectionId(listing.ourCategory);
+  const customisation = effectiveListingCustomisation(
+    listing.ourCategory ?? resetDefaults,
+    options?.resetToProductType ? resetDefaults : listing.productConfig,
+  );
+  const templatePrintsEnabled = listing.ourCategory
+    ? listing.ourCategory.printsFrames || customisation.customisePrints
+    : resetDefaults?.printsFrames ?? listing.productConfig?.printsFrames ?? true;
+  const templateDownloadsEnabled = listing.ourCategory?.digitalDownload
+    ?? resetDefaults?.digitalDownload
+    ?? listing.productConfig?.digitalDownload
+    ?? options?.digitalDownload
+    ?? listing.etsyProductType === 'digital';
+  const fallbackProductType = options?.resetToProductType
+    ?? (listing.etsyProductType === 'digital' ? 'digital' : 'physical');
+  const templateOptions = getTemplateProductOptions(listing.ourCategory, fallbackProductType);
+  const defaults: NormalizedListingProducts = {
+        listOnEtsy: resetDefaults?.listOnEtsy ?? listing.productConfig?.listOnEtsy ?? true,
+        digitalDownload: templateDownloadsEnabled,
+        printsFrames: templatePrintsEnabled,
+        customTop: options?.resetToProductType
+          ? listing.ourCategory?.customTop ?? resetDefaults?.customTop ?? true
+          : customisation.customTop,
+        customBottom: options?.resetToProductType
+          ? listing.ourCategory?.customBottom ?? resetDefaults?.customBottom ?? true
+          : customisation.customBottom,
+        customisePrints: customisation.customisePrints,
+        giftMessageEnabled: resetDefaults?.giftMessageEnabled ?? listing.productConfig?.giftMessageEnabled ?? false,
+        downloadSectionId: templateDownloadSectionId,
+        returnPolicyId: resetDefaults?.returnPolicyId ?? listing.productConfig?.returnPolicyId ?? null,
+        ...templateOptions,
         skus: {},
       };
   const expectedProducts = buildListingProductDefinitions(listing, defaults);
   const existingProductsByKey = new Map(listing.products.map((product) => [product.productKey, product]));
-  const hasCompleteSizes = listing.sizeOptions.length === SIZE_KEYS.length
-    && SIZE_KEYS.every((key) => existingSizes.has(key));
-  const hasCompleteFrames = listing.frameOptions.length === FRAME_KEYS.length
-    && FRAME_KEYS.every((key) => existingFrames.has(key));
   const hasCompleteProducts = listing.products.length === expectedProducts.length
     && expectedProducts.every((expected) => {
       const current = existingProductsByKey.get(expected.productKey);
@@ -666,9 +721,56 @@ export async function ensureListingProductDefaultsInTransaction(
   // Etsy refreshes run repeatedly. Existing complete product configuration must remain
   // untouched so a read-only refresh neither regenerates SKUs nor raises a false sync flag.
   if (!options?.resetToProductType
-    && listing.productConfig && hasCompleteSizes && hasCompleteFrames && hasCompleteProducts) return;
+    && listing.productConfig
+    && listing.productConfig.downloadSectionId === templateDownloadSectionId
+    && listing.productConfig.digitalDownload === templateDownloadsEnabled
+    && listing.productConfig.printsFrames === templatePrintsEnabled
+    && listing.productConfig.customisePrints === customisation.customisePrints
+    && listing.productConfig.customTop === defaults.customTop
+    && listing.productConfig.customBottom === defaults.customBottom
+    && hasCompleteProducts) return;
 
   await persistListingProducts(tx, listing, defaults);
+}
+
+export async function saveListingCustomisationSettings(
+  context: ListingProductsContext,
+  requested: ListingCustomisationSettings,
+) {
+  await prisma.$transaction(async (tx) => {
+    const listing = await loadListingForContext(tx, context);
+    const customisation = effectiveListingCustomisation(listing.ourCategory, requested);
+    const current = listing.productConfig;
+    const templateOptions = getTemplateProductOptions(
+      listing.ourCategory,
+      listing.etsyProductType === 'digital' ? 'digital' : 'physical',
+    );
+    const defaults = buildListingProductTypeDefaults(
+      listing.etsyProductType === 'digital' ? 'digital' : 'physical',
+    );
+    const config: NormalizedListingProducts = {
+      ...defaults,
+      listOnEtsy: current?.listOnEtsy ?? true,
+      digitalDownload: listing.ourCategory?.digitalDownload ?? current?.digitalDownload ?? defaults.digitalDownload,
+      printsFrames: Boolean(listing.ourCategory?.printsFrames) || customisation.customisePrints,
+      ...customisation,
+      giftMessageEnabled: current?.giftMessageEnabled ?? false,
+      downloadSectionId: getTemplateDownloadSectionId(listing.ourCategory),
+      returnPolicyId: current?.returnPolicyId ?? null,
+      ...templateOptions,
+      skus: {},
+    };
+    await persistListingProducts(tx, listing, config);
+    await tx.etsyListing.update({
+      where: { id: listing.id },
+      data: {
+        detailsChanged: true,
+        imagesChanged: true,
+        productsChanged: true,
+        lastLocalChangeAt: new Date(),
+      },
+    });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
 export async function ensureListingProductDefaults(

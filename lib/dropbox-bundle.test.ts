@@ -430,12 +430,12 @@ describe('Dropbox shared-link changes', () => {
     expect(prismaMocks.fileCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         listingId: 79,
-        localFileName: 'CosyHousePrints_Download_Instructions.pdf',
+        localFileName: 'Grouped-listing_DownloadInstructions.pdf',
         etsyListingFileId: null,
         rawJson: { kind: 'dropbox_instruction_pdf', dropboxSharedUrl: newUrl },
       }),
     });
-    expect(storage.objects.get('D:/Listings/Current/downloads/CosyHousePrints_Download_Instructions.pdf')?.length).toBeGreaterThan(0);
+    expect(storage.objects.get('D:/Listings/Current/downloads/Grouped-listing_DownloadInstructions.pdf')?.length).toBeGreaterThan(0);
     expect(prismaMocks.transactionListingUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ downloadsChanged: true, dropboxRevision: 4 }),
     }));
@@ -555,7 +555,7 @@ describe('manual Dropbox instruction PDF storage', () => {
     await expect(createDropboxInstructionPdf(context)).rejects.toThrow('Simulated database failure');
 
     expect(prismaMocks.fileCreate).toHaveBeenCalledOnce();
-    expect(storage.objects.has('D:/Listings/Current/downloads/CosyHousePrints_Download_Instructions.pdf')).toBe(false);
+    expect(storage.objects.has('D:/Listings/Current/downloads/Grouped-listing_DownloadInstructions.pdf')).toBe(false);
     expect([...storage.objects.keys()].some((key) => key.includes('.instruction.'))).toBe(false);
   });
 
