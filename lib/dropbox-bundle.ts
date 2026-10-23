@@ -1291,26 +1291,113 @@ async function createLinkedPdf(title: string, url: string) {
   });
 }
 
-async function createGroupedLinkedPdf(title: string, links: Array<{ name: string; url: string }>) {
+export async function createGroupedLinkedPdf(title: string, links: Array<{ name: string; url: string }>) {
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
-    const document = new PDFDocument({ size: 'A4', margin: 64 });
+    const document = new PDFDocument({ size: 'A4', margin: 0 });
+    const linksPerPage = 6;
+    const totalPages = Math.max(1, Math.ceil(links.length / linksPerPage));
+    const sage = '#68755A';
+    const darkSage = '#536149';
+    const terracotta = '#C9764E';
+    const cream = '#FCF8F1';
+    const card = '#FFFCF7';
+    const border = '#D8C8B4';
+    const text = '#3E3935';
+    const muted = '#6B645E';
+    const headerPath = path.join(process.cwd(), 'public', 'pdf-assets', 'cosyhouseprints-header.png');
+
     document.on('data', (chunk: Buffer) => chunks.push(chunk));
     document.on('end', () => resolve(Buffer.concat(chunks)));
     document.on('error', reject);
-    document.fillColor('#536149').font('Times-Roman').fontSize(28).text('CosyHousePrints', { align: 'center' });
-    document.moveDown(0.5).fontSize(20).text(title, { align: 'center' });
-    document.moveDown().fillColor('#3E3935').font('Helvetica').fontSize(11)
-      .text('Thank you for your purchase. Use each link below to download the artwork files included in this set.');
-    document.moveDown();
-    for (const [index, link] of links.entries()) {
-      if (document.y > 700) document.addPage();
-      document.fillColor('#536149').font('Helvetica-Bold').fontSize(13).text(`${index + 1}. ${link.name}`);
-      document.fillColor('#2563EB').font('Helvetica').fontSize(10).text(link.url, { link: link.url, underline: true });
-      document.moveDown();
+
+    for (let pageIndex = 0; pageIndex < totalPages; pageIndex += 1) {
+      if (pageIndex > 0) document.addPage({ size: 'A4', margin: 0 });
+      const pageWidth = document.page.width;
+      const pageHeight = document.page.height;
+      const firstLinkIndex = pageIndex * linksPerPage;
+      const pageLinks = links.slice(firstLinkIndex, firstLinkIndex + linksPerPage);
+
+      document.rect(0, 0, pageWidth, pageHeight).fill(cream);
+      document.image(headerPath, 20, 18, { width: pageWidth - 40, height: 158 });
+      document.fillColor(darkSage).font('Times-Roman').fontSize(30)
+        .text('CosyHousePrints', 120, 48, { width: pageWidth - 240, align: 'center' });
+      document.fillColor(terracotta).font('Times-Roman').fontSize(12)
+        .text('~  *  ~', 180, 86, { width: pageWidth - 360, align: 'center' });
+      document.fillColor(muted).font('Helvetica').fontSize(11)
+        .text('Printable Wall Art for Cosy Homes', 150, 106, { width: pageWidth - 300, align: 'center' });
+
+      let titleSize = 25;
+      document.font('Times-Roman').fontSize(titleSize);
+      while (titleSize > 17 && document.widthOfString(title) > pageWidth - 140) {
+        titleSize -= 1;
+        document.fontSize(titleSize);
+      }
+      document.fillColor(darkSage).fontSize(titleSize)
+        .text(title, 60, 181, { width: pageWidth - 120, height: 32, align: 'center', ellipsis: true });
+      document.fillColor(terracotta).fontSize(11)
+        .text('~  *  ~', 180, 214, { width: pageWidth - 360, align: 'center' });
+      document.fillColor(text).font('Helvetica').fontSize(9.5)
+        .text(
+          pageIndex === 0
+            ? 'Thank you for your purchase. Use the individual buttons below to download every artwork included in your set.'
+            : 'Continue downloading the artwork included in your set.',
+          62,
+          235,
+          { width: pageWidth - 124, height: 26, align: 'center' },
+        );
+
+      const cardX = 52;
+      const cardWidth = pageWidth - 104;
+      const cardHeight = 67;
+      const cardGap = 7;
+      const cardsTop = 278;
+      for (const [pageLinkIndex, link] of pageLinks.entries()) {
+        const itemNumber = firstLinkIndex + pageLinkIndex + 1;
+        const cardY = cardsTop + pageLinkIndex * (cardHeight + cardGap);
+        document.roundedRect(cardX, cardY, cardWidth, cardHeight, 8).fillAndStroke(card, border);
+        document.circle(cardX + 27, cardY + cardHeight / 2, 17).fill('#F1EDE3');
+        document.fillColor(sage).font('Helvetica-Bold').fontSize(itemNumber > 9 ? 9 : 11)
+          .text(String(itemNumber), cardX + 15, cardY + 27, { width: 24, align: 'center' });
+        document.fillColor(darkSage).font('Helvetica-Bold').fontSize(11.5)
+          .text(link.name, cardX + 54, cardY + 12, { width: 278, height: 18, ellipsis: true });
+        document.fillColor(muted).font('Helvetica').fontSize(7.5)
+          .text(link.url, cardX + 54, cardY + 36, {
+            width: 278,
+            height: 14,
+            ellipsis: true,
+            link: link.url,
+            underline: false,
+          });
+
+        const buttonX = cardX + cardWidth - 143;
+        const buttonY = cardY + 16;
+        const buttonWidth = 126;
+        const buttonHeight = 35;
+        document.roundedRect(buttonX, buttonY, buttonWidth, buttonHeight, 7).fill(sage);
+        document.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(10)
+          .text('DOWNLOAD ITEM', buttonX, buttonY + 12, { width: buttonWidth, align: 'center' });
+        document.link(buttonX, buttonY, buttonWidth, buttonHeight, link.url);
+      }
+
+      document.roundedRect(62, 736, pageWidth - 124, 45, 7).fillAndStroke('#F8F4EA', border);
+      document.fillColor(sage).font('Helvetica-Bold').fontSize(10)
+        .text('Need help?', 82, 752, { width: 70 });
+      document.fillColor(text).font('Helvetica').fontSize(8.5)
+        .text('Please contact CosyHousePrints through Etsy messages and include your order number.', 151, 751, {
+          width: pageWidth - 235,
+        });
+
+      document.moveTo(80, 796).lineTo(pageWidth - 80, 796).strokeColor(border).stroke();
+      document.fillColor(muted).font('Helvetica').fontSize(8)
+        .text('Digital product only   |   No physical item will be shipped   |   Personal use only', 55, 807, {
+          width: pageWidth - 110,
+          align: 'center',
+        });
+      document.fillColor(muted).fontSize(7)
+        .text(`Page ${pageIndex + 1} of ${totalPages}`, pageWidth - 105, 823, { width: 60, align: 'right' });
     }
-    document.moveDown().fillColor('#6B645E').fontSize(9)
-      .text('Digital product only | No physical item will be shipped | Personal use only', { align: 'center' });
+
     document.end();
   });
 }

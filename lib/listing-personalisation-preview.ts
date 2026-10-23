@@ -1,6 +1,7 @@
 import sharp from 'sharp';
 
 import { LISTING_PAPER_SIZE_SPECS } from '@/lib/listing-paper-size-groups';
+import { DEFAULT_ARTWORK_BACKGROUND_COLOUR, type ArtworkBackgroundColour } from '@/lib/artwork-background-colours';
 import { prepareOurCategoryTemplateArtwork } from '@/lib/our-category-template-personalisation';
 import type { ListingPersonalisationTextAreas } from '@/lib/personalisation-text-areas';
 import { createPrintableDownload } from '@/lib/printable-download-generator';
@@ -21,6 +22,7 @@ export type ListingPersonalisationPreviewInput = {
   cropRegion: PrintCropRegion;
   artworkPlacement: PrintArtworkPlacement;
   orientation: ListingArtworkOrientation;
+  backgroundColour?: ArtworkBackgroundColour;
 };
 
 export function listingPersonalisationPreviewDimensions(sizeKey: EtsyProductSizeKey, landscape: boolean) {
@@ -56,6 +58,7 @@ export async function createListingPersonalisationPreview(source: Buffer, input:
   }
   const metadata = await sharp(source, { failOn: 'error' }).metadata();
   if (!metadata.width || !metadata.height) throw new Error('The listing thumbnail has invalid dimensions.');
+  const backgroundColour = input.backgroundColour ?? DEFAULT_ARTWORK_BACKGROUND_COLOUR;
   const dimensions = listingPersonalisationPreviewDimensions(input.sizeKey, input.orientation === 'landscape');
   const paper = await createPrintableDownload(
     source,
@@ -64,6 +67,7 @@ export async function createListingPersonalisationPreview(source: Buffer, input:
     dimensions,
     input.cropRegion,
     input.artworkPlacement,
+    backgroundColour,
   );
   const personalised = await prepareOurCategoryTemplateArtwork(
     paper.buffer,
@@ -79,7 +83,7 @@ export async function createListingPersonalisationPreview(source: Buffer, input:
     ? await applyWhiteBorder(personalised, dimensions.width, dimensions.height, input.borderSizePercent)
     : personalised;
   const buffer = await sharp(bordered, { failOn: 'error' })
-    .flatten({ background: '#FFFFFF' })
+    .flatten({ background: backgroundColour })
     .toColourspace('srgb')
     .webp({ quality: 88, effort: 4 })
     .toBuffer();

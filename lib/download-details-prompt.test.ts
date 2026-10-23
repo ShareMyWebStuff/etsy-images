@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildDownloadDetailsPrompt, missingDownloadDetailsPromptFields } from '@/lib/download-details-prompt';
+import { printableDownloadDescriptionGuide } from '@/lib/printable-download-specs';
 
 const values = {
   animalName: ' Green Sea Turtle ',
@@ -9,8 +10,8 @@ const values = {
   orientation: 'portrait',
   fileType: 'jpeg',
   frameColours: 'Black, White, Natural Oak',
-  filesIncluded: 'Green_Sea_Turtle_2x3.jpeg, Green_Sea_Turtle_3x4.jpeg, How_to_Print_Guide.pdf',
-  recommendedPaper: 'Heavyweight matte photo paper, approximately 200–250 gsm',
+  filesIncluded: printableDownloadDescriptionGuide('portrait'),
+  recommendedPaper: 'Good-quality matte photo or art paper around 200–250 gsm',
   licenceType: 'Personal use only',
 };
 
@@ -24,11 +25,18 @@ describe('Download info prompt', () => {
     expect(prompt).toContain('ORIENTATION: portrait');
     expect(prompt).toContain('FILE_TYPE: jpeg');
     expect(prompt).toContain('FRAME_COLOURS: Black, White, Natural Oak');
-    expect(prompt).toContain('FILES_INCLUDED: Green_Sea_Turtle_2x3.jpeg, Green_Sea_Turtle_3x4.jpeg, How_to_Print_Guide.pdf');
-    expect(prompt).toContain('RECOMMENDED_PAPER: Heavyweight matte photo paper, approximately 200–250 gsm');
+    expect(prompt).toContain('A-SERIES FILE');
+    expect(prompt).toContain('A5 — 14.8 × 21 cm');
+    expect(prompt).toContain('2:3 RATIO FILE');
+    expect(prompt).toContain('File dimensions: 7200 × 10800 px');
+    expect(prompt).toContain('Maximum listed print size: 24 × 36 in');
+    expect(prompt).toContain('RECOMMENDED_PAPER: Good-quality matte photo or art paper around 200–250 gsm');
     expect(prompt).toContain('LICENCE_TYPE: Personal use only');
-    expect(prompt).toContain('green-sea-turtle_title.txt');
-    expect(prompt).toContain('green-sea-turtle_info.zip');
+    expect(prompt).toContain('DIGITAL DOWNLOAD ONLY — NO PHYSICAL ITEM WILL BE SENT');
+    expect(prompt).toContain('A THOUGHTFUL GIFT TO PRINT AND FRAME');
+    expect(prompt).toContain('HOW TO DOWNLOAD AND PRINT');
+    expect(prompt).toContain('PERSONAL USE LICENCE');
+    expect(prompt).toContain('an Etsy PDF containing a link to the JPEG files');
     expect(prompt).not.toMatch(/\{\{[A-Z_]+\}\}/);
   });
 

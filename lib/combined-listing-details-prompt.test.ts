@@ -33,6 +33,13 @@ describe('combined listing details prompt', () => {
     expect(prompt.indexOf('SECTION_NAME = "Sea Creatures Wall Art"')).toBeLessThan(prompt.indexOf('PHYSICAL PRINT RULES'));
     expect(prompt).toContain('PRINT_SIZES = "A4, A3, A2, 5 × 7"');
     expect(prompt).toContain('FRAME_COLOURS = "Black, White, Natural Oak"');
+    expect(prompt).toContain('PAPER, FINISH AND FRAMING');
+    expect(prompt).toContain('PRINT OPTIONS AND SIZES');
+    expect(prompt).toContain('PREFER A DIGITAL DOWNLOAD?');
+    expect(prompt).toContain('Never claim that an oak-finish frame is made from oak');
+    expect(prompt).toContain('Do not include pixel dimensions, ratios, files, DPI or licence details here.');
+    expect(prompt).toContain('protective, shatter-resistant acrylic glazing');
+    expect(prompt).toContain('hanging hardware included');
     expect(prompt).not.toContain('FRAME_COLOURS = "No Frame');
     expect(prompt).toContain('DIGITAL DOWNLOAD RULES');
     expect(prompt).toContain('<ETSY_LISTING_DATA>');

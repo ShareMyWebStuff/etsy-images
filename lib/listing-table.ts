@@ -254,7 +254,7 @@ export async function getSubSectionListingsPageData(
         hasTemplate: listing.ourCategory !== null,
         hasGroupSelection: !isMultiple || listing.groupItems.length === listing.ourCategory?.itemCount,
         hasDownloadInstructions: listing.files.some(isDropboxInstructionPdfFile),
-        hasListingDescription: (listing.listingDescription?.trim().length ?? 0) > 0,
+        hasListingDescription: isMultiple || (listing.listingDescription?.trim().length ?? 0) > 0,
         hasThumbnail,
         hasThumbnailSizes: isMultiple || parseCurrentListingPrintCropSettings(listing.printCropSettings, {
           fileName: listing.thumbnailFileName,
@@ -265,12 +265,12 @@ export async function getSubSectionListingsPageData(
         hasCurrentZips,
         hasCurrentDropbox,
         hasDownloadSection: hasRequiredTemplateDownloadSection(listing.ourCategory),
-        hasTags: isMultiple || listing.tags.length > 0,
-        hasTitle: isMultiple || hasDetailsTitle,
-        hasEtsyDescription: isMultiple || (listing.description?.trim().length ?? 0) > 0,
-        hasQuantity: isMultiple || (listing.quantity ?? 0) > 0,
-        hasDigitalTitle: isMultiple || (listing.digitalTitle?.trim().length ?? 0) > 0,
-        hasDigitalDescription: isMultiple || (listing.digitalDescription?.trim().length ?? 0) > 0,
+        hasTags: listing.tags.length > 0,
+        hasTitle: hasDetailsTitle,
+        hasEtsyDescription: (listing.description?.trim().length ?? 0) > 0,
+        hasQuantity: (listing.quantity ?? 0) > 0,
+        hasDigitalTitle: (listing.digitalTitle?.trim().length ?? 0) > 0,
+        hasDigitalDescription: (listing.digitalDescription?.trim().length ?? 0) > 0,
         hasDigitalQuantity: (listing.digitalQuantity ?? 0) > 0,
         hasPrimaryColour: (listing.primaryColour?.trim().length ?? 0) > 0,
         hasSecondaryColour: (listing.secondaryColour?.trim().length ?? 0) > 0,
@@ -285,7 +285,7 @@ export async function getSubSectionListingsPageData(
         listingName: listing.localDirectoryName ?? listing.title,
         sourceSectionName: category.name,
         templateProducts: category.templateProducts,
-        status: !hasThumbnail
+        status: !isMultiple && !hasThumbnail
           ? 'incomplete'
           : isPublished
             ? (listing.state === 'active' || listing.state === 'published' ? listing.state : listing.etsyDownloadState!)

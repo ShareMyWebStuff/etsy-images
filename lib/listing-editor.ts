@@ -4,6 +4,12 @@ import { Prisma } from '@prisma/client';
 import { ZipArchive } from 'archiver';
 import { imageSize } from 'image-size';
 import sharp from 'sharp';
+import {
+  DEFAULT_ARTWORK_BACKGROUND_COLOUR,
+  normalizeArtworkBackgroundColour,
+  validateArtworkBackgroundColour,
+  type ArtworkBackgroundColour,
+} from '@/lib/artwork-background-colours';
 import { inspectListingZipStorage, isDropboxInstructionPdfFile } from '@/lib/dropbox-bundle';
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';
 import { getListingTodoItems, type ListingTodoItem } from '@/lib/listing-completeness';
@@ -50,7 +56,7 @@ import { copyFile, mkdir, readFile, readImagePreview, readdir, rename, rm, stat,
 import { PRICE_OPTIONS } from '@/lib/set-prices-core';
 import { getTemplateDownloadSectionId, hasRequiredTemplateDownloadSection } from '@/lib/template-download-section';
 import { effectiveListingCustomisation } from '@/lib/listing-customisation';
-import { analyseListingThumbnailDimensions } from '@/lib/listing-thumbnail-ratio';
+import { analyseListingThumbnailDimensions, type ListingThumbnailRatio } from '@/lib/listing-thumbnail-ratio';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm']);
@@ -96,6 +102,8 @@ export type ListingEditorData = {
     listingItemInherited: boolean;
     roomTheme: string;
     roomThemeInherited: boolean;
+    backgroundColour: ArtworkBackgroundColour;
+    backgroundColourInherited: boolean;
     personalisationHeaderText: string;
     personalisationFooterText: string;
     personalisationFontId: string;
@@ -133,6 +141,7 @@ export type ListingEditorData = {
     customTop: boolean;
     customBottom: boolean;
     digitalDownload: boolean;
+    backgroundColour: ArtworkBackgroundColour;
     downloadSection: { title: string; etsyShopSectionId: number } | null;
     imageTemplates: Array<{ id: string; name: string; position: number; generated: boolean }>;
   } | null;
@@ -156,7 +165,14 @@ export type ListingEditorData = {
     orderCount: number;
     lastSoldAt: string | null;
   };
-  thumbnail: { fileName: string; originalFileName: string | null; updatedAt: string | null } | null;
+  thumbnail: {
+    fileName: string;
+    originalFileName: string | null;
+    updatedAt: string | null;
+    widthPixels: number | null;
+    heightPixels: number | null;
+    ratio: ListingThumbnailRatio | null;
+  } | null;
   pendingChanges: PendingListingChange[];
   readyToUpload: boolean;
   missingUploadFields: string[];
@@ -590,11 +606,48 @@ async function mapEditorData(
     updatedAt: data.listing.thumbnailUpdatedAt?.toISOString() ?? null,
     orientation: artworkOrientation,
   });
+  let thumbnailWidthPixels = data.listing.thumbnailWidthPixels ?? printCropSettings?.source.width ?? null;
+  let thumbnailHeightPixels = data.listing.thumbnailHeightPixels ?? printCropSettings?.source.height ?? null;
+  if (data.listing.thumbnailFileName && (!thumbnailWidthPixels || !thumbnailHeightPixels)) {
+    try {
+      const metadata = await sharp(await readFile(path.join(
+        listingPath,
+        'thumbnail',
+        data.listing.thumbnailFileName,
+      )), { failOn: 'error' }).metadata();
+      thumbnailWidthPixels = metadata.width ?? null;
+      thumbnailHeightPixels = metadata.height ?? null;
+    } catch {
+      // Keep the listing editor available if a legacy thumbnail cannot be inspected.
+    }
+  }
+  if (thumbnailWidthPixels && thumbnailHeightPixels
+    && (data.listing.thumbnailWidthPixels !== thumbnailWidthPixels
+      || data.listing.thumbnailHeightPixels !== thumbnailHeightPixels)) {
+    await prisma.etsyListing.update({
+      where: { id: data.listing.id },
+      data: { thumbnailWidthPixels, thumbnailHeightPixels },
+    });
+  }
+  let thumbnailRatio: ListingThumbnailRatio | null = null;
+  if (thumbnailWidthPixels && thumbnailHeightPixels) {
+    try {
+      thumbnailRatio = analyseListingThumbnailDimensions(thumbnailWidthPixels, thumbnailHeightPixels).ratio;
+    } catch {
+      // Legacy thumbnails may predate the current 2:3 / 4:5 validation.
+    }
+  }
   const listingCustomisation = effectiveListingCustomisation(
     data.listing.ourCategory,
     data.listing.productConfig,
   );
   const personalisationTextAreas = parseListingPersonalisationTextAreas(data.listing.personalisationTextAreas);
+  const templateBackgroundColour = normalizeArtworkBackgroundColour(
+    data.listing.ourCategory?.backgroundColour ?? DEFAULT_ARTWORK_BACKGROUND_COLOUR,
+  );
+  const backgroundColour = normalizeArtworkBackgroundColour(
+    data.listing.backgroundColour ?? templateBackgroundColour,
+  );
   const expectedTemplateImageIds = data.listing.ourCategory?.imageTemplates.map((template) => template.id) ?? [];
   const generatedTemplateImageIds = new Set(data.listing.images.flatMap((image) => (
     image.ourCategoryImageTemplateId == null ? [] : [image.ourCategoryImageTemplateId]
@@ -610,7 +663,7 @@ async function mapEditorData(
     hasTemplate: data.listing.ourCategory !== null,
     hasGroupSelection: !isMultipleTemplate || (data.listing.groupItems ?? []).length === data.listing.ourCategory?.itemCount,
     hasDownloadInstructions: hasDropboxInstructionPdf,
-    hasListingDescription: normalize(data.listing.listingDescription).length > 0,
+    hasListingDescription: isMultipleTemplate || normalize(data.listing.listingDescription).length > 0,
     hasThumbnail: normalize(data.listing.thumbnailFileName).length > 0,
     hasThumbnailSizes: isMultipleTemplate || printCropSettings !== null,
     requiresTextAreas: !isMultipleTemplate && listingCustomisation.customisePrints,
@@ -620,12 +673,12 @@ async function mapEditorData(
     hasCurrentZips: zippedFilesAreCurrent,
     hasCurrentDropbox: dropboxIsCurrent,
     hasDownloadSection: hasRequiredTemplateDownloadSection(data.listing.ourCategory),
-    hasTags: isMultipleTemplate || data.listing.tags.length > 0,
-    hasTitle: isMultipleTemplate || normalize(data.listing.title).length > 0,
-    hasEtsyDescription: isMultipleTemplate || normalize(data.listing.description).length > 0,
-    hasQuantity: isMultipleTemplate || (data.listing.quantity ?? 0) > 0,
-    hasDigitalTitle: isMultipleTemplate || normalize(data.listing.digitalTitle).length > 0,
-    hasDigitalDescription: isMultipleTemplate || normalize(data.listing.digitalDescription).length > 0,
+    hasTags: data.listing.tags.length > 0,
+    hasTitle: normalize(data.listing.title).length > 0,
+    hasEtsyDescription: normalize(data.listing.description).length > 0,
+    hasQuantity: (data.listing.quantity ?? 0) > 0,
+    hasDigitalTitle: normalize(data.listing.digitalTitle).length > 0,
+    hasDigitalDescription: normalize(data.listing.digitalDescription).length > 0,
     hasDigitalQuantity: (data.listing.digitalQuantity ?? 0) > 0,
     hasPrimaryColour: normalize(data.listing.primaryColour).length > 0,
     hasSecondaryColour: normalize(data.listing.secondaryColour).length > 0,
@@ -679,6 +732,8 @@ async function mapEditorData(
       listingItemInherited: data.listing.listingItem === null,
       roomTheme: data.listing.roomTheme ?? data.listing.ourCategory?.roomTheme ?? '',
       roomThemeInherited: data.listing.roomTheme === null && Boolean(data.listing.ourCategory?.roomTheme.trim()),
+      backgroundColour,
+      backgroundColourInherited: data.listing.backgroundColour === null,
       personalisationHeaderText: data.listing.personalisationHeaderText ?? "Rory's",
       personalisationFooterText: data.listing.personalisationFooterText ?? 'Bedroom',
       personalisationFontId: data.listing.personalisationFontId ?? DEFAULT_PERSONALISATION_FONT_ID,
@@ -716,6 +771,7 @@ async function mapEditorData(
       customTop: data.listing.ourCategory.customTop,
       customBottom: data.listing.ourCategory.customBottom,
       digitalDownload: data.listing.ourCategory.digitalDownload,
+      backgroundColour: templateBackgroundColour,
       downloadSection: data.listing.ourCategory.downloadSection,
       imageTemplates: data.listing.ourCategory.imageTemplates.map((template) => ({
         id: String(template.id),
@@ -748,6 +804,9 @@ async function mapEditorData(
       fileName: data.listing.thumbnailFileName,
       originalFileName: data.listing.thumbnailOriginalFileName,
       updatedAt: data.listing.thumbnailUpdatedAt?.toISOString() ?? null,
+      widthPixels: thumbnailWidthPixels,
+      heightPixels: thumbnailHeightPixels,
+      ratio: thumbnailRatio,
     } : null,
     pendingChanges: [
       data.listing.detailsChanged ? 'Details' as const : null,
@@ -1263,6 +1322,9 @@ export async function generateListingTemplateImages(
   const template = data.listing.ourCategory;
   if (!template) throw new Error('Choose a template for this listing before generating images.');
   if (template.imageTemplates.length === 0) throw new Error('The selected template has no image templates.');
+  const backgroundColour = normalizeArtworkBackgroundColour(
+    data.listing.backgroundColour ?? template.backgroundColour,
+  );
 
   if (template.templateType !== 'multiple') {
     const crops = parseCurrentListingPrintCropSettings(data.listing.printCropSettings, {
@@ -1323,6 +1385,7 @@ export async function generateListingTemplateImages(
       sourceCustomisation,
       sourceTextRatios,
       sourcePrintCrops,
+      backgroundColour,
     );
     const fileName = `template-${imageTemplate.id}.png`;
     const targetPath = path.join(listingPath, fileName);
@@ -1381,32 +1444,6 @@ export async function deleteAllListingImages(context: ListingEditorContext) {
   return refreshed;
 }
 
-export async function prepareMultipleListingOverview(context: ListingEditorContext) {
-  const data = await getListingForContext(context);
-  const template = data.listing.ourCategory;
-  if (!template || template.templateType !== 'multiple') throw new Error('This listing does not use a multiple template.');
-  if (data.listing.groupItems.length !== template.itemCount) throw new Error(`Select exactly ${template.itemCount} grouped listings first.`);
-  const firstSource = await prisma.etsyListing.findUnique({
-    where: { id: data.listing.groupItems[0].sourceListingId },
-    select: { primaryColour: true, secondaryColour: true },
-  });
-  await prisma.etsyListing.update({
-    where: { id: data.listing.id },
-    data: {
-      quantity: data.listing.quantity && data.listing.quantity > 0 ? data.listing.quantity : 999,
-      digitalQuantity: 999,
-      primaryColour: firstSource?.primaryColour ?? data.listing.primaryColour,
-      secondaryColour: firstSource?.secondaryColour ?? data.listing.secondaryColour,
-      detailsChanged: true,
-      lastLocalChangeAt: new Date(),
-    },
-  });
-  await setListingEtsySku(context);
-  const refreshed = await getListingEditorData(context);
-  if (!refreshed) throw new Error('The multiple listing details could not be reloaded.');
-  return refreshed;
-}
-
 export async function saveListingRoomTheme(context: ListingEditorContext, value: string) {
   const data = await getListingForContext(context);
   const roomTheme = value.trim();
@@ -1421,6 +1458,32 @@ export async function saveListingRoomTheme(context: ListingEditorContext, value:
       lastLocalChangeAt: new Date(),
     },
   });
+  const refreshed = await getListingEditorData(context);
+  if (!refreshed) throw new Error('Listing not found.');
+  return refreshed;
+}
+
+export async function saveListingBackgroundColour(context: ListingEditorContext, value: unknown) {
+  const data = await getListingForContext(context);
+  const backgroundColour = validateArtworkBackgroundColour(value);
+  const templateBackgroundColour = normalizeArtworkBackgroundColour(
+    data.listing.ourCategory?.backgroundColour ?? DEFAULT_ARTWORK_BACKGROUND_COLOUR,
+  );
+  const currentBackgroundColour = normalizeArtworkBackgroundColour(
+    data.listing.backgroundColour ?? templateBackgroundColour,
+  );
+  if (backgroundColour !== currentBackgroundColour || data.listing.backgroundColour !== null) {
+    await prisma.etsyListing.update({
+      where: { id: data.listing.id },
+      data: {
+        backgroundColour: backgroundColour === templateBackgroundColour ? null : backgroundColour,
+        imagesChanged: true,
+        downloadsChanged: true,
+        downloadsRevision: { increment: 1 },
+        lastLocalChangeAt: new Date(),
+      },
+    });
+  }
   const refreshed = await getListingEditorData(context);
   if (!refreshed) throw new Error('Listing not found.');
   return refreshed;
@@ -1621,6 +1684,9 @@ export async function generateListingPersonalisationPreview(
     cropRegion: cropSettings.regions[paperSpec.ratio],
     artworkPlacement: cropSettings.placements[paperSpec.ratio],
     orientation: normalizeListingArtworkOrientation(data.listing.artworkOrientation),
+    backgroundColour: normalizeArtworkBackgroundColour(
+      data.listing.backgroundColour ?? template.backgroundColour,
+    ),
   });
 }
 
@@ -1964,6 +2030,8 @@ export async function uploadListingAsset(
         thumbnailFileName: fileName,
         thumbnailOriginalFileName: file.name,
         thumbnailUpdatedAt: new Date(),
+        thumbnailWidthPixels: thumbnailDimensions?.targetWidth ?? null,
+        thumbnailHeightPixels: thumbnailDimensions?.targetHeight ?? null,
         artworkOrientation: thumbnailDimensions?.orientation ?? 'portrait',
       },
     });
@@ -2076,6 +2144,9 @@ export async function generateListingPrintableDownload(
     undefined,
     cropSettings.regions[ratio],
     cropSettings.placements[ratio],
+    normalizeArtworkBackgroundColour(
+      data.listing.backgroundColour ?? data.listing.ourCategory?.backgroundColour,
+    ),
   );
   const downloadsDirectory = path.join(listingPath, 'downloads');
   await mkdir(downloadsDirectory, { recursive: true });
@@ -2307,6 +2378,8 @@ export async function replaceListingThumbnailFromBuffer(
       thumbnailFileName: fileName,
       thumbnailOriginalFileName: originalFileName,
       thumbnailUpdatedAt: new Date(),
+      thumbnailWidthPixels: prepared.dimensions.targetWidth,
+      thumbnailHeightPixels: prepared.dimensions.targetHeight,
       artworkOrientation: prepared.dimensions.orientation,
       lastLocalChangeAt: new Date(),
     },
@@ -3139,7 +3212,13 @@ export async function deleteListingAsset(context: ListingEditorContext, kind: Up
     if (!localFileName) throw new Error('Thumbnail not found.');
     await prisma.etsyListing.update({
       where: { id: data.listing.id },
-      data: { thumbnailFileName: null, thumbnailOriginalFileName: null, thumbnailUpdatedAt: null },
+      data: {
+        thumbnailFileName: null,
+        thumbnailOriginalFileName: null,
+        thumbnailUpdatedAt: null,
+        thumbnailWidthPixels: null,
+        thumbnailHeightPixels: null,
+      },
     });
     await invalidateListingPrintCrops(data.listing.id);
   } else if (kind === 'image') {

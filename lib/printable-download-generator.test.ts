@@ -76,11 +76,14 @@ describe('printable download generator', () => {
       { width: 120, height: 180 },
       { x: 0, y: 0, width: 1, height: 1 },
       { x: 0, y: 1 / 6, width: 1, height: 5 / 6 },
+      '#FAF8F4',
     );
     const { data, info } = await sharp(result.buffer).raw().toBuffer({ resolveWithObject: true });
     const top = 10 * info.channels;
     const middle = ((90 * info.width) + 10) * info.channels;
-    expect([...data.subarray(top, top + 3)]).toEqual([255, 255, 255]);
+    expect(data[top]).toBeGreaterThanOrEqual(245);
+    expect(data[top + 1]).toBeGreaterThanOrEqual(243);
+    expect(data[top + 2]).toBeGreaterThanOrEqual(238);
     expect(data[middle]).toBeLessThan(20);
     expect(data[middle + 1]).toBeGreaterThan(110);
     expect(data[middle + 2]).toBeLessThan(20);

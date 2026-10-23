@@ -1,353 +1,122 @@
-const DOWNLOAD_DETAILS_PROMPT = `ETSY LISTING TEXT FILE CREATION TASK — COMBINED RULES ONLY
+const DOWNLOAD_DETAILS_PROMPT = `ETSY DIGITAL DOWNLOAD LISTING COPY
 
-Use the populated INPUTS in this prompt.
-
-This prompt must create Etsy listing copy for one individual digital nursery wall art printable.
-
-SHOP LINK FOR CROSS-PROMOTION:
-https://www.etsy.com/shop/CosyHousePrints
-
-Do not generate images.
-Do not edit images.
-Do not ask for an image upload.
-Do not use REFERENCE_IMAGE for this task.
-Do not create folders.
-Create the ZIP archive specified below after the three plain text files.
-Create exactly three plain text files using a filename-safe version of ANIMAL_NAME.
-
-Derive ANIMAL_FILENAME from ANIMAL_NAME using these rules:
-- Convert ANIMAL_NAME to lowercase.
-- Replace spaces with hyphens.
-- Remove apostrophes and punctuation.
-- Remove any character other than lowercase letters, numbers, and hyphens.
-- Replace repeated hyphens with one hyphen.
-- Remove hyphens from the beginning or end.
-
-Create exactly these files:
-{{ANIMAL_FILENAME}}_title.txt
-{{ANIMAL_FILENAME}}_desc.txt
-{{ANIMAL_FILENAME}}_tags.txt
-
-Example:
-If ANIMAL is:
-Caterpillar — cute, wiggly, colourful, and playful
-
-Then:
-ANIMAL_NAME = Caterpillar
-ANIMAL_FILENAME = caterpillar
-
-The files must be:
-caterpillar_title.txt
-caterpillar_desc.txt
-caterpillar_tags.txt
-
-After creating and verifying the three text files, place all three files into one ZIP archive named:
-caterpillar_info.zip
-
-For any animal, use this ZIP filename pattern:
-{{ANIMAL_FILENAME}}_info.zip
-
-The ZIP archive must contain exactly:
-{{ANIMAL_FILENAME}}_title.txt
-{{ANIMAL_FILENAME}}_desc.txt
-{{ANIMAL_FILENAME}}_tags.txt
-
-Do not include folders inside the ZIP.
-Do not include any additional files in the ZIP.
-Do not create any other output files.
-
-INPUTS:
+AUTHORITATIVE INPUTS
 ANIMAL: {{ANIMAL}}
 ROOM_THEME: {{ROOM_THEME}}
 FRAME_COLOUR: {{FRAME_COLOUR}}
 ORIENTATION: {{ORIENTATION}}
 FILE_TYPE: {{FILE_TYPE}}
 FRAME_COLOURS: {{FRAME_COLOURS}}
-FILES_INCLUDED: {{FILES_INCLUDED}}
 RECOMMENDED_PAPER: {{RECOMMENDED_PAPER}}
 LICENCE_TYPE: {{LICENCE_TYPE}}
 
-REQUIRED VARIABLES:
-ANIMAL
-ROOM_THEME
-FRAME_COLOUR
-ORIENTATION
-FILE_TYPE
-FRAME_COLOURS
-FILES_INCLUDED
-RECOMMENDED_PAPER
-LICENCE_TYPE
+APPLICATION-SUPPLIED FILE AND PRINT GUIDE
+{{FILES_INCLUDED}}
 
-PREFLIGHT RULE:
-Before creating {{ANIMAL_FILENAME}}_title.txt, {{ANIMAL_FILENAME}}_desc.txt, and {{ANIMAL_FILENAME}}_tags.txt, check that all required variables are present, usable, and not unresolved placeholders.
-If any required variable is missing, blank, inaccessible, unusable, or still shown as a placeholder such as {{ANIMAL}}, stop immediately and reply only:
-ERROR: Required Etsy listing variable missing or unresolved. Run the variable setup prompt first.
+TASK
 
-VARIABLE RULES:
-Use ANIMAL as the single combined animal variable.
-ANIMAL must follow this format:
-animal name – animal description
+Write the title, complete description and Etsy tags for one individual digital nursery or children's wall-art listing.
 
-Use the first spaced en dash separator, “ – ”, to split ANIMAL into two derived values.
-Derive ANIMAL_NAME from the text before the “ – ” separator in ANIMAL.
-Derive ANIMAL_DESCRIPTION from the text after the “ – ” separator in ANIMAL.
-Derive ANIMAL_FILENAME from ANIMAL_NAME using the filename rules above.
-Use ANIMAL_FILENAME only for filenames, not in buyer-facing listing copy.
-Use ANIMAL_NAME as the main product subject.
-Use ANIMAL_DESCRIPTION as descriptive wording in the listing description where natural.
-Use ROOM_THEME when describing the nursery, bedroom, playroom, reading corner, toddler bedroom, or decor theme.
-Use FILE_TYPE as the download file type.
-Use the uppercase version of FILE_TYPE in buyer-facing text, for example JPEG.
-Use RECOMMENDED_PAPER in the printing advice.
-Use LICENCE_TYPE in the usage and licence section.
-Use FRAME_COLOUR and FRAME_COLOURS only as styling or display suggestions where natural.
-Do not suggest or imply that a frame is included.
-Do not invent a different animal, room theme, file type, licence type, paper recommendation, or included file set.
-Do not introduce unsupported claims about materials, shipping, processing, physical quality, sustainability, or handmade production.
-Do not mention REFERENCE_IMAGE.
-Do not mention that variables were used.
+Use only the authoritative inputs and file guide above. Do not invent colours, visual details, sizes, ratios, pixel dimensions, delivery promises, licence permissions or product specifications.
 
-DERIVED COPYWRITING DETAILS:
-Treat ANIMAL_NAME as the product subject/name.
-Treat ANIMAL_DESCRIPTION as the source for colour palette, visual details, and gentle descriptive language.
-If a colour palette is clearly present in ANIMAL_DESCRIPTION, use it naturally in the title and description.
-If a style or aesthetic is clearly present in ANIMAL_DESCRIPTION, use it naturally.
-If no formal aesthetic trend is stated, use safe descriptive terms that are directly supported by the variables, such as soft nursery, whimsical nursery, gentle kids room, or playful nursery.
-Use relevant gifting angles where natural, such as baby shower gift, new baby gift, toddler birthday gift, animal lover gift, or subject-specific gift terms such as dino lover gift when ROOM_THEME or ANIMAL_NAME supports them.
-Do not keyword-stuff.
-Do not repeat the same keyword phrase unnaturally.
+Derive ANIMAL_NAME from the text before the first spaced en dash or em dash in ANIMAL. Derive ANIMAL_DESCRIPTION from the text after it. Use ANIMAL_NAME as the subject and ANIMAL_DESCRIPTION only for supported colours, appearance, pose and character.
 
-ROLE:
-Act as an expert Etsy SEO copywriter specializing in digital download wall art.
-Write highly scannable, conversion-optimized Etsy listing text for premium nursery and kids room printable art.
+Write in warm, natural British English. Avoid repetitive adjectives, exaggerated claims, keyword lists and repeated product information.
 
-CREATE THE FOLLOWING ETSY LISTING CONTENT:
+TITLE
 
-1. TITLE
-Create a streamlined, human-scannable Etsy product title.
-The title must be under 15 words.
-The title must be no more than 140 characters.
-Front-load ANIMAL_NAME and the strongest style, colour, or nursery placement keyword.
-Use vertical bars “|” to separate phrases.
-Do not use commas in the title.
-The title should include ANIMAL_NAME.
-The title should include nursery wall art or nursery print.
-The title should include printable if it fits naturally.
-Use ROOM_THEME if it fits naturally.
-Avoid generic terms like Digital Download in the title unless needed for clarity.
-Avoid keyword stuffing.
-Do not exceed the title limits.
+Write a human-readable Etsy title of fewer than 15 words and no more than 140 characters.
 
-2. DESCRIPTION
-Create a buyer-friendly Etsy description for the product.
+* Front-load ANIMAL_NAME and a supported colour, style or nursery-placement phrase where natural.
+* Make clear that this is printable nursery wall art.
+* Use vertical bars to separate phrases and do not use commas or emojis.
+* Use ROOM_THEME naturally without keyword stuffing.
 
-The description must start immediately with this exact mobile warning disclosure:
-🚨 IMPORTANT: THIS IS A DIGITAL DOWNLOAD ONLY. NO PHYSICAL PRODUCT WILL BE SHIPPED. 🚨
+DIGITAL DOWNLOAD DESCRIPTION RULES
 
-Immediately after the warning, briefly state that frames, mounts, props, and display items are not included.
+* Clearly identify the product as a digital download at the beginning. Never imply that printing, framing, mounts, props, postage or delivery of a physical item is included.
+* Explain that the six JPEG files contain different size formats of the same artwork, not six different designs.
+* Include a short, natural gift section with occasions appropriate to ANIMAL_NAME and ROOM_THEME, such as a baby shower, new baby celebration, children's birthday, Christmas, christening or naming day. Explain that the buyer arranges printing and framing.
+* Group print sizes by the application-supplied file or aspect ratio. Within each group, separate inches and centimetres.
+* Write dimensions consistently using “×”, “in” and “cm”. Include the supplied physical dimensions beside every A-series size.
+* Preserve every supplied pixel dimension, unit, supported size and maximum print size exactly. Never invent sizes, convert units or treat similar imperial and metric sizes as interchangeable.
+* Use the maximum print sizes calculated and supplied by the application. Do not assume that a generic “300 DPI” label guarantees sufficient resolution at every size.
+* Describe the actual delivery method: an Etsy PDF containing a link to the JPEG files. Never call the link secure, permanent or unlimited.
+* Do not promise that the customer can download, print or frame the artwork within a particular time.
+* Recommend exactly the supplied RECOMMENDED_PAPER range and mention home-printer compatibility.
+* Use one concise colour-variation note without defensive language or guarantees of perfect matching.
+* Reproduce LICENCE_TYPE accurately. Never add gift limits, print limits, commercial rights, refund policies or other restrictions that it does not contain.
 
-The description must include these sections in this order:
+DESCRIPTION FORMAT
 
-✨ ABOUT THIS PRINT ✨
-Write a smooth, beautifully written 3-sentence hook.
-The hook must include ANIMAL_NAME naturally.
-The hook must include ANIMAL_DESCRIPTION naturally where it reads well.
-The hook must include ROOM_THEME naturally.
-The hook should weave in relevant long-tail keywords, gift terms, and room placement phrases such as reading corner, playroom focal piece, toddler bedroom, nursery print, baby shower gift, new baby gift, toddler birthday gift, or animal/subject-specific gift terms.
-The hook must feel premium and boutique.
-Do not use repetitive keyword stuffing.
+Use the following headings exactly and in this order. Put every heading on its own line with a blank line before and after it.
+
+📥 DIGITAL DOWNLOAD ONLY — NO PHYSICAL ITEM WILL BE SENT
+
+Begin with one short paragraph explaining that the listing supplies downloadable artwork for the buyer to print. State that printing, frames, mounts and decorative props are not included.
+
+✨ ABOUT THIS ARTWORK ✨
+
+Write one or two warm paragraphs tailored to ANIMAL_NAME, ANIMAL_DESCRIPTION and ROOM_THEME. Describe appropriate nursery, child's bedroom, playroom, reading-corner or gallery-wall uses without inventing visual details. Mention coordinating designs naturally where relevant.
+
+🎁 A THOUGHTFUL GIFT TO PRINT AND FRAME 🎁
+
+Explain that the buyer can create a personal gift by arranging the printing and choosing a frame. Include a concise bullet list of appropriate gifting occasions. Do not force an occasion that is unsuitable for the artwork. Finish by explaining that the buyer chooses the final size and presentation.
 
 📦 WHAT YOU WILL RECEIVE 📦
-Paste this exact technical inventory and dual sizing block into the description:
 
-📦 WHAT YOU WILL RECEIVE 📦
-After purchase, you will download a PDF containing a secure link to your high-resolution files. You will receive 6 professional-quality JPEG files (300 DPI, RGB profile) prepared for the supported standard frame sizes:
+State that the buyer receives an Etsy-delivered PDF containing a download link to six high-resolution artwork files. Name their format using the uppercase form of FILE_TYPE, for example JPEG.
 
-📐 SIZES INCLUDED (Print up to these maximum sizes):
+Explain that every file contains the same ANIMAL_NAME artwork in a different proportion for the supported sizes. Make clear that this is one artwork in six size formats, not six different designs.
 
-• ISO A-Series (7016 x 9933 px)
-Fits standard international sizes: A1, A2, A3, A4 and A5
+📐 PRINT SIZES AND FILE GUIDE 📐
 
-• 2:3 Ratio (7200 x 10800 px)
-Inches: 4x6 | 6x9 | 8x12 | 10x15 | 12x18 | 16x24 | 20x30 | 24x36
+State that all measurements are width × height and that the buyer should choose the file matching the intended print size.
 
-• 3:4 Ratio (5400 x 7200 px)
-Inches: 6x8 | 9x12 | 12x16 | 15x20 | 18x24
-Centimeters: 30x40 cm
+Reproduce every group from APPLICATION-SUPPLIED FILE AND PRINT GUIDE. Use its file name as a subheading, list A-series, inch and centimetre sizes as supplied, and reproduce its pixel dimensions and maximum listed print size exactly. Do not add or omit anything.
 
-• 4:5 Ratio (4800 x 6000 px)
-Inches: 4x5 | 8x10 | 12x15 | 16x20
+After the guide, explain that the files provide approximately 300 pixels per inch at their supplied maximum listed sizes and a higher pixel density when printed smaller. Do not describe this as a blanket 300-DPI guarantee for every possible print size.
 
-• 11:14 Ratio (3300 x 4200 px)
-Inches: 11x14
+📥 HOW TO DOWNLOAD AND PRINT 📥
 
-• 5:7 Ratio (6000 x 8400 px)
-Inches: 5x7 | 10x14 | 15x21 | 20x28
-Centimeters: 50x70 cm
+Give these practical steps clearly:
 
-All files are 300 DPI JPEG files.
+1. After Etsy confirms payment, download the supplied PDF from Etsy purchases; guest buyers can use the link in their Etsy receipt email.
+2. Open the PDF and follow its link to download the JPEG files.
+3. Use the size guide to select the correct file.
+4. Print at home, through a local print shop or with an online printing service.
+5. Place the finished print in the buyer's chosen frame.
 
-Do not alter the file pixel sizes.
-Do not remove inches.
-Do not remove centimeters.
-Do not remove the 300 DPI JPEG confirmation.
+State that buyers should use a computer or mobile web browser because Etsy digital downloads are not available through the Etsy app. Do not claim delivery by email except for Etsy's guest receipt.
 
-📥 HOW IT WORKS & INSTANT DOWNLOAD
-Explain clearly that this is an instant digital download.
-Explain that after purchase, the buyer receives a PDF containing a secure link to the high-resolution files.
-Explain that the buyer can download, print, and frame the artwork themselves.
-Mention that no physical product will be posted or shipped.
-Keep this section simple and practical.
+🖨️ PAPER AND PRINTING TIPS 🖨️
 
-🖨️ RECOMMENDED PAPER & PRINTING TIPS
-Recommend RECOMMENDED_PAPER.
-Also recommend 80-110 lb / 220-300 gsm heavyweight matte paper or smooth cardstock.
-Suggest printing at home, through a local print shop, or through a professional online print service.
-Suggest choosing the matching ratio file for the buyer’s preferred frame size.
-Do not guarantee exact colour matching.
-Do not suggest specialist equipment is required.
+Recommend RECOMMENDED_PAPER. Tell home-printing buyers to check that their printer supports the chosen paper type, weight and size. Advise setting the intended dimensions, checking print preview, and avoiding stretch or crop settings. Suggest a professional printing service for larger sizes without claiming it is required.
 
-🎨 COLOR NOTE & ACCURACY
-Write a professional colour variation note.
-Explain that colours may vary slightly between screens, printers, inks, and papers.
-Keep the note reassuring and buyer-friendly.
-Do not blame the buyer.
-Do not guarantee exact colour accuracy.
+🎨 COLOUR NOTE 🎨
 
-✨ EXPLORE MORE DESIGNS OR CREATE A GALLERY WALL
-Include a short cross-promotion block inviting buyers to browse matching nursery prints, kids room designs, and gallery wall ideas.
-Include this shop link exactly:
-https://www.etsy.com/shop/CosyHousePrints?ref=dashboard-header
+Use one concise paragraph explaining that printed colours may vary slightly because screens, printers, inks and papers differ.
 
-⚖️ TERMS OF USE & LICENSE
-State that the files are for LICENCE_TYPE.
-State that the purchase is for personal home decor or a single personal gift only.
-Explicitly prohibit commercial reproduction, digital resale, file sharing, redistribution, uploading for resale, editing for resale, and selling printed versions.
-Do not mention specific platform names in the licence restrictions.
-Keep the tone professional, clear, and legally protective.
+💬 NEED HELP? 💬
 
+Invite buyers who have difficulty downloading the files or choosing a size to contact the shop through Etsy.
 
-3. TAGS
-Create exactly 13 optimized Etsy tags unless fewer than 13 genuinely relevant tags are possible.
-Every tag must be strictly under 20 characters including spaces.
-Tags must be comma-separated on one line.
-Do not use bullet points for tags.
-Mix high-traffic terms with specific long-tail modifiers.
-Tags should be relevant to ANIMAL_NAME, ROOM_THEME, nursery print, kids room decor, printable art, animal nursery decor, and gifting angles.
-Avoid redundant broad category tags such as digital prints or wall decor.
-Avoid duplicate tags.
-Do not create more than 13 tags.
+✨ EXPLORE MORE DESIGNS ✨
 
-OUTPUT FILE REQUIREMENTS:
-Create exactly these three plain text files:
+Write one warm sentence inviting buyers to browse coordinating designs and children's wall art related to ROOM_THEME.
 
-1. {{ANIMAL_FILENAME}}_title.txt
-The file must contain only the finished Etsy title.
-Do not include a TITLE: heading.
-Do not include quotation marks, markdown, code fences, explanations, labels, or extra blank lines.
+Then write exactly:
 
-2. {{ANIMAL_FILENAME}}_desc.txt
-The file must contain only the finished Etsy description.
-The first line must be the exact required digital download warning.
-Do not include a DESCRIPTION: heading.
-Do not include markdown formatting, raw HTML, code fences, explanations, or labels.
-The exact technical inventory bullets and section headings required in the description are allowed.
+Browse CosyHousePrints:
+https://www.etsy.com/shop/CosyHousePrints
 
-3. {{ANIMAL_FILENAME}}_tags.txt
-The file must contain only the finished comma-separated Etsy tags on one line.
-Do not include a TAGS: heading.
-Do not include bullet points, numbering, quotation marks, markdown, code fences, explanations, labels, or extra blank lines.
+📄 PERSONAL USE LICENCE 📄
 
-Do not create etsy.txt.
-Do not create a category file.
-Do not include a category in any of the three files.
-Do not create folders or any ZIP other than the one specified below.
-All three files must be plain text only.
+Express LICENCE_TYPE clearly in short paragraphs. State only its supplied permissions and restrictions. Keep permission to provide a relevant file to a printing service when LICENCE_TYPE supplies it. Do not invent refund terms or additional limits.
 
-ZIP OUTPUT REQUIREMENTS:
-After all three text files pass validation, create:
-{{ANIMAL_FILENAME}}_info.zip
+TAGS
 
-The ZIP must contain the three text files at its root level:
-{{ANIMAL_FILENAME}}_title.txt
-{{ANIMAL_FILENAME}}_desc.txt
-{{ANIMAL_FILENAME}}_tags.txt
-
-Do not place the files inside a folder.
-Do not include hidden files, metadata files, or any other content.
-Keep the three original text files available as separate downloads unless explicitly instructed otherwise.
-
-FINAL CHECK:
-Before finishing, open {{ANIMAL_FILENAME}}_title.txt, {{ANIMAL_FILENAME}}_desc.txt, and {{ANIMAL_FILENAME}}_tags.txt and verify:
-
-{{ANIMAL_FILENAME}}_title.txt:
-The file exists.
-It contains only the title.
-It does not contain TITLE: or any other heading.
-The title is under 15 words.
-The title is 140 characters or fewer.
-The title uses vertical bars and does not use commas.
-The filenames use ANIMAL_FILENAME derived from ANIMAL_NAME.
-The filenames contain only lowercase letters, numbers, hyphens, and the required suffix.
-The ZIP file exists and is named {{ANIMAL_FILENAME}}_info.zip.
-The ZIP contains exactly the three required text files.
-The ZIP contains no folders or additional files.
-No unresolved placeholders remain.
-No raw HTML or markdown appears.
-
-{{ANIMAL_FILENAME}}_desc.txt:
-The file exists.
-It contains only the description.
-It does not contain DESCRIPTION: or any other output label.
-The description starts with the exact digital download warning.
-The description says this is a digital download only.
-The description says no physical product will be shipped.
-The description says frames, mounts, props, and display items are not included.
-The description includes the exact file size section.
-The description includes both inches and centimeters.
-The description says all files are 300 DPI JPEG files.
-The description includes HOW IT WORKS & INSTANT DOWNLOAD.
-The description includes RECOMMENDED PAPER & PRINTING TIPS.
-The description includes COLOR NOTE & ACCURACY.
-The description includes the shop cross-promotion link.
-The description includes TERMS OF USE & LICENSE.
-The licence section uses LICENCE_TYPE and includes the required restrictions.
-The filenames use ANIMAL_FILENAME derived from ANIMAL_NAME.
-The filenames contain only lowercase letters, numbers, hyphens, and the required suffix.
-The ZIP file exists and is named {{ANIMAL_FILENAME}}_info.zip.
-The ZIP contains exactly the three required text files.
-The ZIP contains no folders or additional files.
-No unresolved placeholders remain.
-No raw HTML appears.
-No markdown syntax appears, except the exact allowed plain text bullets and section headings.
-The file is plain text only.
-
-{{ANIMAL_FILENAME}}_tags.txt:
-The file exists.
-It contains only the tags on one comma-separated line.
-It does not contain TAGS: or any other heading.
-There are exactly 13 tags unless fewer are genuinely relevant.
-Every tag is strictly under 20 characters including spaces.
-There are no duplicate tags.
-The filenames use ANIMAL_FILENAME derived from ANIMAL_NAME.
-The filenames contain only lowercase letters, numbers, hyphens, and the required suffix.
-The ZIP file exists and is named {{ANIMAL_FILENAME}}_info.zip.
-The ZIP contains exactly the three required text files.
-The ZIP contains no folders or additional files.
-No unresolved placeholders remain.
-No raw HTML or markdown appears.
-The file is plain text only.
-
-Also verify:
-Exactly three plain text files and one ZIP archive were created: {{ANIMAL_FILENAME}}_title.txt, {{ANIMAL_FILENAME}}_desc.txt, {{ANIMAL_FILENAME}}_tags.txt, and {{ANIMAL_FILENAME}}_info.zip.
-etsy.txt was not created.
-No category file was created.
-No headings such as TITLE:, DESCRIPTION:, TAGS:, or CATEGORY: appear in the output files.
-
-After creating the files, provide separate download links to:
-{{ANIMAL_FILENAME}}_title.txt
-{{ANIMAL_FILENAME}}_desc.txt
-{{ANIMAL_FILENAME}}_tags.txt`;
+Return exactly 13 distinct, relevant Etsy tags unless fewer are genuinely relevant. Each tag must be fewer than 20 characters including spaces. Return one comma-separated line without bullets. Use ANIMAL_NAME, ROOM_THEME, nursery printable art, children's rooms and appropriate gifting searches without unsupported details or duplicates.`;
 
 export type DownloadDetailsPromptValues = {
   animalName: string;
@@ -366,14 +135,12 @@ function cleanPromptValue(value: string) {
   return value.trim().replace(/\s+/g, ' ');
 }
 
-function animalFilename(name: string) {
-  return cleanPromptValue(name)
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[’']/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+function cleanMultilinePromptValue(value: string) {
+  return value
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/[ \t]+/g, ' '))
+    .join('\n');
 }
 
 export function missingDownloadDetailsPromptFields(values: DownloadDetailsPromptValues) {
@@ -395,14 +162,13 @@ export function buildDownloadDetailsPrompt(values: DownloadDetailsPromptValues) 
     ? leadingAnimalName[2]
     : suppliedDescription;
   const replacements: Record<string, string> = {
-    ANIMAL_FILENAME: animalFilename(name),
     ANIMAL: `${name} – ${description}`,
     ROOM_THEME: cleanPromptValue(values.roomTheme),
     FRAME_COLOUR: cleanPromptValue(values.frameColour),
     ORIENTATION: cleanPromptValue(values.orientation),
     FILE_TYPE: cleanPromptValue(values.fileType),
     FRAME_COLOURS: cleanPromptValue(values.frameColours),
-    FILES_INCLUDED: cleanPromptValue(values.filesIncluded),
+    FILES_INCLUDED: cleanMultilinePromptValue(values.filesIncluded),
     RECOMMENDED_PAPER: cleanPromptValue(values.recommendedPaper),
     LICENCE_TYPE: cleanPromptValue(values.licenceType),
   };

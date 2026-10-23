@@ -7,6 +7,11 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
+  ARTWORK_BACKGROUND_COLOUR_OPTIONS,
+  DEFAULT_ARTWORK_BACKGROUND_COLOUR,
+  type ArtworkBackgroundColour,
+} from '@/lib/artwork-background-colours';
+import {
   MOCKUP_RATIO_OPTIONS,
   constrainMockupPlacement,
   containArtwork,
@@ -41,14 +46,6 @@ type BackgroundImage = {
   height: number;
 };
 
-const BACKGROUND_COLOUR_OPTIONS = [
-  { value: '#FFFFFF', label: 'Pure white' },
-  { value: '#FAF8F4', label: 'Warm white \u00b7 my pick' },
-  { value: '#F5F0E8', label: 'Soft ivory' },
-] as const;
-
-type BackgroundColour = (typeof BACKGROUND_COLOUR_OPTIONS)[number]['value'];
-const DEFAULT_BACKGROUND_COLOUR: BackgroundColour = '#F5F0E8';
 const DEFAULT_FRAME_THICKNESS_PERCENT = 4;
 const DEFAULT_FRAME_DEPTH_PERCENT = 1;
 const DEFAULT_SHADOW_STRENGTH = 17;
@@ -340,7 +337,7 @@ async function renderMockup({
 }: {
   background: BackgroundImage;
   artworkUrl: string;
-  backgroundColour: BackgroundColour;
+  backgroundColour: ArtworkBackgroundColour;
   placement: MockupPlacement;
   ratio: MockupRatio;
   orientation: MockupOrientation;
@@ -418,12 +415,14 @@ export function ListingMockupTesterDialog({
   context,
   listingName,
   artworkOptions,
+  initialBackgroundColour = DEFAULT_ARTWORK_BACKGROUND_COLOUR,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
   context: ListingEditorContext;
   listingName: string;
   artworkOptions: ListingMockupArtworkOption[];
+  initialBackgroundColour?: ArtworkBackgroundColour;
 }) {
   const previewRef = useRef<HTMLDivElement>(null);
   const backgroundInputRef = useRef<HTMLInputElement>(null);
@@ -434,7 +433,7 @@ export function ListingMockupTesterDialog({
   const primaryArtwork = artworkOptions.find((option) => option.primary) ?? artworkOptions[0] ?? null;
   const [background, setBackground] = useState<BackgroundImage | null>(null);
   const [selectedArtworkId, setSelectedArtworkId] = useState(primaryArtwork?.id ?? '');
-  const [backgroundColour, setBackgroundColour] = useState<BackgroundColour>(DEFAULT_BACKGROUND_COLOUR);
+  const [backgroundColour, setBackgroundColour] = useState<ArtworkBackgroundColour>(initialBackgroundColour);
   const [ratio, setRatio] = useState<MockupRatio>('iso-a');
   const [orientation, setOrientation] = useState<MockupOrientation>('portrait');
   const [finish, setFinish] = useState<MockupFrameFinish>('unframed');
@@ -465,7 +464,7 @@ export function ListingMockupTesterDialog({
     setBackground(null);
     setPlacement(null);
     setSelectedArtworkId(primaryArtwork?.id ?? '');
-    setBackgroundColour(DEFAULT_BACKGROUND_COLOUR);
+    setBackgroundColour(initialBackgroundColour);
     setRatio('iso-a');
     setOrientation('portrait');
     setFinish('unframed');
@@ -474,7 +473,7 @@ export function ListingMockupTesterDialog({
     setShadowStrength(DEFAULT_SHADOW_STRENGTH);
     setError(null);
     setResultDirty(false);
-  }, [contextKey]);
+  }, [contextKey, initialBackgroundColour]);
 
   useEffect(() => () => {
     if (backgroundObjectUrl.current) URL.revokeObjectURL(backgroundObjectUrl.current);
@@ -702,12 +701,15 @@ export function ListingMockupTesterDialog({
                 className="h-10 rounded-md border border-input bg-background px-3 text-sm"
                 value={backgroundColour}
                 onChange={(event) => {
-                  setBackgroundColour(event.target.value as BackgroundColour);
+                  setBackgroundColour(event.target.value as ArtworkBackgroundColour);
                   markResultStale();
                 }}
                 disabled={generating}
               >
-                {BACKGROUND_COLOUR_OPTIONS.map((option) => (
+                {!ARTWORK_BACKGROUND_COLOUR_OPTIONS.some((option) => option.value === backgroundColour) ? (
+                  <option value={backgroundColour}>Custom — {backgroundColour}</option>
+                ) : null}
+                {ARTWORK_BACKGROUND_COLOUR_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>{option.label} \u2014 {option.value}</option>
                 ))}
               </select>

@@ -4,6 +4,7 @@ import {
   getPrintableDownloadStatus,
   hasRequiredPrintableDownloads,
   PRINTABLE_DOWNLOAD_SPECS,
+  printableDownloadDescriptionGuide,
   printableDownloadDimensions,
 } from '@/lib/printable-download-specs';
 import { PRICE_OPTIONS } from '@/lib/set-prices-core';
@@ -48,5 +49,26 @@ describe('printable download requirements', () => {
       .map((option) => option.key.replace(/^(?:unframed|framed)_/, ''));
 
     expect(pricedSizes.every((size) => coveredSizes.has(size))).toBe(true);
+  });
+
+  it('builds the exact portrait file guide supplied to Bedrock', () => {
+    const guide = printableDownloadDescriptionGuide('portrait');
+
+    expect(guide).toContain('A5 — 14.8 × 21 cm');
+    expect(guide).toContain('A1 — 59.4 × 84.1 cm');
+    expect(guide).toContain('2:3 RATIO FILE');
+    expect(guide).toContain('Inches: 4 × 6 in, 6 × 9 in');
+    expect(guide).toContain('Centimetres: 30 × 40 cm');
+    expect(guide).toContain('File dimensions: 7016 × 9933 px');
+    expect(guide).toContain('Maximum listed print size: 20 × 28 in');
+  });
+
+  it('swaps dimensions and supported sizes for a landscape listing', () => {
+    const guide = printableDownloadDescriptionGuide('landscape');
+
+    expect(guide).toContain('A5 — 21 × 14.8 cm');
+    expect(guide).toContain('Inches: 6 × 4 in, 9 × 6 in');
+    expect(guide).toContain('File dimensions: 10800 × 7200 px');
+    expect(guide).toContain('Maximum listed print size: 36 × 24 in');
   });
 });

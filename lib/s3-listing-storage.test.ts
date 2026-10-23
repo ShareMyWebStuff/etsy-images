@@ -14,7 +14,7 @@ vi.mock('@aws-sdk/client-s3', () => ({
   PutObjectCommand: class { constructor(readonly input: unknown) {} },
 }));
 
-import { writeFile } from '@/lib/s3-listing-storage';
+import { readFile, writeFile } from '@/lib/s3-listing-storage';
 
 beforeEach(() => {
   aws.send.mockReset().mockResolvedValue({});
@@ -38,5 +38,15 @@ describe('listing image app previews', () => {
       width: 512,
       height: 256,
     });
+  });
+
+  it('returns a useful message when an S3 read times out', async () => {
+    aws.send.mockRejectedValueOnce(Object.assign(new Error(''), {
+      name: 'TimeoutError',
+      code: 'ETIMEDOUT',
+    }));
+
+    await expect(readFile('D:/Etsy/EtsyListings/Test Shop/Listing/image_1.png'))
+      .rejects.toThrow('S3 timed out while reading the stored file "Test Shop/Listing/image_1.png". Please try again.');
   });
 });

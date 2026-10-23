@@ -69,4 +69,17 @@ describe('Listing mockup tester dialog', () => {
     await user.selectOptions(screen.getByLabelText('Frame finish'), 'oak');
     await waitFor(() => expect((screen.getByLabelText('Frame depth') as HTMLInputElement).disabled).toBe(false));
   });
+
+  it('starts with the effective listing background colour', () => {
+    render(<ListingMockupTesterDialog
+      open
+      onOpenChange={vi.fn()}
+      context={{ shopId: '10', sectionId: '20', subSectionId: '30', listingId: '42' }}
+      listingName="Apatosaurus"
+      artworkOptions={[{ id: 'primary', label: 'Primary artwork', url: '/artwork.png', primary: true }]}
+      initialBackgroundColour="#FAF8F4"
+    />);
+
+    expect((screen.getByLabelText('Background Colour') as HTMLSelectElement).value).toBe('#FAF8F4');
+  });
 });

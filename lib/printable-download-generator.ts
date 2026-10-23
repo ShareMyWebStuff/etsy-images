@@ -2,6 +2,10 @@ import path from 'node:path';
 import PDFDocument from 'pdfkit';
 import sharp from 'sharp';
 import {
+  DEFAULT_ARTWORK_BACKGROUND_COLOUR,
+  type ArtworkBackgroundColour,
+} from '@/lib/artwork-background-colours';
+import {
   PRINTABLE_DOWNLOAD_GUIDE_FILE_NAME,
   PRINTABLE_DOWNLOAD_SPECS,
   printableDownloadDimensions,
@@ -41,31 +45,12 @@ async function normalizedSource(source: Buffer) {
     .toBuffer({ resolveWithObject: true });
 }
 
-async function sampledCornerBackground(source: Buffer) {
-  const { data, info } = await sharp(source, { failOn: 'error' })
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  const points = [
-    [0, 0],
-    [info.width - 1, 0],
-    [0, info.height - 1],
-    [info.width - 1, info.height - 1],
-  ];
-  const opaque = points.map(([x, y]) => {
-    const offset = ((y * info.width) + x) * info.channels;
-    return { r: data[offset], g: data[offset + 1], b: data[offset + 2], alpha: data[offset + 3] };
-  }).filter((colour) => colour.alpha > 245);
-  if (opaque.length === 0) return { r: 255, g: 255, b: 255 };
-  return {
-    r: Math.round(opaque.reduce((sum, colour) => sum + colour.r, 0) / opaque.length),
-    g: Math.round(opaque.reduce((sum, colour) => sum + colour.g, 0) / opaque.length),
-    b: Math.round(opaque.reduce((sum, colour) => sum + colour.b, 0) / opaque.length),
-  };
-}
-
-async function createOpaqueFallback(source: Buffer, width: number, height: number) {
-  const background = await sampledCornerBackground(source);
+async function createOpaqueFallback(
+  source: Buffer,
+  width: number,
+  height: number,
+  background: ArtworkBackgroundColour,
+) {
   const safeWidth = Math.max(1, Math.floor(width * 0.85));
   const safeHeight = Math.max(1, Math.floor(height * 0.70));
   const contained = await sharp(source, { failOn: 'error' })
@@ -88,6 +73,7 @@ async function placeArtworkOnPaper(
   width: number,
   height: number,
   placement: PrintArtworkPlacement,
+  backgroundColour: ArtworkBackgroundColour,
 ) {
   const drawWidth = Math.max(1, Math.round(width * placement.width));
   const drawHeight = Math.max(1, Math.round(height * placement.height));
@@ -112,7 +98,7 @@ async function placeArtworkOnPaper(
         height: visibleHeight,
       }).toBuffer()
     : resized;
-  return sharp({ create: { width, height, channels: 3, background: '#FFFFFF' } })
+  return sharp({ create: { width, height, channels: 3, background: backgroundColour } })
     .composite([{ input: visible, left: targetLeft, top: targetTop }])
     .toColourspace('srgb')
     .jpeg({ quality: JPEG_QUALITY, chromaSubsampling: '4:4:4' })
@@ -127,6 +113,7 @@ export async function createPrintableDownload(
   dimensionsOverride?: { width: number; height: number },
   cropRegion?: PrintCropRegion,
   artworkPlacement?: PrintArtworkPlacement,
+  backgroundColour: ArtworkBackgroundColour = DEFAULT_ARTWORK_BACKGROUND_COLOUR,
 ): Promise<GeneratedPrintableDownload> {
   const normalized = await normalizedSource(source);
   const orientation: PrintableDownloadOrientation = cropRegion
@@ -141,6 +128,7 @@ export async function createPrintableDownload(
       dimensions.width,
       dimensions.height,
       artworkPlacement,
+      backgroundColour,
     );
   } else if (cropRegion) {
     const bounds = printCropPixelBounds(cropRegion, normalized.info.width, normalized.info.height);
@@ -152,7 +140,7 @@ export async function createPrintableDownload(
         fit: 'fill',
         kernel: sharp.kernel.lanczos3,
       })
-      .flatten({ background: { r: 255, g: 255, b: 255 } })
+      .flatten({ background: backgroundColour })
       .toColourspace('srgb')
       .jpeg({ quality: JPEG_QUALITY, chromaSubsampling: '4:4:4' })
       .withMetadata({ density: 300 })
@@ -171,17 +159,17 @@ export async function createPrintableDownload(
           bottomMarginPercent: 15,
         });
         buffer = await sharp(master.buffer, { failOn: 'error' })
-          .flatten({ background: { r: 255, g: 255, b: 255 } })
+          .flatten({ background: backgroundColour })
           .toColourspace('srgb')
           .jpeg({ quality: JPEG_QUALITY, chromaSubsampling: '4:4:4' })
           .withMetadata({ density: 300 })
           .toBuffer();
       } catch (error) {
         if (!(error instanceof Error) || !error.message.includes('transparent outer padding')) throw error;
-        buffer = await createOpaqueFallback(normalized.data, dimensions.width, dimensions.height);
+        buffer = await createOpaqueFallback(normalized.data, dimensions.width, dimensions.height, backgroundColour);
       }
     } else {
-      buffer = await createOpaqueFallback(normalized.data, dimensions.width, dimensions.height);
+      buffer = await createOpaqueFallback(normalized.data, dimensions.width, dimensions.height, backgroundColour);
     }
   }
 

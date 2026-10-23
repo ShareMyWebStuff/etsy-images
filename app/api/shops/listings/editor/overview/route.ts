@@ -5,11 +5,13 @@ import {
   deleteAllListingImages,
   getGroupedListingThumbnail,
   getListingEditorData,
-  prepareMultipleListingOverview,
   saveListingGroupItems,
   type ListingEditorContext,
 } from '@/lib/listing-editor';
-import { generateListingDetailsWithBedrock } from '@/lib/bedrock-listing-details';
+import {
+  generateListingDetailsWithBedrock,
+  generateMultipleListingDetailsWithBedrock,
+} from '@/lib/bedrock-listing-details';
 import { createGroupedDropboxInstructionPdf } from '@/lib/dropbox-bundle';
 import {
   generateListingOverview,
@@ -84,7 +86,7 @@ export async function POST(request: Request) {
       if (!data) throw new Error('Listing not found.');
       return NextResponse.json({
         data: data.template?.templateType === 'multiple'
-          ? await prepareMultipleListingOverview(context)
+          ? await generateMultipleListingDetailsWithBedrock(context)
           : await generateListingDetailsWithBedrock(context),
       });
     }
@@ -101,6 +103,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Choose a valid generation action.' }, { status: 400 });
   } catch (error) {
     console.error('Failed to generate listing overview:', error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unable to generate listing.' }, { status: 500 });
+    const message = error instanceof Error && error.message.trim()
+      ? error.message
+      : 'Unable to generate the listing. The server returned an error without a message.';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

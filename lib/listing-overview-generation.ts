@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
-import { generateListingDetailsWithBedrock } from '@/lib/bedrock-listing-details';
+import {
+  generateListingDetailsWithBedrock,
+  generateMultipleListingDetailsWithBedrock,
+} from '@/lib/bedrock-listing-details';
 import {
   createDropboxInstructionPdf,
   createGroupedDropboxInstructionPdf,
@@ -13,14 +16,13 @@ import {
   generateListingPrintableDownload,
   generateListingTemplateImages,
   getListingEditorData,
-  prepareMultipleListingOverview,
   type ListingEditorContext,
   type ListingEditorData,
 } from '@/lib/listing-editor';
 import { prisma } from '@/lib/prisma';
 import { getPrintableDownloadStatus, PRINTABLE_DOWNLOAD_SPECS } from '@/lib/printable-download-specs';
 
-const GENERATION_FINGERPRINT_VERSION = 1;
+const GENERATION_FINGERPRINT_VERSION = 2;
 
 type StoredFingerprintRow = { overviewGenerationFingerprint: string | null };
 
@@ -81,6 +83,7 @@ async function loadGenerationSnapshot(context: ListingEditorContext) {
         listingItem: true,
         listingDescription: true,
         roomTheme: true,
+        backgroundColour: true,
         title: true,
         description: true,
         digitalTitle: true,
@@ -120,6 +123,7 @@ async function loadGenerationSnapshot(context: ListingEditorContext) {
             followedTemplateId: true,
             itemCount: true,
             roomTheme: true,
+            backgroundColour: true,
             printsFrames: true,
             customisePrints: true,
             digitalDownload: true,
@@ -193,12 +197,19 @@ async function loadGenerationSnapshot(context: ListingEditorContext) {
               select: {
                 localDirectoryName: true,
                 title: true,
+                listingItem: true,
+                listingDescription: true,
+                artworkOrientation: true,
+                roomTheme: true,
+                primaryColour: true,
+                secondaryColour: true,
                 thumbnailFileName: true,
                 thumbnailUpdatedAt: true,
                 downloadsRevision: true,
                 dropboxRevision: true,
                 dropboxSyncedAt: true,
                 dropboxBundle: { select: { sharedUrl: true } },
+                ourCategory: { select: { roomTheme: true } },
               },
             },
           },
@@ -258,15 +269,19 @@ async function loadGenerationSnapshot(context: ListingEditorContext) {
         .map((template) => `image "${template.name}"`));
     }
 
+    if (!data.listing.title.trim()) incompleteItems.push('print title');
+    if (!data.listing.description.trim()) incompleteItems.push('print description');
+    if (!data.listing.digitalTitle.trim()) incompleteItems.push('digital-download title');
+    if (!data.listing.digitalDescription.trim()) incompleteItems.push('digital-download description');
+    if (data.tags.length === 0) incompleteItems.push('Etsy tags');
+    if ((data.listing.quantity ?? 0) <= 0) incompleteItems.push('print quantity');
+    if ((data.listing.digitalQuantity ?? 0) <= 0) incompleteItems.push('digital-download quantity');
+    if (!data.listing.primaryColour.trim()) incompleteItems.push('primary colour');
+    if (!data.listing.secondaryColour.trim()) incompleteItems.push('secondary colour');
+
     if (data.template.templateType === 'multiple') {
       if (!hasInstructions) incompleteItems.push('grouped download instructions PDF');
     } else {
-      if (!data.listing.title.trim()) incompleteItems.push('print title');
-      if (!data.listing.description.trim()) incompleteItems.push('print description');
-      if (!data.listing.digitalTitle.trim()) incompleteItems.push('digital-download title');
-      if (!data.listing.digitalDescription.trim()) incompleteItems.push('digital-download description');
-      if (data.tags.length === 0) incompleteItems.push('Etsy tags');
-
       const downloads = getPrintableDownloadStatus(listing.files);
       incompleteItems.push(...downloads.items
         .filter((item) => !item.created)
@@ -315,7 +330,7 @@ async function regenerateListingOverview(context: ListingEditorContext) {
   if (!data) throw new Error('Listing not found.');
 
   if (data.template?.templateType === 'multiple') {
-    await prepareMultipleListingOverview(context);
+    await generateMultipleListingDetailsWithBedrock(context);
     await createGroupedDropboxInstructionPdf(context);
   } else {
     await generateListingDetailsWithBedrock(context);

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { OurCategoryEditorData } from '@/lib/our-categories';
+import { defaultTemplateGridLayout } from '@/lib/template-grid-layout';
 import { OurCategoryEditorClient } from './OurCategoryEditorClient';
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -39,6 +40,7 @@ function data(): OurCategoryEditorData {
       followedTemplateId: null,
       itemCount: 1,
       roomTheme: '',
+      backgroundColour: '#F5F0E8',
       printsFrames: true,
       customisePrints: true,
       digitalDownload: true,
@@ -112,6 +114,7 @@ function multipleData(): OurCategoryEditorData {
     ...initial.values,
     name: 'Nursery print',
     roomTheme: 'Nursery',
+    backgroundColour: '#FAF8F4' as const,
     printFrameSectionId: 1,
     customisedSectionId: 2,
     downloadSectionId: 3,
@@ -146,6 +149,15 @@ afterEach(() => {
 });
 
 describe('Our Template editor', () => {
+  it('opens on the requested Image Templates tab', () => {
+    render(<OurCategoryEditorClient initialData={dataWithTemplate()} initialTab="image-templates" />);
+
+    expect(screen.getByRole('tab', { name: 'Image Templates' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('Room mockup')).toBeTruthy();
+    expect(screen.getByRole('row', { name: 'Drag Room mockup to reorder' }).getAttribute('aria-describedby'))
+      .toBe('our-template-images-1');
+  });
+
   it('configures a multiple template from the selected single template', async () => {
     const user = userEvent.setup();
     render(<OurCategoryEditorClient initialData={multipleData()} />);
@@ -155,6 +167,7 @@ describe('Our Template editor', () => {
     expect((screen.getByLabelText('No of Items') as HTMLSelectElement).value).toBe('3');
     expect(screen.queryByLabelText('Print / Frames')).toBeNull();
     await user.selectOptions(screen.getByLabelText('Followed Template'), '2');
+    expect((screen.getByLabelText('Background Colour') as HTMLSelectElement).value).toBe('#FAF8F4');
     expect((screen.getByLabelText('Print / Frames') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Etsy Print / Frame Section') as HTMLSelectElement).value).toBe('1');
     await user.click(screen.getByRole('tab', { name: 'Print Details' }));
@@ -170,6 +183,7 @@ describe('Our Template editor', () => {
     expect((screen.getByLabelText('Print / Frames') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Customised Prints') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Digital Downloads') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Background Colour') as HTMLSelectElement).value).toBe('#F5F0E8');
     expect((screen.getByLabelText('Customise the Top text') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Customise the Bottom text') as HTMLInputElement).checked).toBe(true);
 
@@ -256,10 +270,24 @@ describe('Our Template editor', () => {
     expect(within(screen.getByLabelText('Digital Download Section')).queryByRole('option', { name: 'Wall Art' })).toBeTruthy();
   });
 
-  it('orders Delete, Test, View, and Edit and opens their dialogs', async () => {
+  it('orders Delete, Test, Make Copy, and Edit and opens their dialogs', async () => {
     const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        impact: {
+          templateId: '9',
+          templateType: 'single',
+          dependentTemplateImageCount: 0,
+          generatedListingImageCount: 0,
+          affectedListingCount: 0,
+          requiresCascade: false,
+        },
+      }),
+    } as Response);
     render(<OurCategoryEditorClient initialData={dataWithTemplate()} />);
     await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
+    expect(screen.getByRole('link', { name: 'New Create' }).getAttribute('href')).toBe('/our-templates/1/edit/image');
     expect(screen.getByText(/Click and drag a row to change its order/)).toBeTruthy();
     const row = screen.getByText('Room mockup').closest('tr');
     expect(row).toBeTruthy();
@@ -268,7 +296,7 @@ describe('Our Template editor', () => {
     expect(actions.map((button) => button.getAttribute('aria-label'))).toEqual([
       'Delete Room mockup',
       'Test Room mockup',
-      'View Room mockup',
+      'Make copy of Room mockup',
       'Edit Room mockup',
     ]);
 
@@ -300,12 +328,91 @@ describe('Our Template editor', () => {
 
     await user.click(actions[0]);
     expect(screen.getByRole('heading', { name: 'Delete Image Template?' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Confirm' })).toBeTruthy();
+    expect(await screen.findByText(/This template image is not currently used/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     await user.click(actions[1]);
     expect(screen.getByRole('heading', { name: 'Test Room mockup' })).toBeTruthy();
     expect(screen.getByLabelText('Image to attach')).toBeTruthy();
+  });
+
+  it('makes an independent image-template copy at the bottom of the list', async () => {
+    const user = userEvent.setup();
+    const initial = dataWithTemplate();
+    const copiedTemplate = {
+      ...initial.imageTemplates[0],
+      id: '10',
+      name: 'Copied from Room mockup',
+      createdAt: new Date(1).toISOString(),
+      updatedAt: new Date(1).toISOString(),
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ template: copiedTemplate }),
+    } as Response);
+    render(<OurCategoryEditorClient initialData={initial} />);
+
+    await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
+    await user.click(screen.getByRole('button', { name: 'Make copy of Room mockup' }));
+
+    expect(await screen.findByText('Copied from Room mockup')).toBeTruthy();
+    const rows = screen.getAllByRole('row').slice(1);
+    expect(within(rows.at(-1)!).getByText('Copied from Room mockup')).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith('/api/our-categories/templates/9/copy', { method: 'POST' });
+  });
+
+  it('warns about and deletes generated listing images and linked multiple-template images', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          impact: {
+            templateId: '9',
+            templateType: 'single',
+            dependentTemplateImageCount: 2,
+            generatedListingImageCount: 3,
+            affectedListingCount: 2,
+            requiresCascade: true,
+          },
+        }),
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          deletedId: '9',
+          deletedTemplateIds: ['9', '20', '21'],
+          deletedListingImageCount: 3,
+        }),
+      } as Response);
+    render(<OurCategoryEditorClient initialData={dataWithTemplate()} />);
+
+    await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
+    await user.click(screen.getByRole('button', { name: 'Delete Room mockup' }));
+
+    expect(await screen.findByText(/used by 2 multiple-template images and has 3 generated listing images/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => expect(screen.queryByText('Room mockup')).toBeNull());
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/our-categories/templates/9');
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/our-categories/templates/9', { method: 'DELETE' });
+  });
+
+  it('shows a separate grid editor icon for templates created with New Create', async () => {
+    const user = userEvent.setup();
+    const initial = dataWithTemplate();
+    initial.imageTemplates[0] = {
+      ...initial.imageTemplates[0],
+      openingRegions: [{ ...openingRegion(1, 1), grid: defaultTemplateGridLayout(1) }],
+    };
+    render(<OurCategoryEditorClient initialData={initial} />);
+
+    await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
+
+    expect(screen.getByRole('link', { name: 'Edit Room mockup in grid editor' }).getAttribute('href'))
+      .toBe('/our-templates/1/edit/image/9');
+    expect(screen.queryByRole('button', { name: 'Edit Room mockup' })).toBeNull();
   });
 
   it('tests a generated font showcase without requesting an artwork image', async () => {
@@ -422,7 +529,8 @@ describe('Our Template editor', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
     const createButton = screen.getByRole('button', { name: 'Create' });
-    expect(createButton.parentElement?.textContent).toContain('Copy FromLinkCreate');
+    expect(createButton.parentElement?.textContent).toContain('Copy FromLinkNew CreateCreate');
+    expect(screen.getByRole('link', { name: 'New Create' }).getAttribute('href')).toBe('/our-templates/12/edit/image');
     await user.click(screen.getByRole('button', { name: 'Copy From' }));
     expect(screen.getByRole('heading', { name: 'Copy Image Template' })).toBeTruthy();
     expect(within(screen.getByLabelText('Copy from template')).getByRole('option', { name: 'Nursery print (Single)' })).toBeTruthy();

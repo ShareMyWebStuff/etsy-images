@@ -4,7 +4,7 @@ import { closestCenter, DndContext, KeyboardSensor, PointerSensor, type DragEndE
 import { arrayMove, sortableKeyboardCoordinates, SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Eye, FlaskConical, GripVertical, ImagePlus, Pencil, Plus, Save, Trash2 } from 'lucide-react';
+import { ArrowLeft, Copy, FlaskConical, GripVertical, ImagePlus, LayoutGrid, Pencil, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import type { OurCategoryEditorData, OurCategoryFormValues, OurCategoryImageTemplateView } from '@/lib/our-categories';
+import {
+  ARTWORK_BACKGROUND_COLOUR_OPTIONS,
+  DEFAULT_ARTWORK_BACKGROUND_COLOUR,
+  type ArtworkBackgroundColour,
+} from '@/lib/artwork-background-colours';
+import type {
+  OurCategoryEditorData,
+  OurCategoryFormValues,
+  OurCategoryImageTemplateDeletionImpact,
+  OurCategoryImageTemplateView,
+} from '@/lib/our-categories';
 import type { TemplateOpeningRegion } from '@/lib/our-category-template-composite';
 import {
   DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID,
@@ -21,9 +31,15 @@ import {
 } from '@/lib/printshrimp/custom-fonts';
 import { TemplateCornerPicker } from './TemplateCornerPicker';
 
-type TabKey = 'details' | 'print-details' | 'image-templates';
+export type OurCategoryEditorTab = 'details' | 'print-details' | 'image-templates';
 type PendingNavigation = { type: 'href'; href: string } | { type: 'back' };
 type EtsySectionUsage = 'printFrames' | 'customisedPrints' | 'digitalDownloads';
+type DeleteTemplateCheck = {
+  templateId: string;
+  loading: boolean;
+  impact: OurCategoryImageTemplateDeletionImpact | null;
+  error: string | null;
+};
 
 const ETSY_SECTION_FIELDS = [
   {
@@ -80,20 +96,53 @@ function appliesTo(template: OurCategoryImageTemplateView) {
   ].filter(Boolean).join(', ') || 'None';
 }
 
+function deleteTemplateImpactMessage(
+  template: OurCategoryImageTemplateView | null,
+  impact: OurCategoryImageTemplateDeletionImpact,
+) {
+  if (!impact.requiresCascade) {
+    return `Are you sure you want to delete ${template?.name}? This template image is not currently used by another template or generated listing image.`;
+  }
+  if (impact.templateType === 'multiple') {
+    return `This template image is used to generate ${impact.generatedListingImageCount} image${impact.generatedListingImageCount === 1 ? '' : 's'} across ${impact.affectedListingCount} listing${impact.affectedListingCount === 1 ? '' : 's'}. If you continue, those listing images and this multiple-template image will be deleted.`;
+  }
+
+  const uses = [
+    impact.dependentTemplateImageCount > 0
+      ? `is used by ${impact.dependentTemplateImageCount} multiple-template image${impact.dependentTemplateImageCount === 1 ? '' : 's'}`
+      : null,
+    impact.generatedListingImageCount > 0
+      ? `has ${impact.generatedListingImageCount} generated listing image${impact.generatedListingImageCount === 1 ? '' : 's'} across ${impact.affectedListingCount} listing${impact.affectedListingCount === 1 ? '' : 's'}`
+      : null,
+  ].filter((value): value is string => value !== null);
+  const deletedItems = [
+    impact.generatedListingImageCount > 0 ? 'the generated listing images' : null,
+    impact.dependentTemplateImageCount > 0 ? 'the dependent multiple-template images' : null,
+    'this single-template image',
+  ].filter((value): value is string => value !== null);
+  const deletedItemsText = deletedItems.length > 1
+    ? `${deletedItems.slice(0, -1).join(', ')} and ${deletedItems.at(-1)}`
+    : deletedItems[0];
+
+  return `This single-template image ${uses.join(' and ')}. If you continue, ${deletedItemsText} will be deleted.`;
+}
+
 function SortableImageTemplateRow({
   template,
   disabled,
   onDelete,
   onTest,
-  onView,
+  onCopy,
   onEdit,
+  gridEditHref,
 }: {
   template: OurCategoryImageTemplateView;
   disabled: boolean;
   onDelete: () => void;
   onTest: () => void;
-  onView: () => void;
+  onCopy: () => void;
   onEdit: () => void;
+  gridEditHref?: string;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: template.id,
@@ -138,22 +187,32 @@ function SortableImageTemplateRow({
           <Button type="button" variant="outline" size="icon" onClick={onTest} disabled={disabled} aria-label={`Test ${template.name}`} title="Test image template">
             <FlaskConical className="h-4 w-4" aria-hidden="true" />
           </Button>
-          <Button type="button" variant="outline" size="icon" onClick={onView} disabled={disabled} aria-label={`View ${template.name}`} title="View image">
-            <Eye className="h-4 w-4" aria-hidden="true" />
+          <Button type="button" variant="outline" size="icon" onClick={onCopy} disabled={disabled} aria-label={`Make copy of ${template.name}`} title="Make a copy">
+            <Copy className="h-4 w-4" aria-hidden="true" />
           </Button>
-          <Button type="button" variant="outline" size="icon" onClick={onEdit} disabled={disabled || template.isLinked} aria-label={`Edit ${template.name}`} title={template.isLinked ? 'Linked image templates cannot be edited' : 'Edit image template'}>
+          {gridEditHref ? <Button type="button" variant="outline" size="icon" asChild>
+            <a href={gridEditHref} aria-label={`Edit ${template.name} in grid editor`} title="Edit in the new grid editor">
+              <LayoutGrid className="h-4 w-4" aria-hidden="true" />
+            </a>
+          </Button> : <Button type="button" variant="outline" size="icon" onClick={onEdit} disabled={disabled || template.isLinked} aria-label={`Edit ${template.name}`} title={template.isLinked ? 'Linked image templates cannot be edited' : 'Edit image template'}>
             <Pencil className="h-4 w-4" aria-hidden="true" />
-          </Button>
+          </Button>}
         </div>
       </TableCell>
     </TableRow>
   );
 }
 
-export function OurCategoryEditorClient({ initialData }: { initialData: OurCategoryEditorData }) {
+export function OurCategoryEditorClient({
+  initialData,
+  initialTab = 'details',
+}: {
+  initialData: OurCategoryEditorData;
+  initialTab?: OurCategoryEditorTab;
+}) {
   const [data, setData] = useState(initialData);
   const [values, setValues] = useState<OurCategoryFormValues>(initialData.values);
-  const [activeTab, setActiveTab] = useState<TabKey>('details');
+  const [activeTab, setActiveTab] = useState<OurCategoryEditorTab>(initialTab);
   const [saving, setSaving] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation | null>(null);
@@ -177,8 +236,9 @@ export function OurCategoryEditorClient({ initialData }: { initialData: OurCateg
   const [templateRegions, setTemplateRegions] = useState<TemplateOpeningRegion[]>([]);
   const [templateRegionDrafting, setTemplateRegionDrafting] = useState(false);
   const [templateUses, setTemplateUses] = useState({ prints: true, customised: true, digital: true });
-  const [viewTemplate, setViewTemplate] = useState<OurCategoryImageTemplateView | null>(null);
+  const [copyingRowTemplateId, setCopyingRowTemplateId] = useState<string | null>(null);
   const [deleteTemplate, setDeleteTemplate] = useState<OurCategoryImageTemplateView | null>(null);
+  const [deleteTemplateCheck, setDeleteTemplateCheck] = useState<DeleteTemplateCheck | null>(null);
   const [deletingTemplate, setDeletingTemplate] = useState(false);
   const [testTemplate, setTestTemplate] = useState<OurCategoryImageTemplateView | null>(null);
   const [testFiles, setTestFiles] = useState<Array<File | null>>([]);
@@ -214,7 +274,7 @@ export function OurCategoryEditorClient({ initialData }: { initialData: OurCateg
       ? []
       : data.values.templateType === 'multiple'
       ? [...new Set(testTemplate.openingRegions
-        .map((region) => region.imageItemNumber)
+        .flatMap((region) => region.grid ? region.grid.cells.map((cell) => cell.imageItemNumber) : [region.imageItemNumber])
         .filter((itemNumber): itemNumber is number => Boolean(itemNumber) && itemNumber! <= data.values.itemCount))]
         .sort((first, second) => first - second)
       : [1]
@@ -320,6 +380,7 @@ export function OurCategoryEditorClient({ initialData }: { initialData: OurCateg
           ...current,
           followedTemplateId: null,
           roomTheme: '',
+          backgroundColour: DEFAULT_ARTWORK_BACKGROUND_COLOUR,
           printsFrames: false,
           customisePrints: false,
           digitalDownload: false,
@@ -336,6 +397,7 @@ export function OurCategoryEditorClient({ initialData }: { initialData: OurCateg
         ...current,
         followedTemplateId: selected.id,
         roomTheme: selected.values.roomTheme,
+        backgroundColour: selected.values.backgroundColour,
         printsFrames: selected.values.printsFrames,
         customisePrints: selected.values.customisePrints,
         digitalDownload: selected.values.digitalDownload,
@@ -624,23 +686,73 @@ export function OurCategoryEditorClient({ initialData }: { initialData: OurCateg
     }
   }
 
+  async function openDeleteTemplate(template: OurCategoryImageTemplateView) {
+    const templateId = template.id;
+    setDeleteTemplate(template);
+    setDeleteTemplateCheck({ templateId, loading: true, impact: null, error: null });
+    try {
+      const response = await fetch(`/api/our-categories/templates/${encodeURIComponent(templateId)}`);
+      const payload = await response.json() as { impact?: OurCategoryImageTemplateDeletionImpact; error?: string };
+      if (!response.ok || !payload.impact) throw new Error(payload.error ?? 'Unable to check where the image template is used.');
+      setDeleteTemplateCheck((current) => current?.templateId === templateId
+        ? { templateId, loading: false, impact: payload.impact!, error: null }
+        : current);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to check where the image template is used.';
+      setDeleteTemplateCheck((current) => current?.templateId === templateId
+        ? { templateId, loading: false, impact: null, error: message }
+        : current);
+    }
+  }
+
+  function closeDeleteTemplate() {
+    if (deletingTemplate) return;
+    setDeleteTemplate(null);
+    setDeleteTemplateCheck(null);
+  }
+
   async function confirmDeleteTemplate() {
-    if (!deleteTemplate) return;
+    if (!deleteTemplate || deleteTemplateCheck?.templateId !== deleteTemplate.id || !deleteTemplateCheck.impact) return;
     setDeletingTemplate(true);
     try {
       const response = await fetch(`/api/our-categories/templates/${encodeURIComponent(deleteTemplate.id)}`, { method: 'DELETE' });
-      const payload = await response.json() as { deletedId?: string; error?: string };
+      const payload = await response.json() as {
+        deletedId?: string;
+        deletedTemplateIds?: string[];
+        deletedListingImageCount?: number;
+        error?: string;
+      };
       if (!response.ok || !payload.deletedId) throw new Error(payload.error ?? 'Unable to delete the image template.');
+      const deletedIds = new Set(payload.deletedTemplateIds ?? [payload.deletedId]);
       setData((current) => ({
         ...current,
-        imageTemplates: current.imageTemplates.filter((template) => template.id !== payload.deletedId),
+        imageTemplates: current.imageTemplates.filter((template) => !deletedIds.has(template.id)),
       }));
       setDeleteTemplate(null);
-      toast.success('Image template deleted.');
+      setDeleteTemplateCheck(null);
+      toast.success(payload.deletedListingImageCount
+        ? `Image template and ${payload.deletedListingImageCount} generated listing image${payload.deletedListingImageCount === 1 ? '' : 's'} deleted.`
+        : 'Image template deleted.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to delete the image template.');
     } finally {
       setDeletingTemplate(false);
+    }
+  }
+
+  async function makeTemplateCopy(template: OurCategoryImageTemplateView) {
+    if (copyingRowTemplateId) return;
+    setCopyingRowTemplateId(template.id);
+    try {
+      const response = await fetch(`/api/our-categories/templates/${encodeURIComponent(template.id)}/copy`, { method: 'POST' });
+      const payload = await response.json() as { template?: OurCategoryImageTemplateView; error?: string };
+      if (!response.ok || !payload.template) throw new Error(payload.error ?? 'Unable to make a copy of the image template.');
+      setData((current) => ({ ...current, imageTemplates: [...current.imageTemplates, payload.template!] }));
+      toast.success(`${payload.template.name} created.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to make a copy of the image template.');
+    } finally {
+      setCopyingRowTemplateId(null);
     }
   }
 
@@ -774,6 +886,20 @@ export function OurCategoryEditorClient({ initialData }: { initialData: OurCateg
               <span className="text-right text-xs font-normal tabular-nums text-muted-foreground">{values.roomTheme.length} / 200</span>
             </label>
           )}
+          <label className="grid gap-2 text-sm font-medium">
+            Background Colour
+            <select
+              className={selectClassName}
+              aria-label="Background Colour"
+              value={values.backgroundColour}
+              onChange={(event) => updateValue('backgroundColour', event.target.value as ArtworkBackgroundColour)}
+            >
+              {ARTWORK_BACKGROUND_COLOUR_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label} — {option.value}</option>
+              ))}
+            </select>
+            {isMultiple ? <span className="text-xs font-normal text-muted-foreground">Copied from the followed template and available to change for this multiple template.</span> : null}
+          </label>
           {(!isMultiple || followedTemplate?.values.printsFrames) ? <CheckboxField checked={values.printsFrames} label="Print / Frames" onChange={(checked) => updateValue('printsFrames', checked)} /> : null}
           {(!isMultiple || followedTemplate?.values.customisePrints) ? <div className="grid gap-3">
             <CheckboxField checked={values.customisePrints} label="Customised Prints" onChange={(checked) => updateValue('customisePrints', checked)} />
@@ -897,12 +1023,22 @@ export function OurCategoryEditorClient({ initialData }: { initialData: OurCateg
                 disabled={!data.categoryId || data.followedImageTemplates.length === 0 || reorderingTemplates}
               >Link</Button>
             ) : null}
+            {data.categoryId ? (
+              <Button type="button" variant="outline" asChild>
+                <a href={`/our-templates/${encodeURIComponent(data.categoryId)}/edit/image`}><ImagePlus className="h-4 w-4" aria-hidden="true" />New Create</a>
+              </Button>
+            ) : null}
             <Button type="button" onClick={openCreateTemplate} disabled={!data.categoryId || reorderingTemplates}><ImagePlus className="h-4 w-4" aria-hidden="true" />Create</Button>
           </div>
         </CardHeader>
         <CardContent className="p-0">
           {!data.categoryId ? <p className="px-6 pb-6 text-sm text-muted-foreground">Create the template first, then add image templates from this tab.</p> : (
-            <DndContext sensors={templateSensors} collisionDetection={closestCenter} onDragEnd={(event) => { void finishTemplateDrag(event); }}>
+            <DndContext
+              id={`our-template-images-${data.categoryId}`}
+              sensors={templateSensors}
+              collisionDetection={closestCenter}
+              onDragEnd={(event) => { void finishTemplateDrag(event); }}
+            >
               <Table>
                 <TableHeader><TableRow><TableHead className="w-10 pr-0"><span className="sr-only">Order</span></TableHead><TableHead>Name</TableHead><TableHead>Description</TableHead><TableHead>Used On</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
                 <TableBody>
@@ -912,11 +1048,14 @@ export function OurCategoryEditorClient({ initialData }: { initialData: OurCateg
                         <SortableImageTemplateRow
                           key={template.id}
                           template={template}
-                          disabled={reorderingTemplates}
-                          onDelete={() => setDeleteTemplate(template)}
+                          disabled={reorderingTemplates || copyingRowTemplateId !== null}
+                          onDelete={() => { void openDeleteTemplate(template); }}
                           onTest={() => setTestTemplate(template)}
-                          onView={() => setViewTemplate(template)}
+                          onCopy={() => { void makeTemplateCopy(template); }}
                           onEdit={() => openEditTemplate(template)}
+                          gridEditHref={!template.isLinked && template.openingRegions.some((region) => region.grid)
+                            ? `/our-templates/${encodeURIComponent(data.categoryId!)}/edit/image/${encodeURIComponent(template.id)}`
+                            : undefined}
                         />
                       ))}
                     </SortableContext>
@@ -1233,24 +1372,26 @@ export function OurCategoryEditorClient({ initialData }: { initialData: OurCateg
         </DialogContent>
       </Dialog>
 
-      <Dialog open={viewTemplate !== null} onOpenChange={(open) => { if (!open) setViewTemplate(null); }}>
-        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
-          <DialogHeader><DialogTitle>{viewTemplate?.name}</DialogTitle></DialogHeader>
-          {viewTemplate ? <img src={`/api/our-categories/templates/${encodeURIComponent(viewTemplate.id)}/image?preview=1${viewTemplate.displayFonts ? '&fontStyle=plain-white-v2' : ''}&v=${encodeURIComponent(viewTemplate.updatedAt)}`} alt={viewTemplate.name} className="max-h-[75vh] w-full object-contain" /> : null}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={deleteTemplate !== null} onOpenChange={(open) => { if (!open && !deletingTemplate) setDeleteTemplate(null); }}>
+      <Dialog open={deleteTemplate !== null} onOpenChange={(open) => { if (!open) closeDeleteTemplate(); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Delete Image Template?</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">
-            {deleteTemplate?.isLinked
-              ? `Are you sure you want to remove the link to ${deleteTemplate.linkedSourceImageTemplateName}? The source image will not be deleted.`
-              : `Are you sure you want to delete ${deleteTemplate?.name}? The database record and uploaded S3 image will be removed.`}
+            {deleteTemplateCheck?.loading
+              ? 'Checking where this template image is used...'
+              : deleteTemplateCheck?.error
+                ? deleteTemplateCheck.error
+                : deleteTemplateCheck?.impact
+                  ? deleteTemplateImpactMessage(deleteTemplate, deleteTemplateCheck.impact)
+                  : 'Unable to check where this template image is used.'}
           </p>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDeleteTemplate(null)} disabled={deletingTemplate}>Cancel</Button>
-            <Button type="button" variant="destructive" onClick={() => void confirmDeleteTemplate()} disabled={deletingTemplate}>{deletingTemplate ? 'Deleting...' : 'Confirm'}</Button>
+            <Button type="button" variant="outline" onClick={closeDeleteTemplate} disabled={deletingTemplate}>Cancel</Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void confirmDeleteTemplate()}
+              disabled={deletingTemplate || deleteTemplateCheck?.loading !== false || !deleteTemplateCheck.impact || Boolean(deleteTemplateCheck.error)}
+            >{deletingTemplate ? 'Deleting...' : 'Continue'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

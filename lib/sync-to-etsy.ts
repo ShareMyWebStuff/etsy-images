@@ -174,7 +174,8 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
             hasGroupSelection: listing.ourCategory?.templateType !== 'multiple'
               || listing.groupItems.length === listing.ourCategory.itemCount,
             hasDownloadInstructions: hasDropboxPdf,
-            hasListingDescription: (listing.listingDescription?.trim().length ?? 0) > 0,
+            hasListingDescription: listing.ourCategory?.templateType === 'multiple'
+              || (listing.listingDescription?.trim().length ?? 0) > 0,
             hasThumbnail: (listing.thumbnailFileName?.trim().length ?? 0) > 0,
             hasThumbnailSizes: listing.ourCategory?.templateType === 'multiple'
               || parseCurrentListingPrintCropSettings(listing.printCropSettings, {
@@ -189,12 +190,12 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
             hasCurrentZips: true,
             hasCurrentDropbox,
             hasDownloadSection: hasRequiredTemplateDownloadSection(listing.ourCategory),
-            hasTags: listing.ourCategory?.templateType === 'multiple' || listing.tags.length > 0,
-            hasTitle: listing.ourCategory?.templateType === 'multiple' || listing.title.trim().length > 0,
-            hasEtsyDescription: listing.ourCategory?.templateType === 'multiple' || (listing.description?.trim().length ?? 0) > 0,
-            hasQuantity: listing.ourCategory?.templateType === 'multiple' || (listing.quantity ?? 0) > 0,
-            hasDigitalTitle: listing.ourCategory?.templateType === 'multiple' || (listing.digitalTitle?.trim().length ?? 0) > 0,
-            hasDigitalDescription: listing.ourCategory?.templateType === 'multiple' || (listing.digitalDescription?.trim().length ?? 0) > 0,
+            hasTags: listing.tags.length > 0,
+            hasTitle: listing.title.trim().length > 0,
+            hasEtsyDescription: (listing.description?.trim().length ?? 0) > 0,
+            hasQuantity: (listing.quantity ?? 0) > 0,
+            hasDigitalTitle: (listing.digitalTitle?.trim().length ?? 0) > 0,
+            hasDigitalDescription: (listing.digitalDescription?.trim().length ?? 0) > 0,
             hasDigitalQuantity: (listing.digitalQuantity ?? 0) > 0,
             hasPrimaryColour: (listing.primaryColour?.trim().length ?? 0) > 0,
             hasSecondaryColour: (listing.secondaryColour?.trim().length ?? 0) > 0,

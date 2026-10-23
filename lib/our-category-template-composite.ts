@@ -1,4 +1,14 @@
+import path from 'node:path';
+import { readFile } from 'node:fs/promises';
+
 import sharp from 'sharp';
+
+import { mockupFrameGeometry, type MockupFrameFinish } from '@/lib/listing-mockup-tester';
+import {
+  templateGridCellRects,
+  validateTemplateGridLayout,
+  type TemplateGridLayout,
+} from '@/lib/template-grid-layout';
 
 export type Point = { x: number; y: number };
 export type TemplateOpeningCorners = { topLeft: Point; topRight: Point; bottomRight: Point; bottomLeft: Point };
@@ -10,7 +20,23 @@ export type TemplateOpeningRegion = {
   topText?: string;
   bottomText?: string;
   fontId?: string;
+  grid?: TemplateGridLayout;
 };
+
+export function remapTemplateOpeningRegionImageItem(
+  region: TemplateOpeningRegion,
+  imageItemNumber: number,
+): TemplateOpeningRegion {
+  return {
+    ...region,
+    imageItemNumber,
+    grid: region.grid ? {
+      ...region.grid,
+      cells: region.grid.cells.map((cell) => ({ ...cell, imageItemNumber })),
+    } : region.grid,
+  };
+}
+
 export type TemplateOpening = {
   bounds: { left: number; top: number; width: number; height: number };
   corners: TemplateOpeningCorners;
@@ -20,6 +46,12 @@ export type TemplateOpening = {
 export type TemplateArtworkPresentation = {
   borderEnabled?: boolean;
   borderSizePercent?: number;
+};
+
+export type TemplateRegionArtwork = {
+  region: TemplateOpeningRegion;
+  artwork?: Buffer;
+  cellArtworks?: Buffer[];
 };
 
 type Component = {
@@ -110,6 +142,14 @@ export function validateTemplateOpeningRegions(value: unknown, width: number, he
     if (topText === null || topText !== undefined && topText.length > 40) openingError(`has invalid top text for artwork region ${index + 1}.`);
     if (bottomText === null || bottomText !== undefined && bottomText.length > 40) openingError(`has invalid bottom text for artwork region ${index + 1}.`);
     if (fontId === null || fontId !== undefined && (!fontId.trim() || fontId.length > 50)) openingError(`has an invalid font for artwork region ${index + 1}.`);
+    let grid: TemplateGridLayout | undefined;
+    if (record.grid !== undefined) {
+      try {
+        grid = validateTemplateGridLayout(record.grid, 100);
+      } catch (error) {
+        openingError(`has invalid grid settings for artwork region ${index + 1}: ${error instanceof Error ? error.message : 'Invalid grid.'}`);
+      }
+    }
     identifiers.add(id);
     return {
       id,
@@ -119,6 +159,7 @@ export function validateTemplateOpeningRegions(value: unknown, width: number, he
       ...(topText === undefined ? {} : { topText }),
       ...(bottomText === undefined ? {} : { bottomText }),
       ...(fontId === undefined ? {} : { fontId }),
+      ...(grid === undefined ? {} : { grid }),
     };
   });
 }
@@ -390,6 +431,145 @@ async function createPrintPlane(
   return plane;
 }
 
+async function frameRail(finish: 'oak' | 'white' | 'black', direction: 'horizontal' | 'vertical', width: number, height: number) {
+  const contents = await readFile(path.join(
+    process.cwd(),
+    'public',
+    'assets',
+    'printshrimp-frames',
+    'derived',
+    `${finish}-rail-${direction}.png`,
+  ));
+  return sharp(contents, { failOn: 'error' })
+    .resize({ width, height, fit: 'fill', kernel: sharp.kernel.lanczos3 })
+    .ensureAlpha()
+    .png()
+    .toBuffer();
+}
+
+async function framedGridCell(
+  artwork: Buffer,
+  cell: TemplateGridLayout['cells'][number],
+  width: number,
+  height: number,
+  legacyPresentation: TemplateArtworkPresentation,
+) {
+  const finish = cell.frameFinish as MockupFrameFinish;
+  let paperWidth = width;
+  let paperHeight = height;
+  // The saved ratio describes the paper, not the frame. Scale the paper down
+  // uniformly until the frame, depth and directional shadow all fit within the
+  // grid cell without being clipped by its neighbouring cells.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const geometry = mockupFrameGeometry(
+      { x: 0, y: 0, width: paperWidth, height: paperHeight },
+      finish,
+      cell.frameThicknessPercent,
+      cell.shadowStrength,
+      cell.frameDepthPercent,
+    );
+    const safety = finish === 'unframed' && cell.shadowStrength === 0 ? 0 : geometry.safety;
+    const scale = Math.min(1, width / (paperWidth + safety * 2), height / (paperHeight + safety * 2));
+    if (scale >= 0.999) break;
+    paperWidth = Math.max(1, Math.floor(paperWidth * scale));
+    paperHeight = Math.max(1, Math.floor(paperHeight * scale));
+  }
+  const paperLeft = Math.round((width - paperWidth) / 2);
+  const paperTop = Math.round((height - paperHeight) / 2);
+  const geometry = mockupFrameGeometry(
+    { x: paperLeft, y: paperTop, width: paperWidth, height: paperHeight },
+    finish,
+    cell.frameThicknessPercent,
+    cell.shadowStrength,
+    cell.frameDepthPercent,
+  );
+  const composites: Array<{ input: Buffer; left?: number; top?: number }> = [];
+
+  if (cell.shadowStrength > 0 && geometry.shadowBlur > 0) {
+    const opacity = Math.min(0.34, 0.07 + cell.shadowStrength * 0.009);
+    const shadowSvg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+      <defs>
+        <filter id="blur" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${Math.max(0.5, geometry.shadowBlur * 0.68)}" /></filter>
+        <clipPath id="direction"><rect x="${geometry.backOuter.x}" y="${geometry.backOuter.y}" width="${Math.max(0, width - geometry.backOuter.x)}" height="${Math.max(0, height - geometry.backOuter.y)}" /></clipPath>
+      </defs>
+      <g clip-path="url(#direction)"><rect x="${geometry.backOuter.x + geometry.shadowOffsetX}" y="${geometry.backOuter.y + geometry.shadowOffsetY}" width="${geometry.backOuter.width}" height="${geometry.backOuter.height}" fill="rgba(18,18,18,${opacity})" filter="url(#blur)" /></g>
+    </svg>`);
+    composites.push({ input: await sharp(shadowSvg).png().toBuffer(), left: 0, top: 0 });
+  }
+
+  const framedFinish = finish === 'unframed' ? null : finish;
+  if (framedFinish && geometry.frameDepth > 0) {
+    const [backHorizontal, backVertical] = await Promise.all([
+      frameRail(framedFinish, 'horizontal', geometry.backOuter.width, geometry.frameThickness),
+      frameRail(framedFinish, 'vertical', geometry.frameThickness, geometry.backOuter.height),
+    ]);
+    composites.push(
+      { input: backHorizontal, left: geometry.backOuter.x, top: geometry.backOuter.y },
+      { input: backHorizontal, left: geometry.backOuter.x, top: geometry.backOuter.y + geometry.backOuter.height - geometry.frameThickness },
+      { input: backVertical, left: geometry.backOuter.x, top: geometry.backOuter.y },
+      { input: backVertical, left: geometry.backOuter.x + geometry.backOuter.width - geometry.frameThickness, top: geometry.backOuter.y },
+    );
+  }
+
+  const artworkPlane = await createPrintPlane(artwork, paperWidth, paperHeight, {
+    borderEnabled: cell.borderEnabled || legacyPresentation.borderEnabled,
+    borderSizePercent: cell.borderEnabled ? cell.borderSizePercent : legacyPresentation.borderSizePercent,
+  });
+  composites.push({
+    input: await sharp(artworkPlane, { raw: { width: paperWidth, height: paperHeight, channels: 4 } }).png().toBuffer(),
+    left: paperLeft,
+    top: paperTop,
+  });
+
+  if (framedFinish && geometry.frameThickness > 0) {
+    const [horizontal, vertical] = await Promise.all([
+      frameRail(framedFinish, 'horizontal', geometry.outer.width, geometry.frameThickness),
+      frameRail(framedFinish, 'vertical', geometry.frameThickness, geometry.outer.height),
+    ]);
+    composites.push(
+      { input: horizontal, left: geometry.outer.x, top: geometry.outer.y },
+      { input: horizontal, left: geometry.outer.x, top: geometry.outer.y + geometry.outer.height - geometry.frameThickness },
+      { input: vertical, left: geometry.outer.x, top: geometry.outer.y },
+      { input: vertical, left: geometry.outer.x + geometry.outer.width - geometry.frameThickness, top: geometry.outer.y },
+    );
+  }
+
+  return sharp({ create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite(composites)
+    .png()
+    .toBuffer();
+}
+
+async function createTemplateGridPlane(
+  artworks: Buffer[],
+  layout: TemplateGridLayout,
+  width: number,
+  height: number,
+  presentation: TemplateArtworkPresentation,
+) {
+  if (artworks.length !== layout.imageCount) throw new Error(`The area requires ${layout.imageCount} prepared images.`);
+  const rects = templateGridCellRects(width, height, layout);
+  const composites: Array<{ input: Buffer; left: number; top: number }> = [];
+  for (const rect of rects) {
+    const cell = layout.cells[rect.index];
+    const outerLeft = Math.max(0, Math.round(rect.x));
+    const outerTop = Math.max(0, Math.round(rect.y));
+    const outerRight = Math.min(width, Math.max(outerLeft + 1, Math.round(rect.x + rect.width)));
+    const outerBottom = Math.min(height, Math.max(outerTop + 1, Math.round(rect.y + rect.height)));
+    const outerWidth = outerRight - outerLeft;
+    const outerHeight = outerBottom - outerTop;
+    composites.push({
+      input: await framedGridCell(artworks[rect.index], cell, outerWidth, outerHeight, presentation),
+      left: outerLeft,
+      top: outerTop,
+    });
+  }
+  return sharp({ create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite(composites)
+    .raw()
+    .toBuffer();
+}
+
 export async function composeOurCategoryTemplate(
   template: Buffer,
   attachedImage: Buffer,
@@ -408,7 +588,7 @@ export async function composeOurCategoryTemplate(
 
 export async function composeOurCategoryTemplateWithArtworks(
   template: Buffer,
-  regionArtworks: Array<{ region: TemplateOpeningRegion; artwork: Buffer }>,
+  regionArtworks: TemplateRegionArtwork[],
   presentation: TemplateArtworkPresentation = {},
 ) {
   const decodedTemplate = await sharp(template, { failOn: 'error' })
@@ -425,14 +605,11 @@ export async function composeOurCategoryTemplateWithArtworks(
     height,
   );
   const openingLayer = Buffer.alloc(width * height * 4);
+  const gridLayer = Buffer.alloc(width * height * 4);
   const templateOverlay = Buffer.from(decodedTemplate.data);
 
   for (const [regionIndex, region] of regions.entries()) {
-    const artwork = await sharp(regionArtworks[regionIndex].artwork, { failOn: 'error' })
-      .rotate()
-      .ensureAlpha()
-      .png()
-      .toBuffer();
+    const supplied = regionArtworks[regionIndex];
     const opening = configuredOpening(region.corners, width, height);
     const planeWidth = opening.axisAligned
       ? opening.bounds.width
@@ -440,12 +617,35 @@ export async function composeOurCategoryTemplateWithArtworks(
     const planeHeight = opening.axisAligned
       ? opening.bounds.height
       : Math.max(2, Math.round((distance(opening.corners.topLeft, opening.corners.bottomLeft) + distance(opening.corners.topRight, opening.corners.bottomRight)) / 2) + 1);
-    const plane = await createPrintPlane(artwork, planeWidth, planeHeight, presentation);
+    let plane: Buffer;
+    let targetLayer = openingLayer;
+    if (region.grid) {
+      if (!supplied.cellArtworks || supplied.cellArtworks.length !== region.grid.imageCount) {
+        throw new Error(`${region.name} requires ${region.grid.imageCount} prepared grid images.`);
+      }
+      const prepared = await Promise.all(supplied.cellArtworks.map((artwork) => sharp(artwork, { failOn: 'error' })
+        .rotate()
+        .ensureAlpha()
+        .png()
+        .toBuffer()));
+      plane = await createTemplateGridPlane(prepared, region.grid, planeWidth, planeHeight, presentation);
+      targetLayer = gridLayer;
+    } else {
+      if (!supplied.artwork) throw new Error(`${region.name} requires an attached image.`);
+      const artwork = await sharp(supplied.artwork, { failOn: 'error' })
+        .rotate()
+        .ensureAlpha()
+        .png()
+        .toBuffer();
+      plane = await createPrintPlane(artwork, planeWidth, planeHeight, presentation);
+    }
 
     // Each saved polygon is cut out of the in-memory overlay. The S3 template
     // buffer itself is never changed.
-    for (let position = 0; position < opening.mask.length; position += 1) {
-      if (opening.mask[position]) templateOverlay[position * 4 + 3] = 0;
+    if (!region.grid) {
+      for (let position = 0; position < opening.mask.length; position += 1) {
+        if (opening.mask[position]) templateOverlay[position * 4 + 3] = 0;
+      }
     }
 
     if (opening.axisAligned) {
@@ -454,7 +654,7 @@ export async function composeOurCategoryTemplateWithArtworks(
           const canvasPosition = y * width + x;
           if (!opening.mask[canvasPosition]) continue;
           const sourcePosition = ((y - opening.bounds.top) * planeWidth + (x - opening.bounds.left)) * 4;
-          plane.copy(openingLayer, canvasPosition * 4, sourcePosition, sourcePosition + 4);
+          plane.copy(targetLayer, canvasPosition * 4, sourcePosition, sourcePosition + 4);
         }
       }
     } else {
@@ -465,7 +665,7 @@ export async function composeOurCategoryTemplateWithArtworks(
           if (!opening.mask[canvasPosition]) continue;
           const mapped = mapToPlane(inverse, x, y);
           if (!mapped || mapped.x < -0.02 || mapped.x > 1.02 || mapped.y < -0.02 || mapped.y > 1.02) {
-            openingLayer.fill(255, canvasPosition * 4, canvasPosition * 4 + 4);
+            targetLayer.fill(255, canvasPosition * 4, canvasPosition * 4 + 4);
             continue;
           }
           samplePlane(
@@ -474,7 +674,7 @@ export async function composeOurCategoryTemplateWithArtworks(
             planeHeight,
             mapped.x * (planeWidth - 1),
             mapped.y * (planeHeight - 1),
-            openingLayer,
+            targetLayer,
             canvasPosition * 4,
           );
         }
@@ -486,6 +686,7 @@ export async function composeOurCategoryTemplateWithArtworks(
     .composite([
       { input: openingLayer, raw: { width, height, channels: 4 } },
       { input: templateOverlay, raw: { width, height, channels: 4 } },
+      { input: gridLayer, raw: { width, height, channels: 4 } },
     ])
     .png()
     .toBuffer();

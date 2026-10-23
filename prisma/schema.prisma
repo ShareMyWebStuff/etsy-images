@@ -52,6 +52,7 @@ model EtsyListing {
   artworkOrientation            String                       @default("portrait") @db.VarChar(16)
   listingItem                   String?                      @db.VarChar(100)
   roomTheme                     String?                      @db.VarChar(200)
+  backgroundColour              String?                      @db.VarChar(7)
   personalisationHeaderText     String?                      @db.VarChar(200)
   personalisationFooterText     String?                      @db.VarChar(200)
   personalisationFontId         String?                      @db.VarChar(64)
@@ -86,6 +87,8 @@ model EtsyListing {
   thumbnailFileName             String?
   thumbnailOriginalFileName     String?
   thumbnailUpdatedAt            DateTime?
+  thumbnailWidthPixels          Int?
+  thumbnailHeightPixels         Int?
   isLocal                       Boolean                      @default(false)
   downloadedAt                  DateTime                     @default(now())
   updatedAt                     DateTime                     @updatedAt
@@ -360,6 +363,7 @@ model OurCategory {
   followedTemplateId   Int?
   itemCount            Int                        @default(1)
   roomTheme            String                     @db.VarChar(200)
+  backgroundColour     String                     @default("#F5F0E8") @db.VarChar(7)
   printsFrames         Boolean                    @default(true)
   customisePrints      Boolean                    @default(true)
   digitalDownload      Boolean                    @default(true)

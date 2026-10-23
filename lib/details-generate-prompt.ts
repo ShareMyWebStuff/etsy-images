@@ -11,6 +11,32 @@ export type DetailsGeneratePromptValues = {
   digitalFilesIncluded: string;
 };
 
+const PHYSICAL_PRINT_SIZE_LABELS: Record<string, string> = {
+  a5: 'A5 — 14.8 × 21 cm',
+  a4: 'A4 — 21 × 29.7 cm',
+  a3: 'A3 — 29.7 × 42 cm',
+  a2: 'A2 — 42 × 59.4 cm',
+  a1: 'A1 — 59.4 × 84.1 cm',
+  '5x7': '5 × 7 in',
+  '6x8': '6 × 8 in',
+  '8x10': '8 × 10 in',
+  '11x14': '11 × 14 in',
+  '12x16': '12 × 16 in',
+  '12x18': '12 × 18 in',
+  '16x20': '16 × 20 in',
+  '16x24': '16 × 24 in',
+  '18x24': '18 × 24 in',
+  '20x28': '20 × 28 in',
+  '20x30': '20 × 30 in',
+  '24x36': '24 × 36 in',
+  '30x40cm': '30 × 40 cm',
+  '50x70cm': '50 × 70 cm',
+};
+
+export function formatPhysicalPrintSizesForPrompt(sizes: ReadonlyArray<{ key: string; label: string }>) {
+  return sizes.map((size) => PHYSICAL_PRINT_SIZE_LABELS[size.key] ?? size.label).join(', ');
+}
+
 const DETAILS_GENERATE_PROMPT = `SECTION_NAME = "{{SECTION_NAME}}"
 LISTING_NAME = "{{LISTING_NAME}}"
 ANIMAL = "{{ANIMAL}}"
@@ -21,7 +47,7 @@ ORIENTATION = "portrait"
 PAPER_DETAILS = "{{PAPER_DETAILS}}"
 PRINT_SIZES = "{{PRINT_SIZES}}"
 FRAME_COLOURS = "{{FRAME_COLOURS}}"
-FRAME_DETAILS = ""
+FRAME_DETAILS = "Durable wooden frame with protective, shatter-resistant acrylic glazing; artwork supplied already fitted; hanging hardware included."
 BORDER_DETAILS = ""
 PERSONALISATION_DETAILS = "{{PERSONALISATION_DETAILS}}"
 DELIVERY_DETAILS = ""
@@ -169,10 +195,7 @@ Do not invent:
 * Sustainability certifications
 * Frame wood species
 * Solid-wood construction
-* Glass or acrylic glazing
 * Mounts
-* Hanging hardware
-* Ready-to-hang assembly
 * Gift wrapping
 
 Use FRAME_DETAILS and BORDER_DETAILS only when supplied.
@@ -183,7 +206,7 @@ This task concerns description copy only. It must not change, remove or contradi
 
 PHYSICAL OPTIONS
 
-Use ORIENTATION when describing the print orientation. Do not imply that landscape or other orientations are available unless supplied.
+Mention ORIENTATION only where it reads naturally and adds useful information. Do not imply that landscape or other orientations are available unless supplied.
 
 If PRINT_SIZES contains confirmed sizes:
 
@@ -243,33 +266,12 @@ If DIGITAL_LISTING_URL is empty:
 * Invite buyers to message the shop for the digital listing link.
 * Do not invent a listing URL.
 
-If DIGITAL_FILES_INCLUDED is supplied:
+Keep the physical listing's digital promotion concise:
 
-* Describe only that confirmed file inventory.
-* Preserve supplied file formats, dimensions and sizes accurately.
-* Do not add unsupported sizes or resolution claims.
-
-If DIGITAL_FILES_INCLUDED is empty:
-
-* Refer buyers to the digital listing for included files and sizes.
-* Do not automatically paste the old five-JPEG inventory.
-
-If DIGITAL_DELIVERY_DETAILS is supplied:
-
-* Explain that delivery method accurately.
-
-If DIGITAL_DELIVERY_DETAILS is empty:
-
-* Do not promise instant access, email delivery, a PDF link or a delivery deadline.
-
-Within the digital section only, explain:
-
-* The digital purchase supplies files rather than a physical print or frame.
-* Buyers arrange their own printing at home or through a print service.
-* Printing and framing costs are not included.
-* Included files, delivery details and usage terms are stated in the digital listing.
-
-Keep digital information concise.
+* Use no more than two short paragraphs.
+* Explain that the digital version is a separate purchase for buyers who want to arrange their own printing.
+* State that the digital purchase does not include a physical print or frame.
+* Do not include pixel dimensions, ratios, file inventories, DPI, licence terms or detailed digital-delivery instructions.
 
 TITLE
 
@@ -289,62 +291,77 @@ Create one Etsy title:
 
 Keep the title focused on physical prints even when DIGITAL_DOWNLOAD = Y. Mention digital availability in the description instead.
 
-DESCRIPTION FORMATTING
+DESCRIPTION FORMATTING AND STYLE
 
-Write approximately 350–550 words, or up to 650 words when digital details or personalisation instructions require more space.
+Write approximately 350–550 words. Avoid padding, repetitive adjectives, exaggerated claims and repeated product information.
 
-Avoid padding. Use short paragraphs and simple bullets.
+Write in warm, natural British English. Mention baby-shower, new-baby and children's birthday gifting naturally only when appropriate to the artwork and room theme.
 
-Use the exact section headings specified below, including matching emojis on both sides.
+Use only the sizes, frame finishes, personalisation options and product specifications supplied in the variables. Never invent missing details.
 
-Place each heading on its own line, with a blank line before and after it.
+Use the exact section headings specified below, including matching emojis on both sides. Place each heading on its own line with a blank line before and after it. Use emojis only in section headings.
 
-Use emojis only for section headings and the specified digital clarification. Keep body paragraphs and bullet points easy to read.
+Start with one warm, listing-specific sentence before the first heading:
 
-Start with this exact product-format statement:
+* Lead with ANIMAL_NAME and supported visual details from ANIMAL_DESCRIPTION.
+* Connect the design naturally to ROOM_THEME or a suitable child's room.
+* State that it is available as an unframed print or a framed print ready to hang.
+* Vary the wording naturally between listings rather than reusing a fixed opening sentence.
 
-Available as an unframed print or framed print—choose your preferred size and finish from the listing options.
-
-Then include the following sections in this order.
+Then include the following sections in this exact order.
 
 ✨ ABOUT THIS PRINT ✨
 
-Write a natural three-sentence introduction:
+Write exactly two short paragraphs:
 
-* Include the animal or listing subject.
-* Use ANIMAL_DESCRIPTION for supported visual details.
-* Connect the design to ROOM_THEME.
-* Include a relevant nursery, bedroom, playroom or gifting use.
-* Avoid invented design features or exaggerated promises.
+* First paragraph: describe the subject's verified appearance, character or pose from ANIMAL_DESCRIPTION and explain how it suits ROOM_THEME, a nursery, child's bedroom or playroom. Mention complementary décor only when it follows naturally from supplied colours.
+* Second paragraph: mention suitable baby-shower, new-baby, birthday or Christmas gifting naturally where appropriate. If PERSONALISATION_DETAILS is supplied, finish by explaining the available name or short-text personalisation. Omit every reference to personalisation when it is blank.
 
-🖼️ CHOOSE YOUR PRINT 🖼️
+🖼️ PRINT OPTIONS AND SIZES 🖼️
 
-Explain the available unframed and framed options.
+Explain that buyers can choose an unframed print for their own frame or a framed print in one of the finishes supplied by FRAME_COLOURS.
 
-List confirmed sizes and frame colours, or use the fallback wording defined above.
+State: “All measurements below are width × height and refer to the print size.”
 
-Mention ORIENTATION naturally.
+Group only the supplied PRINT_SIZES beneath these plain-text subheadings, omitting any empty group:
 
-Make it easy for buyers to identify the option they want.
+A-SERIES SIZES
+SIZES IN INCHES
+SIZES IN CENTIMETRES
+
+Formatting rules for sizes:
+
+* Include the supplied metric dimensions beside every A-series size.
+* Include an explicit “in” or “cm” unit with every numerical size.
+* Use “×” between dimensions.
+* Preserve supplied units; never treat similar metric and imperial sizes as interchangeable.
+* Use clear bullet points. The inch sizes may be grouped into readable rows of no more than three sizes.
+* If framed and unframed size availability differs in the supplied data, show separate lists and never imply every size is available in both formats.
+* Do not add, remove, convert or infer sizes.
+
+Tell the buyer to select an available size and print option from the combinations shown in the listing. Explain that the measurements refer to the paper print and a framed print's overall outside dimensions will be larger.
+
+Mention ORIENTATION only where it reads naturally and adds useful information.
+
+🎨 PAPER, FINISH AND FRAMING 🎨
+
+Write exactly two short paragraphs:
+
+* First paragraph: state that both unframed and framed prints are professionally printed on premium heavyweight paper using PAPER_DETAILS, with a smooth matte finish. Relate verified colours or illustrated details from ANIMAL_DESCRIPTION without claiming the finish is reflection-free or perfect in every lighting condition.
+* Second paragraph: state that framed prints use a durable wooden frame with protective, shatter-resistant acrylic glazing, arrive with the artwork already fitted, and include hanging hardware.
+
+Describe oak only as a frame finish. Never claim that an oak-finish frame is made from oak or name any frame wood species.
 
 📦 WHAT YOU WILL RECEIVE 📦
 
-Clearly explain:
+Clearly explain using two bullets tailored with ANIMAL_NAME:
 
 * Unframed option: one physical paper print in the selected size, without a frame.
-* Framed option: one physical print supplied in the selected frame and size.
-* The order includes one print of this design in the selected format.
-* Decorative props and other artwork shown in styling photographs are not included.
+* Framed option: one physical print supplied already fitted in the selected frame and size.
 
-Do not imply that all displayed sizes or frame options are included.
+Then state that decorative props and additional artwork shown in styling photographs are not included. Make clear that this is a physical-product listing. When DIGITAL_DOWNLOAD = Y, also clarify that digital files are not included with the physical purchase.
 
-🎨 PAPER AND FINISH 🎨
-
-Use PAPER_DETAILS.
-
-Add confirmed FRAME_DETAILS and BORDER_DETAILS if present.
-
-Make the product appealing without unsupported technical claims.
+Do not imply that all displayed sizes, frame options or multiple prints are included.
 
 🛒 HOW TO ORDER 🛒
 
@@ -352,8 +369,8 @@ Explain:
 
 1. Choose the available size.
 2. Choose the unframed or framed option and applicable frame finish.
-3. Add any personalisation only if it is offered.
-4. Check the selections and delivery address before checkout.
+3. When PERSONALISATION_DETAILS is supplied, tell the buyer to enter their wording in the listing's personalisation box and clearly identify the top and bottom text that are enabled.
+4. Check the selections, personalisation spelling and delivery address before checkout.
 
 Omit the personalisation step when it is not offered and renumber the steps accordingly.
 
@@ -381,37 +398,28 @@ Invite buyers to contact the shop through Etsy if they need help with an order o
 
 💡 GOOD TO KNOW 💡
 
-Explain:
-
-* A frame is included only with the framed option.
-* Colours may vary slightly between screens and the finished print.
-* Any size or cropping variation should be described only when confirmed.
-
-Do not repeat entire earlier sections.
+State concisely that colours may vary slightly between screens and the finished print. Mention size or cropping variation only when confirmed. Do not repeat the framing, paper or contents sections.
 
 Do not include a digital-file licence or prohibit resale of the purchased physical object.
 
-💻 DIGITAL VERSION ALSO AVAILABLE 💻
+💻 PREFER A DIGITAL DOWNLOAD? 💻
 
 Include this section only when DIGITAL_DOWNLOAD = Y.
 
-Follow all digital-switch rules above.
+Write no more than two short paragraphs. Explain that the same design is available through a separate digital listing for buyers arranging their own printing. If DIGITAL_LISTING_URL is empty, invite buyers to message the shop through Etsy for the link.
 
-Include this exact clarification within this section only:
+State that the digital download is purchased separately and does not include a physical print or frame. Do not include pixel dimensions, ratios, files, DPI or licence details here.
 
-🚨 PLEASE NOTE: THE DIGITAL VERSION IS A SEPARATE PURCHASE. NO PHYSICAL PRINT OR FRAME IS INCLUDED WITH THE DIGITAL VERSION. 🚨
-
-Then explain how to find or purchase the digital version, along with any confirmed file and delivery information.
-
-Do not place this warning at the beginning of the physical product description.
-
-When DIGITAL_DOWNLOAD = N, omit this entire section, including its heading and clarification.
+When DIGITAL_DOWNLOAD = N, omit this entire section and heading.
 
 ✨ EXPLORE MORE DESIGNS ✨
 
-Invite buyers to browse coordinating nursery prints, children’s room designs and gallery-wall ideas.
+Write one warm sentence inviting buyers to browse coordinating nursery prints, children's room designs or gallery-wall ideas related to ROOM_THEME.
 
-Include SHOP_URL exactly as a plain-text URL.
+Then write exactly:
+
+Browse CosyHousePrints:
+SHOP_URL
 
 ETSY SEARCH TAGS
 
@@ -475,7 +483,7 @@ Reopen all four saved text files and check:
 * No unsupported materials, sizes, frame features or delivery promises appear.
 * Optional blank values have not created invented details.
 * DIGITAL_DOWNLOAD = N produces no digital references.
-* DIGITAL_DOWNLOAD = Y produces the separate digital section and its exact clarification.
+* DIGITAL_DOWNLOAD = Y produces the short separate-purchase digital section without file specifications.
 * The digital version is not represented as automatically included with a physical order.
 * Every search tag contains fewer than 20 characters.
 * Search tags are distinct and relevant.
@@ -489,16 +497,16 @@ Reopen all four saved text files and check:
 Check that these headings appear exactly, in order:
 
 ✨ ABOUT THIS PRINT ✨
-🖼️ CHOOSE YOUR PRINT 🖼️
+🖼️ PRINT OPTIONS AND SIZES 🖼️
+🎨 PAPER, FINISH AND FRAMING 🎨
 📦 WHAT YOU WILL RECEIVE 📦
-🎨 PAPER AND FINISH 🎨
 🛒 HOW TO ORDER 🛒
 🚚 DELIVERY AND ORDER HELP 🚚
 💡 GOOD TO KNOW 💡
 
 If DIGITAL_DOWNLOAD = Y, the next heading must be:
 
-💻 DIGITAL VERSION ALSO AVAILABLE 💻
+💻 PREFER A DIGITAL DOWNLOAD? 💻
 
 The final heading must be:
 

@@ -49,6 +49,7 @@ describe('listing personalisation previews', () => {
       cropRegion: { x: 0.05805826175840784, y: 0, width: 0.8838834764831843, height: 1 },
       artworkPlacement: { x: 0.04, y: 0.0934136008177352, width: 0.92, height: 0.8131727983645296 },
       orientation: 'portrait',
+      backgroundColour: '#FAF8F4',
     });
     const metadata = await sharp(result.buffer).metadata();
     const corner = await sharp(result.buffer).extract({ left: 0, top: 0, width: 1, height: 1 }).raw().toBuffer();
@@ -59,7 +60,9 @@ describe('listing personalisation previews', () => {
 
     expect(metadata.width).toBe(987);
     expect(metadata.height).toBe(1400);
-    expect([...corner.subarray(0, 3)].every((channel) => channel > 245)).toBe(true);
+    expect(corner[0]).toBeGreaterThan(245);
+    expect(corner[1]).toBeGreaterThan(240);
+    expect(corner[2]).toBeGreaterThan(235);
     expect(centre[1]).toBeGreaterThan(100);
     expect(centre[0]).toBeLessThan(40);
     expect(centre[2]).toBeLessThan(40);

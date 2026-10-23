@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  centredArtworkPlacementForRatio,
   createListingPrintCropSettings,
+  DEFAULT_FOUR_BY_FIVE_ARTWORK_SCALE_BY_RATIO,
   defaultListingPrintCropDraft,
   defaultNativeListingPrintCropDraft,
   listingPrintCropDraftForSave,
@@ -9,6 +11,8 @@ import {
   moveDerivedPrintCrop,
   moveMainPrintCrop,
   parseCurrentListingPrintCropSettings,
+  printArtworkPlacementScale,
+  PRINT_CROP_RATIOS,
   resizeMainPrintCrop,
   scalePrintArtworkPlacement,
   validateListingPrintCropDraft,
@@ -84,14 +88,20 @@ describe('listing print crop geometry', () => {
     })).toBeNull();
   });
 
-  it('places a complete portrait 4:5 source at full paper width and moves it vertically', () => {
+  it('uses the configured default artwork scales for a portrait 4:5 source', () => {
     const draft = defaultNativeListingPrintCropDraft(4000, 5000);
     expect(draft.sourceRatio).toBe('4x5');
     expect(draft.regions['4x5']).toEqual({ x: 0, y: 0, width: 1, height: 1 });
-    expect(draft.placements?.['2x3']).toMatchObject({ x: 0, width: 1, height: 5 / 6 });
-    const moved = movePrintArtworkPlacement(draft.placements!['2x3'], 10, 10, 'portrait');
-    expect(moved.x).toBe(0);
-    expect(moved.width).toBe(1);
+    for (const ratio of PRINT_CROP_RATIOS) {
+      const fullSize = centredArtworkPlacementForRatio(4000, 5000, ratio.key, 'portrait');
+      expect(printArtworkPlacementScale(draft.placements![ratio.key], fullSize))
+        .toBeCloseTo(DEFAULT_FOUR_BY_FIVE_ARTWORK_SCALE_BY_RATIO[ratio.key]);
+    }
+    expect(draft.placements?.['2x3'].x).toBeCloseTo(0.01);
+    expect(draft.placements?.['2x3'].width).toBeCloseTo(0.98);
+    expect(draft.placements?.['2x3'].height).toBeCloseTo((5 / 6) * 0.98);
+    const moved = movePrintArtworkPlacement(draft.placements!['2x3'], 10, 10, 'portrait', true);
+    expect(moved.x + moved.width).toBeCloseTo(1);
     expect(moved.y + moved.height).toBeCloseTo(1);
     const source = { fileName: 'thumbnail.png', updatedAt: '2026-10-18T10:00:00.000Z', width: 4000, height: 5000 };
     const settings = createListingPrintCropSettings(draft, source);
@@ -99,10 +109,20 @@ describe('listing print crop geometry', () => {
     expect(settings.sourceRatio).toBe('4x5');
   });
 
+  it('uses the same configured defaults for a landscape 5:4 source', () => {
+    const draft = defaultNativeListingPrintCropDraft(5000, 4000, 'landscape');
+    expect(draft.sourceRatio).toBe('4x5');
+    for (const ratio of PRINT_CROP_RATIOS) {
+      const fullSize = centredArtworkPlacementForRatio(5000, 4000, ratio.key, 'landscape');
+      expect(printArtworkPlacementScale(draft.placements![ratio.key], fullSize))
+        .toBeCloseTo(DEFAULT_FOUR_BY_FIVE_ARTWORK_SCALE_BY_RATIO[ratio.key]);
+    }
+  });
+
   it('scales a 4:5 artwork proportionally and saves a free position inside each paper', () => {
     const draft = defaultNativeListingPrintCropDraft(4000, 5000);
-    const fullSize = draft.placements!['4x5'];
-    const scaled = scalePrintArtworkPlacement(fullSize, fullSize, 0.6);
+    const fullSize = centredArtworkPlacementForRatio(4000, 5000, '4x5', 'portrait');
+    const scaled = scalePrintArtworkPlacement(draft.placements!['4x5'], fullSize, 0.6);
     const moved = movePrintArtworkPlacement(scaled, 0.3, 0.2, 'portrait', true);
     draft.placements!['4x5'] = moved;
 

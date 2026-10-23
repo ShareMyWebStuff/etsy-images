@@ -8,19 +8,47 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { NodeHttpHandler } from '@smithy/node-http-handler';
 import sharp from 'sharp';
 import { ETSY_LISTINGS_DIRECTORY } from '@/lib/config';
 
 const bucket = process.env.ETSY_LISTINGS_S3_BUCKET ?? 'etsy-listings-216211142709-eu-west-2';
 const region = process.env.AWS_REGION ?? 'eu-west-2';
 if (!process.env.AWS_PROFILE && !process.env.AWS_ACCESS_KEY_ID) process.env.AWS_PROFILE = 'etsy-listings-app';
-const client = new S3Client({ region });
+const S3_REQUEST_TIMEOUT_MS = 240_000;
+const client = new S3Client({
+  region,
+  maxAttempts: 5,
+  requestHandler: new NodeHttpHandler({
+    connectionTimeout: 10_000,
+    requestTimeout: S3_REQUEST_TIMEOUT_MS,
+    socketTimeout: S3_REQUEST_TIMEOUT_MS,
+    throwOnRequestTimeout: true,
+  }),
+});
 const APP_PREVIEW_PREFIX = '.app-previews/';
 const APP_PREVIEW_MAX_SIZE = 512;
 const IMAGE_KEY_PATTERN = /\.(?:jpe?g|png|webp)$/i;
 
 function storageError(code: string, message: string) {
   return Object.assign(new Error(message), { code });
+}
+
+function isTimeoutError(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { name?: unknown; code?: unknown };
+  return candidate.name === 'TimeoutError' || candidate.code === 'ETIMEDOUT';
+}
+
+async function runS3Operation<T>(description: string, operation: () => Promise<T>) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      throw new Error(`S3 timed out while ${description}. Please try again.`, { cause: error });
+    }
+    throw error;
+  }
 }
 
 function keyFromPath(value: string) {
@@ -35,7 +63,10 @@ function keyFromPath(value: string) {
 
 async function objectExists(key: string) {
   try {
-    const result = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    const result = await runS3Operation(
+      `checking the stored file "${key}"`,
+      () => client.send(new HeadObjectCommand({ Bucket: bucket, Key: key })),
+    );
     return result;
   } catch (error) {
     const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
@@ -54,9 +85,15 @@ function previewKeyForKey(key: string) {
 
 async function readKey(key: string) {
   try {
-    const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const result = await runS3Operation(
+      `reading the stored file "${key}"`,
+      () => client.send(new GetObjectCommand({ Bucket: bucket, Key: key })),
+    );
     if (!result.Body) throw storageError('ENOENT', `S3 object not found: ${key}`);
-    return Buffer.from(await result.Body.transformToByteArray());
+    return Buffer.from(await runS3Operation(
+      `downloading the stored file "${key}"`,
+      () => result.Body!.transformToByteArray(),
+    ));
   } catch (error) {
     const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
     if (status === 404 || (error as { name?: string }).name === 'NoSuchKey') {
@@ -67,7 +104,10 @@ async function readKey(key: string) {
 }
 
 async function putKey(key: string, body: Buffer | Uint8Array) {
-  await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body }));
+  await runS3Operation(
+    `writing the stored file "${key}"`,
+    () => client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: body })),
+  );
 }
 
 async function createAppPreview(contents: Buffer | Uint8Array) {
@@ -184,12 +224,15 @@ export async function readdir(directoryPath: string, options?: { withFileTypes?:
 export async function unlink(filePath: string) {
   const key = keyFromPath(filePath);
   if (!await objectExists(key)) throw storageError('ENOENT', `S3 object not found: ${key}`);
-  await Promise.all([
-    client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })),
-    ...(isImageKey(key)
-      ? [client.send(new DeleteObjectCommand({ Bucket: bucket, Key: previewKeyForKey(key) }))]
-      : []),
-  ]);
+  await runS3Operation(
+    `deleting the stored file "${key}"`,
+    () => Promise.all([
+      client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })),
+      ...(isImageKey(key)
+        ? [client.send(new DeleteObjectCommand({ Bucket: bucket, Key: previewKeyForKey(key) }))]
+        : []),
+    ]),
+  );
 }
 
 export async function copyFile(sourcePath: string, destinationPath: string) {

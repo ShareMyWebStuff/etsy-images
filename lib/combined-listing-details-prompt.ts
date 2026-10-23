@@ -111,7 +111,7 @@ RECOMMENDED_PAPER = ${promptValue(values.recommendedPaper)}
 LICENCE_TYPE = ${promptValue(values.licenceType)}
 
 The authoritative variables above apply to both rule sets below and override any repeated input block.
-PRINT_SIZES contains only the enabled Etsy Product sizes.
+PRINT_SIZES contains only the enabled Etsy Product sizes, with explicit A-series dimensions and units supplied by the application.
 FRAME_COLOURS contains only enabled framed-print colours and never includes the No Frame option.
 ${giftMessageInstruction}
 Never include the gift-message section in the digital-download description.
@@ -229,9 +229,9 @@ Frame colours: [Use FRAME_COLOURS exactly]. Please check the listing options for
 
 [Clarify that the order contains one print and that styling props or other artwork are not included.]
 
-🎨 PAPER AND FINISH 🎨
+🎨 PAPER, FINISH AND FRAMING 🎨
 
-[Describe PAPER_DETAILS and relate the verified artwork qualities to an appropriate room without inventing colours.]
+[Write two paragraphs. First explain that both unframed and framed prints use PAPER_DETAILS with a smooth matte finish, relating verified colours or illustrated details from ANIMAL_DESCRIPTION. Then explain the buyer's-own-frame option and the enabled FRAME_COLOURS, and state that framed prints use a durable wooden frame with protective, shatter-resistant acrylic glazing, arrive with the artwork already fitted, and include hanging hardware.]
 
 🛒 HOW TO ORDER 🛒
 

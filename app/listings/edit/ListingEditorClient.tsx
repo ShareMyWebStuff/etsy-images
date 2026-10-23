@@ -67,8 +67,10 @@ const OVERVIEW_GENERATION_STAGES: Array<Pick<OverviewGenerationStage, 'key' | 'l
   { key: 'dropbox', label: 'Dropbox' },
 ];
 
-function initialOverviewGenerationStages(): OverviewGenerationStage[] {
-  return OVERVIEW_GENERATION_STAGES.map((stage) => ({ ...stage, status: 'pending', message: 'Waiting' }));
+function initialOverviewGenerationStages(includeDropbox: boolean): OverviewGenerationStage[] {
+  return OVERVIEW_GENERATION_STAGES
+    .filter((stage) => includeDropbox || stage.key !== 'dropbox')
+    .map((stage) => ({ ...stage, status: 'pending', message: 'Waiting' }));
 }
 
 type SortableListingImageProps = {
@@ -291,6 +293,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   const [listingItem, setListingItem] = useState(initialData?.listing.listingItem ?? '');
   const [groupSelection, setGroupSelection] = useState<string[]>(() => initialData?.groupItems.map((item) => item.id) ?? []);
   const [roomTheme, setRoomTheme] = useState(initialData?.listing.roomTheme ?? '');
+  const [backgroundColour, setBackgroundColour] = useState<string>(initialData?.listing.backgroundColour ?? '#F5F0E8');
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -356,6 +359,9 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   const listingDescriptionChanged = listingDescription.trim() !== data.listing.listingDescription;
   const listingItemChanged = listingItem.trim() !== data.listing.listingItem;
   const roomThemeChanged = roomTheme.trim() !== data.listing.roomTheme;
+  const normalizedBackgroundColour = backgroundColour.trim().toUpperCase();
+  const backgroundColourIsValid = /^#[0-9A-F]{6}$/.test(normalizedBackgroundColour);
+  const backgroundColourChanged = normalizedBackgroundColour !== data.listing.backgroundColour;
   const savedPersonalisationPromptSettings = {
     headerText: data.listing.personalisationHeaderText,
     footerText: data.listing.personalisationFooterText,
@@ -729,6 +735,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     setListingItem(nextData.listing.listingItem);
     setGroupSelection(nextData.groupItems.map((item) => item.id));
     setRoomTheme(nextData.listing.roomTheme);
+    setBackgroundColour(nextData.listing.backgroundColour);
     setPersonalisationPromptSettings({
       headerText: nextData.listing.personalisationHeaderText,
       footerText: nextData.listing.personalisationFooterText,
@@ -748,7 +755,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     const payload = (await response.json()) as EditorResponse;
 
     if (!response.ok) {
-      throw new Error(payload.error ?? fallbackMessage);
+      throw new Error(payload.error?.trim() || fallbackMessage);
     }
 
     applyFreshData(payload.data);
@@ -900,6 +907,23 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       await parseResponse(response, 'Unable to save the room theme.');
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the room theme.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function saveBackgroundColour() {
+    setError(null);
+    setBusyKey('background-colour');
+    try {
+      const response = await fetch('/api/shops/listings/editor/background-colour', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...context, backgroundColour }),
+      });
+      await parseResponse(response, 'Unable to save the background colour.');
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the background colour.');
     } finally {
       setBusyKey(null);
     }
@@ -1095,7 +1119,8 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     overviewActionRunning.current = true;
     setError(null);
     setOverviewGenerationError(null);
-    setOverviewGenerationStages(initialOverviewGenerationStages());
+    const isMultipleTemplate = data.template.templateType === 'multiple';
+    setOverviewGenerationStages(initialOverviewGenerationStages(!isMultipleTemplate));
     setOverviewGenerationItem(null);
     setBusyKey('generate-overview-all');
     let activeStage: OverviewGenerationStageKey = 'images';
@@ -1190,13 +1215,9 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       }
       setOverviewGenerationItem(null);
 
-      activeStage = 'dropbox';
-      updateStage('dropbox', 'running', data.template.templateType === 'multiple'
-        ? 'Confirming the source Dropbox links'
-        : 'Uploading files and creating the download instructions');
-      if (data.template.templateType === 'multiple') {
-        updateStage('dropbox', 'complete', 'Source Dropbox links were prepared with the grouped instruction PDF');
-      } else {
+      if (!isMultipleTemplate) {
+        activeStage = 'dropbox';
+        updateStage('dropbox', 'running', 'Uploading files and creating the download instructions');
         setOverviewGenerationItem('dropbox');
         const response = await fetch('/api/shops/listings/dropbox', {
           method: 'POST',
@@ -2229,12 +2250,12 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     const groupedChanged = JSON.stringify(groupSelection) !== JSON.stringify(data.groupItems.map((item) => item.id));
     const printableStatus = getPrintableDownloadStatus(data.files);
     const detailsRows = [
-      ['Create details', multiple || Boolean(data.listing.title.trim() && data.listing.description.trim())],
-      ['Print Title', multiple || Boolean(data.listing.title.trim())],
-      ['Print Description', multiple || Boolean(data.listing.description.trim())],
-      ['Print Quantity', multiple || (data.listing.quantity ?? 0) > 0],
-      ['Digital Download Title', multiple || Boolean(data.listing.digitalTitle.trim())],
-      ['Digital Download Description', multiple || Boolean(data.listing.digitalDescription.trim())],
+      ['Create details', Boolean(data.listing.title.trim() && data.listing.description.trim())],
+      ['Print Title', Boolean(data.listing.title.trim())],
+      ['Print Description', Boolean(data.listing.description.trim())],
+      ['Print Quantity', (data.listing.quantity ?? 0) > 0],
+      ['Digital Download Title', Boolean(data.listing.digitalTitle.trim())],
+      ['Digital Download Description', Boolean(data.listing.digitalDescription.trim())],
       ['Digital Download Quantity', (data.listing.digitalQuantity ?? 0) > 0],
       ['Etsy SKU', Boolean(data.listing.etsySku.trim())],
       ['Primary Colour', Boolean(data.listing.primaryColour.trim())],
@@ -2273,6 +2294,40 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 )}
               </div>
             ))}
+          </div>
+          <div className="grid max-w-sm gap-2 border-t pt-4">
+            <label className="text-sm font-medium" htmlFor="listing-background-colour">Background Colour</label>
+            <div className="flex items-center gap-2">
+              <Input
+                type="color"
+                aria-label="Choose Background Colour"
+                className="h-10 w-14 cursor-pointer p-1"
+                value={backgroundColourIsValid ? normalizedBackgroundColour : data.listing.backgroundColour}
+                onChange={(event) => setBackgroundColour(event.target.value.toUpperCase())}
+                disabled={busyKey !== null}
+              />
+              <Input
+                id="listing-background-colour"
+                value={backgroundColour}
+                maxLength={7}
+                placeholder="#F5F0E8"
+                spellCheck={false}
+                onChange={(event) => setBackgroundColour(event.target.value.toUpperCase())}
+                disabled={busyKey !== null}
+                aria-invalid={!backgroundColourIsValid}
+              />
+            </div>
+            {!backgroundColourIsValid ? <p className="text-xs text-destructive">Enter a six-digit hex colour in the format #RRGGBB.</p> : null}
+            <p className="text-xs text-muted-foreground">
+              {data.listing.backgroundColourInherited
+                ? `Inherited from ${data.template?.name ?? 'the assigned template'}.`
+                : 'Overridden for this listing.'}
+            </p>
+            <div className="flex justify-end">
+              <Button type="button" size="sm" onClick={() => void saveBackgroundColour()} disabled={busyKey !== null || !backgroundColourIsValid || !backgroundColourChanged}>
+                {busyKey === 'background-colour' ? 'Saving...' : 'Save Background Colour'}
+              </Button>
+            </div>
           </div>
           {data.template?.customisePrints ? <div className="grid gap-3 border-t pt-4">
             <p className="text-sm text-muted-foreground">
@@ -2367,7 +2422,11 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h3 className="font-semibold">Thumbnail</h3>
-                <p className="text-sm text-muted-foreground">Upload the source artwork used by this template.</p>
+                <div className="grid gap-1 text-sm text-muted-foreground">
+                  <p>Upload the source artwork used by this template.</p>
+                  <p>A ratio of 4:5 or 5:4 will have a transparent background.</p>
+                  <p>A ratio of 2:3 or 3:2 will be clipped down to the sizes.</p>
+                </div>
               </div>
               <div className="grid w-40 gap-2">
                 <Button type="button" size="sm" variant="outline" onClick={() => setPrintCropsOpen(true)} disabled={busyKey !== null || !data.thumbnail}>
@@ -2410,13 +2469,27 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 </Button>
               </div>
             </div>
-            {data.thumbnail ? <div className="grid w-48 gap-2">
+            {data.thumbnail ? <div className="flex flex-wrap items-start gap-4">
               <div className="group relative h-48 w-48 overflow-hidden rounded-lg border bg-muted">
                 <img src={getThumbnailUrl(true)} alt={data.thumbnail.originalFileName ?? 'Thumbnail'} className="h-full w-full object-contain" />
                 <Button type="button" variant="destructive" size="icon" className="absolute bottom-2 right-2 h-8 w-8" onClick={() => setDeleteThumbnailOpen(true)} disabled={busyKey !== null} aria-label="Delete thumbnail">
                   <Trash2 className="h-4 w-4" aria-hidden="true" />
                 </Button>
               </div>
+              <dl className="grid min-w-48 gap-3 rounded-lg border bg-muted/30 p-4 text-sm">
+                <div className="grid gap-1">
+                  <dt className="font-medium text-muted-foreground">Width</dt>
+                  <dd className="tabular-nums">{data.thumbnail.widthPixels ? `${data.thumbnail.widthPixels.toLocaleString()} px` : 'Unavailable'}</dd>
+                </div>
+                <div className="grid gap-1">
+                  <dt className="font-medium text-muted-foreground">Height</dt>
+                  <dd className="tabular-nums">{data.thumbnail.heightPixels ? `${data.thumbnail.heightPixels.toLocaleString()} px` : 'Unavailable'}</dd>
+                </div>
+                <div className="grid gap-1">
+                  <dt className="font-medium text-muted-foreground">Ratio</dt>
+                  <dd>{data.thumbnail.ratio === '2x3' ? '2:3' : data.thumbnail.ratio === '4x5' ? '4:5' : 'Other'}</dd>
+                </div>
+              </dl>
             </div> : <label className="flex min-h-32 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
               <Upload className="h-5 w-5" aria-hidden="true" />
               Choose thumbnail image
@@ -2517,10 +2590,10 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 {(data.template?.imageTemplates.length ?? 0) === 0 ? <TableRow><TableCell colSpan={3} className="text-muted-foreground">No image templates configured.</TableCell></TableRow> : null}
 
                 <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Details</TableCell></TableRow>
-                {detailsRows.map(([label, created], index) => <TableRow key={label}><TableCell>{label}</TableCell><TableCell>{status(created, stageStatus('details') === 'running')}</TableCell><TableCell className="text-right">{index === 0 && !multiple ? <Button type="button" size="sm" variant="outline" onClick={generateOverviewDetails} disabled={busyKey !== null || !data.thumbnail}>{busyKey === 'generate-overview-details' ? 'Running...' : 'Run'}</Button> : null}</TableCell></TableRow>)}
+                {detailsRows.map(([label, created], index) => <TableRow key={label}><TableCell>{label}</TableCell><TableCell>{status(created, stageStatus('details') === 'running')}</TableCell><TableCell className="text-right">{index === 0 ? <Button type="button" size="sm" variant="outline" onClick={generateOverviewDetails} disabled={busyKey !== null || (multiple ? data.groupItems.length !== requiredItems : !data.thumbnail)}>{busyKey === 'generate-overview-details' ? 'Running...' : 'Run'}</Button> : null}</TableCell></TableRow>)}
 
                 <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Tags</TableCell></TableRow>
-                <TableRow><TableCell>Add tags</TableCell><TableCell>{status(multiple || data.tags.length > 0, stageStatus('details') === 'running')}</TableCell><TableCell /></TableRow>
+                <TableRow><TableCell>Add tags</TableCell><TableCell>{status(data.tags.length > 0, stageStatus('details') === 'running')}</TableCell><TableCell /></TableRow>
 
                 <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Digital Downloads</TableCell></TableRow>
                 {!multiple ? <>{printableStatus.items.map((item) => <TableRow key={item.key}><TableCell>{item.label}</TableCell><TableCell>{status(item.created, overviewGenerationItem === `download-${item.key}`)}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generatePrintableDownload(item.key)} disabled={busyKey !== null || !data.thumbnail}>Run</Button></TableCell></TableRow>)}
@@ -4162,6 +4235,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
         context={context}
         listingName={data.listing.listingItem || data.listing.localDirectoryName || data.listing.title}
         artworkOptions={mockupTesterArtworkOptions}
+        initialBackgroundColour={data.listing.backgroundColour}
       />
 
       <Dialog

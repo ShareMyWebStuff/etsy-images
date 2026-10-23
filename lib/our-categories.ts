@@ -4,9 +4,15 @@ import { Prisma, type OurCategoryImageTemplate } from '@prisma/client';
 import { imageSize } from 'image-size';
 import sharp from 'sharp';
 
+import {
+  DEFAULT_ARTWORK_BACKGROUND_COLOUR,
+  normalizeArtworkBackgroundColour,
+  validateArtworkBackgroundColour,
+  type ArtworkBackgroundColour,
+} from '@/lib/artwork-background-colours';
 import { ETSY_LISTINGS_DIRECTORY } from '@/lib/config';
 import { createFontShowcaseImage, FONT_SHOWCASE_HEIGHT, FONT_SHOWCASE_WIDTH } from '@/lib/font-showcase-image';
-import { ETSY_PRODUCT_FRAMES, ETSY_PRODUCT_SIZES } from '@/lib/listing-products';
+import { ETSY_PRODUCT_FRAMES, ETSY_PRODUCT_SIZES, type EtsyProductSizeKey } from '@/lib/listing-products';
 import {
   registerEtsySection,
   type EtsySectionUsage,
@@ -17,8 +23,8 @@ import {
   validateOurCategoryTemplatePersonalisation,
 } from '@/lib/our-category-template-personalisation';
 import {
-  composeOurCategoryTemplate,
   composeOurCategoryTemplateWithArtworks,
+  remapTemplateOpeningRegionImageItem,
   validateTemplateOpeningCorners,
   validateTemplateOpeningRegions,
   type TemplateOpeningCorners,
@@ -37,7 +43,9 @@ import {
 import type { PrintableDownloadRatio } from '@/lib/printable-download-specs';
 import type { ListingCustomisationSettings } from '@/lib/listing-customisation';
 import { createListingPersonalisationPreview } from '@/lib/listing-personalisation-preview';
-import type { ListingPrintCropSettings } from '@/lib/listing-print-crops';
+import { removeListingImages } from '@/lib/listing-image-reset';
+import { getListingDirectoryPath } from '@/lib/local-shop-directory';
+import type { ListingArtworkOrientation, ListingPrintCropSettings } from '@/lib/listing-print-crops';
 import { mkdir, readFile, readImagePreview, rm, unlink, writeFile } from '@/lib/s3-listing-storage';
 
 const TEMPLATE_DIRECTORY = 'EtsyListingTemplates';
@@ -54,8 +62,25 @@ const CONTENT_TYPES: Record<string, string> = {
 const SIZE_KEYS = ETSY_PRODUCT_SIZES.map(({ key }) => key);
 const FRAME_KEYS = ETSY_PRODUCT_FRAMES.map(({ key }) => key);
 const MULTIPLE_ITEM_COUNTS = [3, 6, 12] as const;
+const TEMPLATE_PREVIEW_SIZE_BY_RATIO: Record<PrintableDownloadRatio, EtsyProductSizeKey> = {
+  'iso-a1': 'a5',
+  '2x3': '12x18',
+  '3x4': '6x8',
+  '4x5': '8x10',
+  '5x7': '5x7',
+  '11x14': '11x14',
+};
 
 export type OurTemplateType = 'single' | 'multiple';
+
+export type OurCategoryImageTemplateDeletionImpact = {
+  templateId: string;
+  templateType: OurTemplateType;
+  dependentTemplateImageCount: number;
+  generatedListingImageCount: number;
+  affectedListingCount: number;
+  requiresCascade: boolean;
+};
 
 export type OurCategoryFormValues = {
   name: string;
@@ -63,6 +88,7 @@ export type OurCategoryFormValues = {
   followedTemplateId: number | null;
   itemCount: number;
   roomTheme: string;
+  backgroundColour: ArtworkBackgroundColour;
   printsFrames: boolean;
   customisePrints: boolean;
   digitalDownload: boolean;
@@ -152,6 +178,7 @@ export function defaultOurCategoryValues(templateType: OurTemplateType = 'single
     followedTemplateId: null,
     itemCount: multiple ? 3 : 1,
     roomTheme: '',
+    backgroundColour: DEFAULT_ARTWORK_BACKGROUND_COLOUR,
     printsFrames: !multiple,
     customisePrints: !multiple,
     digitalDownload: !multiple,
@@ -214,6 +241,7 @@ function validateCategoryInput(value: unknown): OurCategoryFormValues {
     throw new Error('Choose 3, 6, or 12 items.');
   }
   const roomTheme = typeof value.roomTheme === 'string' ? value.roomTheme.trim() : '';
+  const backgroundColour = validateArtworkBackgroundColour(value.backgroundColour);
   if (!name) throw new Error('Enter a template name.');
   if (name.length > 100) throw new Error('Template Name must be 100 characters or fewer.');
   if (!roomTheme) throw new Error('Enter a Room Theme.');
@@ -235,6 +263,7 @@ function validateCategoryInput(value: unknown): OurCategoryFormValues {
     followedTemplateId,
     itemCount,
     roomTheme,
+    backgroundColour,
     printsFrames,
     customisePrints,
     digitalDownload,
@@ -447,7 +476,18 @@ function calibrationFromForm(
     throw new Error('The artwork regions are invalid.');
   }
   const openingRegions = validateTemplateOpeningRegions(rawRegions, imageWidth, imageHeight);
+  if (openingRegions.filter((region) => region.grid).length > 4) {
+    throw new Error('New image templates can contain no more than four grid areas.');
+  }
+  for (const region of openingRegions) {
+    for (const [cellIndex, cell] of (region.grid?.cells ?? []).entries()) {
+      if (cell.imageItemNumber > itemCount) {
+        throw new Error(`Choose an image item number from 1 to ${itemCount} for ${region.name}, Image ${cellIndex + 1}.`);
+      }
+    }
+  }
   const normalizedRegions = templateType === 'multiple' ? openingRegions.map((region, index) => {
+    if (region.grid) return region;
     if (!region.imageItemNumber || region.imageItemNumber > itemCount) {
       throw new Error(`Choose an image item number from 1 to ${itemCount} for ${region.name}.`);
     }
@@ -522,6 +562,7 @@ type OurCategorySettingsRow = {
   followedTemplateId: number | null;
   itemCount: number;
   roomTheme: string;
+  backgroundColour: string | null;
   printsFrames: boolean | number;
   customisePrints: boolean | number;
   digitalDownload: boolean | number;
@@ -536,7 +577,7 @@ type OurCategorySettingsRow = {
 
 async function getOurCategorySettings(categoryId: number) {
   const rows = await prisma.$queryRaw<OurCategorySettingsRow[]>`
-    SELECT id, shopId, name, templateType, followedTemplateId, itemCount, roomTheme,
+    SELECT id, shopId, name, templateType, followedTemplateId, itemCount, roomTheme, backgroundColour,
            printsFrames, customisePrints, digitalDownload, customTop, customBottom,
            printFrameSectionId, customisedSectionId, downloadSectionId, sizes, frames
     FROM our_categories
@@ -553,6 +594,7 @@ function settingsRowValues(row: OurCategorySettingsRow): OurCategoryFormValues {
     followedTemplateId: row.followedTemplateId,
     itemCount: row.templateType === 'multiple' && MULTIPLE_ITEM_COUNTS.includes(row.itemCount as 3 | 6 | 12) ? row.itemCount : 1,
     roomTheme: row.roomTheme,
+    backgroundColour: normalizeArtworkBackgroundColour(row.backgroundColour),
     printsFrames: Boolean(row.printsFrames),
     customisePrints: Boolean(row.customisePrints),
     digitalDownload: Boolean(row.digitalDownload),
@@ -568,7 +610,7 @@ function settingsRowValues(row: OurCategorySettingsRow): OurCategoryFormValues {
 
 async function getSingleTemplateOptions(shopId: number, excludingId?: number) {
   const rows = await prisma.$queryRaw<OurCategorySettingsRow[]>`
-    SELECT id, shopId, name, templateType, followedTemplateId, itemCount, roomTheme,
+    SELECT id, shopId, name, templateType, followedTemplateId, itemCount, roomTheme, backgroundColour,
            printsFrames, customisePrints, digitalDownload, customTop, customBottom,
            printFrameSectionId, customisedSectionId, downloadSectionId, sizes, frames
     FROM our_categories
@@ -597,8 +639,7 @@ async function resolvedImageTemplateView(template: OurCategoryImageTemplate, vis
       useOnCustomised: template.useOnCustomised,
       useOnDigital: template.useOnDigital,
       openingRegions: sourceView.openingRegions.map((region) => ({
-        ...region,
-        imageItemNumber: link.linkedImageItemNumber!,
+        ...remapTemplateOpeningRegionImageItem(region, link.linkedImageItemNumber!),
         topText: sourceView.topText,
         bottomText: sourceView.bottomText,
         fontId: sourceView.fontId,
@@ -827,6 +868,7 @@ export async function createOurCategory(input: unknown) {
         shopId: shop.id,
         name: values.name,
         roomTheme: values.roomTheme,
+        backgroundColour: values.backgroundColour,
         printsFrames: values.printsFrames,
         customisePrints: values.customisePrints,
         digitalDownload: values.digitalDownload,
@@ -877,6 +919,7 @@ export async function updateOurCategory(categoryId: string, input: unknown) {
       data: {
         name: values.name,
         roomTheme: values.roomTheme,
+        backgroundColour: values.backgroundColour,
         printsFrames: values.printsFrames,
         customisePrints: values.customisePrints,
         digitalDownload: values.digitalDownload,
@@ -887,6 +930,17 @@ export async function updateOurCategory(categoryId: string, input: unknown) {
         frames: values.frames as Prisma.InputJsonValue,
       },
     });
+    if (values.backgroundColour !== settingsRowValues(existingSettings).backgroundColour) {
+      await transaction.etsyListing.updateMany({
+        where: { ourCategoryId: id, backgroundColour: null },
+        data: {
+          imagesChanged: true,
+          downloadsChanged: true,
+          downloadsRevision: { increment: 1 },
+          lastLocalChangeAt: new Date(),
+        },
+      });
+    }
     await saveOurCategoryEtsySectionIds(transaction as Pick<typeof prisma, '$executeRaw'>, id, values);
     await saveOurTemplateMetadata(transaction as Pick<typeof prisma, '$executeRaw'>, id, values);
     if (!values.printsFrames || !values.customisePrints || !values.digitalDownload) {
@@ -1241,6 +1295,20 @@ export async function copyOurCategoryImageTemplate(
   ]);
   if (!sourceView.imageWidth || !sourceView.imageHeight) throw new Error('Edit and save the source image template before copying it.');
   const openingRegions = sourceView.openingRegions.map((region) => {
+    if (region.grid) {
+      return {
+        ...region,
+        grid: {
+          ...region.grid,
+          cells: region.grid.cells.map((cell, cellIndex) => {
+            if (cell.imageItemNumber > sourceImageCount) {
+              throw new Error(`Edit the source image template and choose an image item number from 1 to ${sourceImageCount} for ${region.name}, Image ${cellIndex + 1}.`);
+            }
+            return { ...cell, imageItemNumber: imageItemNumbers[cell.imageItemNumber - 1] };
+          }),
+        },
+      };
+    }
     const sourceImageItemNumber = sourceSettings.templateType === 'multiple' ? region.imageItemNumber : 1;
     if (!sourceImageItemNumber || sourceImageItemNumber > sourceImageCount) {
       throw new Error(`Edit the source image template and choose an image item number from 1 to ${sourceImageCount} for ${region.name}.`);
@@ -1301,6 +1369,89 @@ export async function copyOurCategoryImageTemplate(
       topText: '',
       bottomText: '',
       fontId: DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID,
+      displayFonts: sourceView.displayFonts,
+      borderEnabled: sourceView.borderEnabled,
+      borderSizePercent: sourceView.borderSizePercent,
+    });
+  } catch (error) {
+    if (createdId) await prisma.ourCategoryImageTemplate.delete({ where: { id: createdId } }).catch(() => undefined);
+    await unlink(imagePath).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function duplicateOurCategoryImageTemplate(templateId: string) {
+  const sourceId = Number(templateId);
+  if (!Number.isSafeInteger(sourceId) || sourceId <= 0) throw new Error('Choose a valid image template.');
+  const source = await prisma.ourCategoryImageTemplate.findUnique({ where: { id: sourceId } });
+  if (!source) throw new Error('Image template not found.');
+
+  const [sourceView, storedSource, existingTemplates] = await Promise.all([
+    resolvedImageTemplateView(source),
+    resolvedStoredImageTemplate(source),
+    prisma.ourCategoryImageTemplate.findMany({
+      where: { categoryId: source.categoryId },
+      select: { name: true },
+    }),
+  ]);
+  if (!sourceView.imageWidth || !sourceView.imageHeight) {
+    throw new Error('Edit and save the image template before making a copy.');
+  }
+
+  const existingNames = new Set(existingTemplates.map(({ name }) => name.toLocaleLowerCase()));
+  const requestedName = `Copied from ${source.name}`;
+  const baseName = requestedName.slice(0, 100);
+  let name = baseName;
+  for (let suffix = 2; existingNames.has(name.toLocaleLowerCase()); suffix += 1) {
+    const suffixText = ` ${suffix}`;
+    name = `${baseName.slice(0, 100 - suffixText.length)}${suffixText}`;
+  }
+
+  const extension = path.extname(storedSource.originalFileName) || path.extname(storedSource.imagePath) || '.png';
+  const directory = path.join(ETSY_LISTINGS_DIRECTORY, TEMPLATE_DIRECTORY, String(source.categoryId));
+  const imagePath = path.join(directory, `${randomUUID()}${extension.toLocaleLowerCase()}`);
+  await mkdir(directory, { recursive: true });
+  await writeFile(imagePath, await readFile(storedSource.imagePath));
+
+  let createdId: number | null = null;
+  try {
+    const created = await prisma.ourCategoryImageTemplate.create({
+      data: {
+        categoryId: source.categoryId,
+        name,
+        description: source.description,
+        imagePath,
+        originalFileName: storedSource.originalFileName,
+        contentType: storedSource.contentType,
+        sizeBytes: storedSource.sizeBytes,
+        displayFonts: sourceView.displayFonts,
+        borderEnabled: sourceView.borderEnabled,
+        borderSizePercent: sourceView.borderSizePercent,
+        useOnPrints: sourceView.useOnPrints,
+        useOnCustomised: sourceView.useOnCustomised,
+        useOnDigital: sourceView.useOnDigital,
+      },
+    });
+    createdId = created.id;
+    await appendTemplatePosition(created.id, source.categoryId);
+    await saveTemplateCalibration(
+      prisma,
+      created.id,
+      sourceView.imageWidth,
+      sourceView.imageHeight,
+      sourceView.openingRegions,
+      sourceView.topText,
+      sourceView.bottomText,
+      sourceView.fontId,
+    );
+    return templateView({
+      ...created,
+      imageWidth: sourceView.imageWidth,
+      imageHeight: sourceView.imageHeight,
+      openingRegions: sourceView.openingRegions,
+      topText: sourceView.topText,
+      bottomText: sourceView.bottomText,
+      fontId: sourceView.fontId,
       displayFonts: sourceView.displayFonts,
       borderEnabled: sourceView.borderEnabled,
       borderSizePercent: sourceView.borderSizePercent,
@@ -1415,34 +1566,177 @@ export async function getOurCategoryTemplateImage(templateId: string, preview = 
   };
 }
 
-export async function deleteOurCategoryImageTemplate(templateId: string) {
+async function imageTemplateDeletionPlan(templateId: string) {
   const id = Number(templateId);
   if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid image template id.');
   const template = await prisma.ourCategoryImageTemplate.findUnique({
     where: { id },
-    select: { id: true, imagePath: true },
+    select: {
+      id: true,
+      imagePath: true,
+      linkedSourceImageTemplateId: true,
+      category: { select: { templateType: true } },
+    },
   });
   if (!template) throw new Error('Image template not found.');
-  const [link, linkedUses] = await Promise.all([
-    templateLink(id),
-    prisma.$queryRaw<Array<{ count: bigint }>>`
-      SELECT COUNT(*) AS count
-      FROM our_category_image_templates
-      WHERE linkedSourceImageTemplateId = ${id}
-    `,
-  ]);
-  if (Number(linkedUses[0]?.count ?? 0) > 0) {
-    throw new Error('This image template cannot be deleted while another template links to it.');
+
+  const dependentTemplates: Array<{ id: number }> = [];
+  const visitedIds = new Set([id]);
+  let sourceIds = [id];
+  while (sourceIds.length > 0) {
+    const linkedTemplates = await prisma.ourCategoryImageTemplate.findMany({
+      where: { linkedSourceImageTemplateId: { in: sourceIds } },
+      select: { id: true },
+    });
+    sourceIds = linkedTemplates
+      .map(({ id: linkedId }) => linkedId)
+      .filter((linkedId) => {
+        if (visitedIds.has(linkedId)) return false;
+        visitedIds.add(linkedId);
+        dependentTemplates.push({ id: linkedId });
+        return true;
+      });
   }
-  await prisma.ourCategoryImageTemplate.delete({ where: { id } });
-  if (!link?.linkedSourceImageTemplateId) {
-    try {
-      await rm(template.imagePath, { force: true });
-    } catch (error) {
-      console.error(`Unable to remove S3 image for template ${id}:`, error);
+
+  const affectedTemplateIds = [id, ...dependentTemplates.map(({ id: dependentId }) => dependentId)];
+  const listingImages = await prisma.etsyListingImage.findMany({
+    where: { ourCategoryImageTemplateId: { in: affectedTemplateIds } },
+    select: {
+      id: true,
+      listingId: true,
+      localFileName: true,
+      listing: {
+        select: {
+          id: true,
+          shopId: true,
+          localDirectoryName: true,
+          subSection: {
+            select: {
+              name: true,
+              shopSection: {
+                select: {
+                  title: true,
+                  shop: { select: { etsyShopId: true, shopName: true, title: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const affectedListingIds = [...new Set(listingImages.map(({ listingId }) => listingId))];
+  const templateType: OurTemplateType = template.category.templateType === 'multiple' ? 'multiple' : 'single';
+
+  return {
+    template,
+    dependentTemplates,
+    affectedTemplateIds,
+    listingImages,
+    affectedListingIds,
+    impact: {
+      templateId: String(id),
+      templateType,
+      dependentTemplateImageCount: dependentTemplates.length,
+      generatedListingImageCount: listingImages.length,
+      affectedListingCount: affectedListingIds.length,
+      requiresCascade: dependentTemplates.length > 0 || listingImages.length > 0,
+    } satisfies OurCategoryImageTemplateDeletionImpact,
+  };
+}
+
+export async function getOurCategoryImageTemplateDeletionImpact(templateId: string) {
+  return (await imageTemplateDeletionPlan(templateId)).impact;
+}
+
+type ImageRemovalGroup = {
+  directoryPath: string;
+  images: Array<{ localFileName: string | null }>;
+};
+
+async function removeImageGroups(
+  groups: readonly ImageRemovalGroup[],
+  index: number,
+  deleteDatabaseRows: () => Promise<void>,
+): Promise<void> {
+  const group = groups[index];
+  if (!group) {
+    await deleteDatabaseRows();
+    return;
+  }
+  await removeListingImages(group.directoryPath, group.images, () => (
+    removeImageGroups(groups, index + 1, deleteDatabaseRows)
+  ));
+}
+
+export async function deleteOurCategoryImageTemplate(templateId: string) {
+  const plan = await imageTemplateDeletionPlan(templateId);
+  const fallbackShopIds = [...new Set(plan.listingImages.flatMap(({ listing }) => (
+    listing.subSection?.shopSection.shop || !/^\d+$/.test(listing.shopId) ? [] : [BigInt(listing.shopId)]
+  )))];
+  const fallbackShops = fallbackShopIds.length > 0
+    ? await prisma.etsyShop.findMany({
+      where: { etsyShopId: { in: fallbackShopIds } },
+      select: { etsyShopId: true, shopName: true, title: true },
+    })
+    : [];
+  const fallbackShopById = new Map(fallbackShops.map((shop) => [shop.etsyShopId.toString(), shop]));
+  const removalGroupsByPath = new Map<string, ImageRemovalGroup>();
+
+  for (const image of plan.listingImages) {
+    if (!image.localFileName) continue;
+    const subSection = image.listing.subSection;
+    const section = subSection?.shopSection;
+    const shop = section?.shop ?? fallbackShopById.get(image.listing.shopId);
+    if (!subSection || !section || !shop) {
+      throw new Error(`The storage location for listing ${image.listing.id} could not be resolved. No images were deleted.`);
     }
+    const directoryPath = getListingDirectoryPath(
+      shop.shopName ?? shop.title ?? `Shop ${shop.etsyShopId}`,
+      section.title,
+      subSection.name,
+      image.listing.localDirectoryName ?? `Listing-${image.listing.id}`,
+    );
+    const group = removalGroupsByPath.get(directoryPath) ?? { directoryPath, images: [] };
+    group.images.push({ localFileName: image.localFileName });
+    removalGroupsByPath.set(directoryPath, group);
   }
-  return String(template.id);
+
+  const removalGroups = [...removalGroupsByPath.values()];
+  if (!plan.template.linkedSourceImageTemplateId) {
+    removalGroups.push({
+      directoryPath: path.dirname(plan.template.imagePath),
+      images: [{ localFileName: path.basename(plan.template.imagePath) }],
+    });
+  }
+
+  await removeImageGroups(removalGroups, 0, async () => {
+    await prisma.$transaction(async (transaction) => {
+      if (plan.listingImages.length > 0) {
+        await transaction.etsyListingImage.deleteMany({
+          where: { id: { in: plan.listingImages.map(({ id: imageId }) => imageId) } },
+        });
+      }
+      if (plan.affectedListingIds.length > 0) {
+        await transaction.etsyListing.updateMany({
+          where: { id: { in: plan.affectedListingIds } },
+          data: { imagesChanged: true, lastLocalChangeAt: new Date() },
+        });
+      }
+      if (plan.dependentTemplates.length > 0) {
+        await transaction.ourCategoryImageTemplate.deleteMany({
+          where: { id: { in: plan.dependentTemplates.map(({ id: dependentId }) => dependentId) } },
+        });
+      }
+      await transaction.ourCategoryImageTemplate.delete({ where: { id: plan.template.id } });
+    });
+  });
+
+  return {
+    deletedId: String(plan.template.id),
+    deletedTemplateIds: plan.affectedTemplateIds.map(String),
+    deletedListingImageCount: plan.listingImages.length,
+  };
 }
 
 export async function reorderOurCategoryImageTemplates(categoryId: string, order: unknown) {
@@ -1489,11 +1783,17 @@ export async function testOurCategoryImageTemplate(templateId: string, files: Fi
   }
   const openingRegions = resolvedView.openingRegions;
   const requiredImageItemNumbers = categoryValues.templateType === 'multiple'
-    ? [...new Set(openingRegions.map((region) => {
+    ? [...new Set(openingRegions.flatMap((region) => {
+      if (region.grid) return region.grid.cells.map((cell, cellIndex) => {
+        if (cell.imageItemNumber > categoryValues.itemCount) {
+          throw new Error(`Edit this image template and choose an image item number from 1 to ${categoryValues.itemCount} for ${region.name}, Image ${cellIndex + 1}.`);
+        }
+        return cell.imageItemNumber;
+      });
       if (!region.imageItemNumber || region.imageItemNumber > categoryValues.itemCount) {
         throw new Error(`Edit this image template and choose an image item number from 1 to ${categoryValues.itemCount} for ${region.name}.`);
       }
-      return region.imageItemNumber;
+      return [region.imageItemNumber];
     }))].sort((first, second) => first - second)
     : [1];
   if (requiredImageItemNumbers.length === 0) {
@@ -1524,12 +1824,16 @@ export async function renderOurCategoryImageTemplate(
   listingCustomisationByItemNumber?: Map<number, ListingCustomisationSettings>,
   listingTextRatioByItemNumber?: Map<number, PrintableDownloadRatio>,
   listingPrintCropsByItemNumber?: Map<number, ListingPrintCropSettings | null>,
+  listingBackgroundColour?: ArtworkBackgroundColour,
 ) {
   const template = await prisma.ourCategoryImageTemplate.findUnique({ where: { id: templateId } });
   if (!template) throw new Error('Image template not found.');
   const categorySettings = await getOurCategorySettings(template.categoryId);
   if (!categorySettings) throw new Error('Our Template not found.');
   const categoryValues = settingsRowValues(categorySettings);
+  const backgroundColour = normalizeArtworkBackgroundColour(
+    listingBackgroundColour ?? categoryValues.backgroundColour,
+  );
   const [resolvedView, storedTemplate] = await Promise.all([
     resolvedImageTemplateView(template),
     resolvedStoredImageTemplate(template),
@@ -1560,77 +1864,94 @@ export async function renderOurCategoryImageTemplate(
     sourceImage: Buffer,
     personalisation: ReturnType<typeof validateOurCategoryTemplatePersonalisation>,
     itemNumber: number,
+    ratio: PrintableDownloadRatio = 'iso-a1',
+    orientation?: ListingArtworkOrientation,
   ) => {
     const cropSettings = listingPrintCropsByItemNumber?.get(itemNumber) ?? null;
     if (listingPrintCropsByItemNumber && !cropSettings) {
       throw new Error(`Complete Set Size for Image ${itemNumber} before generating listing images.`);
     }
     if (cropSettings) {
-      const isoText = effectiveTextPlacement(itemNumber, 'iso-a1')
+      const ratioText = effectiveTextPlacement(itemNumber, ratio)
         ?? DEFAULT_LISTING_PERSONALISATION_TEXT_AREAS;
-      const topText = isoText.showTop ? personalisation.topText : '';
-      const bottomText = isoText.showBottom ? personalisation.bottomText : '';
+      const topText = ratioText.showTop ? personalisation.topText : '';
+      const bottomText = ratioText.showBottom ? personalisation.bottomText : '';
       const preview = await createListingPersonalisationPreview(sourceImage, {
-        sizeKey: 'a5',
+        sizeKey: TEMPLATE_PREVIEW_SIZE_BY_RATIO[ratio],
         topText,
         bottomText,
         fontId: personalisation.fontId,
         borderEnabled: false,
         borderSizePercent: 5,
         textAreas: {
-          showTop: isoText.showTop,
-          showBottom: isoText.showBottom,
-          top: isoText.top,
-          bottom: isoText.bottom,
+          showTop: ratioText.showTop,
+          showBottom: ratioText.showBottom,
+          top: ratioText.top,
+          bottom: ratioText.bottom,
         },
-        cropRegion: cropSettings.regions['iso-a1'],
-        artworkPlacement: cropSettings.placements['iso-a1'],
+        cropRegion: cropSettings.regions[ratio],
+        artworkPlacement: cropSettings.placements[ratio],
         orientation: cropSettings.orientation,
+        backgroundColour,
       });
-      return preview.buffer;
+      return orientation && orientation !== cropSettings.orientation
+        ? sharp(preview.buffer, { failOn: 'error' }).rotate(90).webp({ quality: 88, effort: 4 }).toBuffer()
+        : preview.buffer;
     }
-    return prepareOurCategoryTemplateArtwork(
+    const prepared = await prepareOurCategoryTemplateArtwork(
       sourceImage,
       personalisation,
-      textPlacement(itemNumber),
+      textPlacement(itemNumber, ratio),
     );
+    return sharp(prepared, { failOn: 'error' })
+      .flatten({ background: backgroundColour })
+      .png({ compressionLevel: 9 })
+      .toBuffer();
   };
   try {
     if (resolvedView.displayFonts) return createFontShowcaseImage();
     const templateImage = await readFile(storedTemplate.imagePath);
-    if (categoryValues.templateType === 'multiple') {
-      const regionArtworks = await Promise.all(openingRegions.map(async (region) => {
-        if (!region.imageItemNumber || region.imageItemNumber > categoryValues.itemCount) {
-          throw new Error(`Edit this image template and choose an image item number from 1 to ${categoryValues.itemCount} for ${region.name}.`);
-        }
-        const sourceImage = sourceImagesByItemNumber.get(region.imageItemNumber!);
-        if (!sourceImage) throw new Error(`Image ${region.imageItemNumber} is required to generate ${template.name}.`);
-        const personalisation = validateOurCategoryTemplatePersonalisation(
-          region.topText ?? '',
-          region.bottomText ?? '',
-          region.fontId ?? DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID,
-        );
-        return {
-          region,
-          artwork: await prepareTemplateArtwork(sourceImage, personalisation, region.imageItemNumber),
-        };
-      }));
-      return await composeOurCategoryTemplateWithArtworks(templateImage, regionArtworks, {
-        borderEnabled: resolvedView.borderEnabled,
-        borderSizePercent: resolvedView.borderSizePercent,
-      });
-    }
-    const personalisation = validateOurCategoryTemplatePersonalisation(
+    const singlePersonalisation = validateOurCategoryTemplatePersonalisation(
       resolvedView.topText,
       resolvedView.bottomText,
       resolvedView.fontId,
     );
-    const attachedImage = await prepareTemplateArtwork(
-      sourceImagesByItemNumber.get(1) ?? (() => { throw new Error(`Image 1 is required to generate ${template.name}.`); })(),
-      personalisation,
-      1,
-    );
-    return await composeOurCategoryTemplate(templateImage, attachedImage, openingRegions, {
+    const regionArtworks = await Promise.all(openingRegions.map(async (region) => {
+      const personalisation = categoryValues.templateType === 'multiple'
+        ? validateOurCategoryTemplatePersonalisation(
+          region.topText ?? '',
+          region.bottomText ?? '',
+          region.fontId ?? DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID,
+        )
+        : singlePersonalisation;
+      if (region.grid) {
+        const cellArtworks = await Promise.all(region.grid.cells.map(async (cell, cellIndex) => {
+          if (cell.imageItemNumber > categoryValues.itemCount) {
+            throw new Error(`Edit this image template and choose an image item number from 1 to ${categoryValues.itemCount} for ${region.name}, Image ${cellIndex + 1}.`);
+          }
+          const sourceImage = sourceImagesByItemNumber.get(cell.imageItemNumber);
+          if (!sourceImage) throw new Error(`Image ${cell.imageItemNumber} is required to generate ${template.name}.`);
+          const cellPersonalisation = validateOurCategoryTemplatePersonalisation(
+            cell.topText,
+            cell.bottomText,
+            cell.fontId,
+          );
+          return prepareTemplateArtwork(sourceImage, cellPersonalisation, cell.imageItemNumber, cell.ratio, cell.orientation);
+        }));
+        return { region, cellArtworks };
+      }
+      const imageItemNumber = categoryValues.templateType === 'multiple' ? region.imageItemNumber : 1;
+      if (!imageItemNumber || imageItemNumber > categoryValues.itemCount) {
+        throw new Error(`Edit this image template and choose an image item number from 1 to ${categoryValues.itemCount} for ${region.name}.`);
+      }
+      const sourceImage = sourceImagesByItemNumber.get(imageItemNumber);
+      if (!sourceImage) throw new Error(`Image ${imageItemNumber} is required to generate ${template.name}.`);
+      return {
+        region,
+        artwork: await prepareTemplateArtwork(sourceImage, personalisation, imageItemNumber),
+      };
+    }));
+    return await composeOurCategoryTemplateWithArtworks(templateImage, regionArtworks, {
       borderEnabled: resolvedView.borderEnabled,
       borderSizePercent: resolvedView.borderSizePercent,
     });

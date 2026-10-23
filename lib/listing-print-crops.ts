@@ -241,6 +241,15 @@ export function printArtworkPlacementScale(
   return placement.width / fullSizePlacement.width;
 }
 
+export const DEFAULT_FOUR_BY_FIVE_ARTWORK_SCALE_BY_RATIO: Readonly<Record<PrintableDownloadRatio, number>> = {
+  '11x14': 0.82,
+  '4x5': 0.80,
+  '3x4': 0.86,
+  '5x7': 0.92,
+  'iso-a1': 0.93,
+  '2x3': 0.98,
+};
+
 /** Crops every paper ratio directly from the complete 2:3 or 4:5 thumbnail. */
 export function defaultNativeListingPrintCropDraft(
   imageWidth: number,
@@ -256,10 +265,19 @@ export function defaultNativeListingPrintCropDraft(
         ? { x: 0, y: 0, width: 1, height: 1 }
         : largestCenteredCropForRatio(imageWidth, imageHeight, ratio.key, orientation),
     ])) as unknown as PrintCropRegions,
-    placements: Object.fromEntries(PRINT_CROP_RATIOS.map((ratio) => [
-      ratio.key,
-      centredArtworkPlacementForRatio(imageWidth, imageHeight, ratio.key, orientation),
-    ])) as unknown as PrintArtworkPlacements,
+    placements: Object.fromEntries(PRINT_CROP_RATIOS.map((ratio) => {
+      const fullSizePlacement = centredArtworkPlacementForRatio(imageWidth, imageHeight, ratio.key, orientation);
+      return [
+        ratio.key,
+        sourceRatio === '4x5'
+          ? scalePrintArtworkPlacement(
+              fullSizePlacement,
+              fullSizePlacement,
+              DEFAULT_FOUR_BY_FIVE_ARTWORK_SCALE_BY_RATIO[ratio.key],
+            )
+          : fullSizePlacement,
+      ];
+    })) as unknown as PrintArtworkPlacements,
   };
 }
 

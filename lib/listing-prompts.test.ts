@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildDigitalDownloadGeneratePrompt } from '@/lib/digital-download-generate-prompt';
-import { buildDetailsGeneratePrompt } from '@/lib/details-generate-prompt';
+import { buildDetailsGeneratePrompt, formatPhysicalPrintSizesForPrompt } from '@/lib/details-generate-prompt';
 import { buildAspectRatiosImagePrompt, buildBedroomDoorImagePrompt, buildBedroomImagePrompt, buildBesideBedImagePrompt, buildCustomisedPlayroomImagePrompt, buildCustomisedShelveImagePrompt, buildDigitalDownloadIncludedImagePrompt, buildFramesImagePrompt, buildHowToPrintIncludedImagePrompt, buildListingImagePrompt, buildNoFrameIncludedImagePrompt, buildPerfectGiftImagePrompt, buildPersonalUseIncludedImagePrompt, buildPlayroomImagePrompt, buildSizesImagePrompt, buildThreeFramesImagePrompt } from '@/lib/listing-prompts';
 
 describe('listing prompts', () => {
@@ -271,7 +271,27 @@ describe('listing prompts', () => {
     expect(prompt).toContain('DIGITAL_DOWNLOAD = "N"');
     expect(prompt).toContain('PRINT_SIZES = "A4, A3"');
     expect(prompt).toContain('FRAME_COLOURS = "Black, Natural Oak"');
+    expect(prompt).toContain('PAPER, FINISH AND FRAMING');
+    expect(prompt).toContain('PRINT OPTIONS AND SIZES');
+    expect(prompt).toContain('A-SERIES SIZES');
+    expect(prompt).toContain('SIZES IN INCHES');
+    expect(prompt).toContain('SIZES IN CENTIMETRES');
+    expect(prompt).toContain('PREFER A DIGITAL DOWNLOAD?');
+    expect(prompt).toContain("listing's personalisation box");
+    expect(prompt.indexOf('PRINT OPTIONS AND SIZES')).toBeLessThan(prompt.indexOf('PAPER, FINISH AND FRAMING'));
+    expect(prompt.indexOf('PAPER, FINISH AND FRAMING')).toBeLessThan(prompt.indexOf('WHAT YOU WILL RECEIVE'));
+    expect(prompt).toContain('protective, shatter-resistant acrylic glazing');
+    expect(prompt).toContain('arrive with the artwork already fitted, and include hanging hardware');
+    expect(prompt).not.toContain('PAPER AND FINISH');
     expect(prompt).toContain('PERSONALISATION_DETAILS = "Optional top and bottom text personalisation is available."');
     expect(prompt).not.toContain('{{SECTION_NAME}}');
+  });
+
+  it('supplies Bedrock with explicit dimensions and units for physical print sizes', () => {
+    expect(formatPhysicalPrintSizesForPrompt([
+      { key: 'a5', label: 'A5' },
+      { key: '5x7', label: '5 × 7' },
+      { key: '50x70cm', label: '50 × 70 cm' },
+    ])).toBe('A5 — 14.8 × 21 cm, 5 × 7 in, 50 × 70 cm');
   });
 });

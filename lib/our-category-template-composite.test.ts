@@ -5,7 +5,9 @@ import {
   composeOurCategoryTemplate,
   composeOurCategoryTemplateWithArtworks,
   detectTemplateOpening,
+  remapTemplateOpeningRegionImageItem,
 } from '@/lib/our-category-template-composite';
+import { defaultTemplateGridLayout } from '@/lib/template-grid-layout';
 
 const FOREGROUND = [120, 40, 20, 255] as const;
 
@@ -76,6 +78,24 @@ function rectangleCorners(left: number, top: number, width: number, height: numb
 }
 
 describe('Our Category template compositing', () => {
+  it('remaps every grid cell when a linked template selects a different listing image', () => {
+    const grid = defaultTemplateGridLayout(2);
+    grid.cells[1] = { ...grid.cells[1], imageItemNumber: 3 };
+    const region = {
+      id: 'area-1',
+      name: 'Area 1',
+      corners: rectangleCorners(10, 10, 100, 120),
+      imageItemNumber: 1,
+      grid,
+    };
+
+    const remapped = remapTemplateOpeningRegionImageItem(region, 2);
+
+    expect(remapped.imageItemNumber).toBe(2);
+    expect(remapped.grid?.cells.map(({ imageItemNumber }) => imageItemNumber)).toEqual([2, 2]);
+    expect(region.grid.cells.map(({ imageItemNumber }) => imageItemNumber)).toEqual([1, 3]);
+  });
+
   it('detects the main enclosed opening from alpha and ignores edge transparency and small holes', () => {
     const width = 160;
     const height = 160;
@@ -212,6 +232,28 @@ describe('Our Category template compositing', () => {
     expect(colourAt(decoded, width, 30, 40)).toEqual([255, 0, 0, 255]);
     expect(colourAt(decoded, width, 120, 30)).toEqual([0, 0, 255, 255]);
     expect(colourAt(decoded, width, 80, 50)).toEqual([...FOREGROUND]);
+  });
+
+  it('renders grid cells over the template and preserves the background in grid gaps', async () => {
+    const width = 180;
+    const height = 120;
+    const template = await pngFromPixels(templatePixels(width, height), width, height);
+    const red = await sharp({ create: { width: 70, height: 100, channels: 4, background: '#ff0000' } }).png().toBuffer();
+    const blue = await sharp({ create: { width: 70, height: 100, channels: 4, background: '#0000ff' } }).png().toBuffer();
+    const grid = defaultTemplateGridLayout(2);
+    grid.rows = 1;
+    grid.columns = 2;
+    grid.horizontalGapPercent = 20;
+    grid.verticalGapPercent = 0;
+    const region = { id: 'grid', name: 'Area 1', corners: rectangleCorners(20, 20, 120, 80), grid };
+
+    const result = await composeOurCategoryTemplateWithArtworks(template, [{ region, cellArtworks: [red, blue] }]);
+    const decoded = await sharp(result).ensureAlpha().raw().toBuffer();
+
+    expect(colourAt(decoded, width, 35, 60)).toEqual([255, 0, 0, 255]);
+    expect(colourAt(decoded, width, 125, 60)).toEqual([0, 0, 255, 255]);
+    expect(colourAt(decoded, width, 80, 60)).toEqual([...FOREGROUND]);
+    expect(colourAt(decoded, width, 10, 60)).toEqual([...FOREGROUND]);
   });
 
   it('leaves the template unchanged when it has no configured regions', async () => {

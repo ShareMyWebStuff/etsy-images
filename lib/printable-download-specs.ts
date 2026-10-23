@@ -9,6 +9,7 @@ export const PRINTABLE_DOWNLOAD_SPECS = [
     portraitWidth: 7016,
     portraitHeight: 9933,
     supportedSizes: ['A1', 'A2', 'A3', 'A4', 'A5'],
+    maximumPrintSize: 'A1',
     matchTokens: ['isoa1'],
   },
   {
@@ -19,6 +20,7 @@ export const PRINTABLE_DOWNLOAD_SPECS = [
     portraitWidth: 7200,
     portraitHeight: 10800,
     supportedSizes: ['4 x 6 in', '6 x 9 in', '8 x 12 in', '10 x 15 in', '12 x 18 in', '16 x 24 in', '20 x 30 in', '24 x 36 in'],
+    maximumPrintSize: '24 x 36 in',
     matchTokens: ['2x3', '24x36'],
   },
   {
@@ -29,6 +31,7 @@ export const PRINTABLE_DOWNLOAD_SPECS = [
     portraitWidth: 5400,
     portraitHeight: 7200,
     supportedSizes: ['6 x 8 in', '9 x 12 in', '12 x 16 in', '15 x 20 in', '18 x 24 in', '30 x 40 cm'],
+    maximumPrintSize: '18 x 24 in',
     matchTokens: ['3x4', '18x24', '30x40'],
   },
   {
@@ -39,6 +42,7 @@ export const PRINTABLE_DOWNLOAD_SPECS = [
     portraitWidth: 4800,
     portraitHeight: 6000,
     supportedSizes: ['4 x 5 in', '8 x 10 in', '12 x 15 in', '16 x 20 in'],
+    maximumPrintSize: '16 x 20 in',
     matchTokens: ['4x5', '16x20'],
   },
   {
@@ -49,6 +53,7 @@ export const PRINTABLE_DOWNLOAD_SPECS = [
     portraitWidth: 3300,
     portraitHeight: 4200,
     supportedSizes: ['11 x 14 in'],
+    maximumPrintSize: '11 x 14 in',
     matchTokens: ['11x14'],
   },
   {
@@ -59,6 +64,7 @@ export const PRINTABLE_DOWNLOAD_SPECS = [
     portraitWidth: 6000,
     portraitHeight: 8400,
     supportedSizes: ['5 x 7 in', '10 x 14 in', '15 x 21 in', '20 x 28 in', '50 x 70 cm'],
+    maximumPrintSize: '20 x 28 in',
     matchTokens: ['5x7', '20x28', '50x70'],
   },
 ] as const;
@@ -66,6 +72,57 @@ export const PRINTABLE_DOWNLOAD_SPECS = [
 export type PrintableDownloadRatio = (typeof PRINTABLE_DOWNLOAD_SPECS)[number]['key'];
 export type PrintableDownloadRole = PrintableDownloadRatio | 'guide';
 export type PrintableDownloadOrientation = 'portrait' | 'landscape';
+
+const A_SERIES_DESCRIPTION_SIZES = [
+  { name: 'A5', width: '14.8', height: '21' },
+  { name: 'A4', width: '21', height: '29.7' },
+  { name: 'A3', width: '29.7', height: '42' },
+  { name: 'A2', width: '42', height: '59.4' },
+  { name: 'A1', width: '59.4', height: '84.1' },
+] as const;
+
+function orientedSizeLabel(value: string, orientation: PrintableDownloadOrientation) {
+  const match = value.match(/^(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(in|cm)$/i);
+  if (!match) return value;
+  const [, width, height, unit] = match;
+  return orientation === 'landscape'
+    ? `${height} × ${width} ${unit.toLocaleLowerCase()}`
+    : `${width} × ${height} ${unit.toLocaleLowerCase()}`;
+}
+
+export function printableDownloadDescriptionGuide(orientation: PrintableDownloadOrientation) {
+  return PRINTABLE_DOWNLOAD_SPECS.map((spec) => {
+    const dimensions = printableDownloadDimensions(spec.key, orientation);
+    if (spec.key === 'iso-a1') {
+      const supportedSizes = new Set<string>(spec.supportedSizes);
+      const sizes = A_SERIES_DESCRIPTION_SIZES
+        .filter(({ name }) => supportedSizes.has(name))
+        .map(({ name, width, height }) => (
+          orientation === 'landscape'
+            ? `${name} — ${height} × ${width} cm`
+            : `${name} — ${width} × ${height} cm`
+        ));
+      return [
+        'A-SERIES FILE',
+        `A-series sizes: ${sizes.join('; ')}`,
+        `File dimensions: ${dimensions.width} × ${dimensions.height} px`,
+        `Maximum listed print size: ${spec.maximumPrintSize}`,
+      ].join('\n');
+    }
+
+    const formattedSizes = spec.supportedSizes.map((size) => orientedSizeLabel(size, orientation));
+    const inchSizes = formattedSizes.filter((size) => size.endsWith(' in'));
+    const centimetreSizes = formattedSizes.filter((size) => size.endsWith(' cm'));
+    const ratioLabel = spec.key.replace('x', ':');
+    return [
+      `${ratioLabel} RATIO FILE`,
+      inchSizes.length > 0 ? `Inches: ${inchSizes.join(', ')}` : null,
+      centimetreSizes.length > 0 ? `Centimetres: ${centimetreSizes.join(', ')}` : null,
+      `File dimensions: ${dimensions.width} × ${dimensions.height} px`,
+      `Maximum listed print size: ${orientedSizeLabel(spec.maximumPrintSize, orientation)}`,
+    ].filter((line): line is string => line !== null).join('\n');
+  }).join('\n\n');
+}
 
 type DownloadFileLike = {
   originalFileName?: string | null;
