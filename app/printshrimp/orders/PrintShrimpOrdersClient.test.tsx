@@ -8,6 +8,7 @@ import type { PrintShrimpOrdersPageData } from '@/lib/printshrimp/orders';
 const data: PrintShrimpOrdersPageData = {
   configured: true,
   configurationMessage: 'PrintShrimp API is configured.',
+  returnEmail: 'dave@harmonydata.co.uk',
   sizes: ['A4'],
   products: [{
     listingId: '339',

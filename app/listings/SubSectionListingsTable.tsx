@@ -81,6 +81,7 @@ export function SubSectionListingsTable({
   const [data, setData] = useState(initialData);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set());
   const [createOpen, setCreateOpen] = useState(false);
+  const [editingListingId, setEditingListingId] = useState<string | null>(null);
   const [listingName, setListingName] = useState('');
   const [numberOfItems, setNumberOfItems] = useState<ItemCountOption>(() => defaultItemCount(initialData));
   const [ourCategoryId, setOurCategoryId] = useState('');
@@ -153,6 +154,16 @@ export function SubSectionListingsTable({
     )}&subSectionId=${encodeURIComponent(subSectionId)}&listingId=${encodeURIComponent(listingId)}`;
   }
 
+  function selectListingToEdit(listingId: string) {
+    const listing = data?.listings.find((entry) => entry.id === listingId);
+    if (!listing) return;
+    setEditingListingId(listing.id);
+    setListingName(listing.listingName);
+    setNumberOfItems(String(listing.numberOfItems ?? data?.subSection.numberOfDownloads ?? 1) as ItemCountOption);
+    setOurCategoryId(listing.ourCategoryId ? String(listing.ourCategoryId) : '');
+    setError(null);
+  }
+
   async function createListing(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -177,12 +188,13 @@ export function SubSectionListingsTable({
       const numericNumberOfItems = Number(numberOfItems);
 
       const response = await fetch('/api/shops/listings', {
-        method: 'POST',
+        method: editingListingId ? 'PATCH' : 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           shopId,
+          ...(editingListingId ? { listingId: editingListingId } : {}),
           sectionId,
           subSectionId,
           listingName: trimmedListingName,
@@ -194,7 +206,7 @@ export function SubSectionListingsTable({
       const payload = (await response.json()) as ListingActionResponse;
 
       if (!response.ok) {
-        throw new Error(payload.error ?? 'Unable to create listing.');
+        throw new Error(payload.error ?? (editingListingId ? 'Unable to update listing.' : 'Unable to create listing.'));
       }
 
       setData(payload.data ?? null);
@@ -202,6 +214,7 @@ export function SubSectionListingsTable({
       setNumberOfItems(defaultItemCount(payload.data ?? data));
       setOurCategoryId('');
       setCreateOpen(false);
+      setEditingListingId(null);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to create listing.');
     } finally {
@@ -341,11 +354,26 @@ export function SubSectionListingsTable({
               type="button"
               size="icon"
               variant="outline"
+              aria-label="Edit listing"
+              title="Edit listing"
+              disabled={!data?.listings.length || generateLoading}
+              onClick={() => {
+                if (data?.listings[0]) selectListingToEdit(data.listings[0].id);
+                setCreateOpen(true);
+              }}
+            >
+              <Pencil className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
               aria-label="Add listing"
               title="Add listing"
               onClick={() => {
                 setError(null);
                 setListingName('');
+                setEditingListingId(null);
                 setNumberOfItems(defaultItemCount(data));
                 setOurCategoryId('');
                 setCreateOpen(true);
@@ -499,14 +527,28 @@ export function SubSectionListingsTable({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={createOpen} onOpenChange={(open) => { if (!createLoading) setCreateOpen(open); }}>
         <DialogContent>
           <form onSubmit={createListing}>
             <DialogHeader>
-              <DialogTitle>Create Listing</DialogTitle>
+              <DialogTitle>{editingListingId ? 'Edit Listing' : 'Create Listing'}</DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-4">
+              {editingListingId ? (
+                <label className="grid gap-2 text-sm font-medium">
+                  Listing
+                  <select
+                    className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                    value={editingListingId}
+                    onChange={(event) => selectListingToEdit(event.target.value)}
+                    disabled={createLoading}
+                  >
+                    {data?.listings.map((listing) => <option key={listing.id} value={listing.id}>{listing.listingName}</option>)}
+                  </select>
+                </label>
+              ) : null}
               <Input
+                aria-label="Listing name"
                 value={listingName}
                 onChange={(event) => setListingName(event.target.value)}
                 placeholder="Listing directory name"
@@ -553,7 +595,7 @@ export function SubSectionListingsTable({
                 Cancel
               </Button>
               <Button type="submit" disabled={createLoading || !ourCategoryId}>
-                {createLoading ? 'Creating...' : 'Create'}
+                {createLoading ? (editingListingId ? 'Saving...' : 'Creating...') : (editingListingId ? 'Save' : 'Create')}
               </Button>
             </DialogFooter>
           </form>

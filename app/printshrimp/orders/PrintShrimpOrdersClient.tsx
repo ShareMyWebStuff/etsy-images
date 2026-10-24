@@ -37,17 +37,18 @@ type Tab = 'create' | 'list';
 
 const inputGridClass = 'grid gap-2';
 
-function Field({ label, value, onChange, type = 'text', maxLength }: {
+function Field({ label, value, onChange, type = 'text', maxLength, disabled = false }: {
   label: string;
   value: string;
-  onChange(value: string): void;
+  onChange?(value: string): void;
   type?: string;
   maxLength?: number;
+  disabled?: boolean;
 }) {
   const id = useId();
   return <div className={inputGridClass}>
     <Label htmlFor={id}>{label}</Label>
-    <Input id={id} type={type} value={value} maxLength={maxLength} onChange={(event) => onChange(event.target.value)} />
+    <Input id={id} type={type} value={value} maxLength={maxLength} disabled={disabled} onChange={(event) => onChange?.(event.target.value)} />
   </div>;
 }
 
@@ -92,7 +93,7 @@ export function PrintShrimpOrdersClient({ initialData }: { initialData: PrintShr
   const [externalOrderNumber, setExternalOrderNumber] = useState('ORD-123');
   const [giftMessage, setGiftMessage] = useState('Happy birthday');
   const [name, setName] = useState('Dave F');
-  const [email, setEmail] = useState('dave@harmonydata.co.uk');
+  const email = initialData.returnEmail;
   const [address1, setAddress1] = useState('The Farmhouse');
   const [address2, setAddress2] = useState('');
   const [city, setCity] = useState('Woking');
@@ -314,7 +315,7 @@ export function PrintShrimpOrdersClient({ initialData }: { initialData: PrintShr
           <Field label="ORDER No" value={externalOrderNumber} onChange={setExternalOrderNumber} />
           <Field label="Message No" value={giftMessage} onChange={setGiftMessage} />
           <Field label="Name" value={name} onChange={setName} />
-          <Field label="Email" value={email} type="email" onChange={setEmail} />
+          <Field label="PrintShrimp return email" value={email} type="email" disabled />
           <Field label="Address 1" value={address1} onChange={setAddress1} />
           <Field label="Address 2" value={address2} onChange={setAddress2} />
           <Field label="City" value={city} onChange={setCity} />

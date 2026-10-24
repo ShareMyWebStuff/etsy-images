@@ -18,6 +18,7 @@ import {
   PRINTSHRIMP_SUPPORTED_SIZES,
   validatePrintShrimpBaseSku,
 } from '@/lib/printshrimp/artwork';
+import { getPrintShrimpReturnEmail } from '@/lib/printshrimp/config';
 import {
   getPrintShrimpClientConfig,
   PrintShrimpAdapterError,
@@ -83,6 +84,7 @@ export type PrintShrimpOrderProduct = {
 export type PrintShrimpOrdersPageData = {
   configured: boolean;
   configurationMessage: string;
+  returnEmail: string;
   products: PrintShrimpOrderProduct[];
   sizes: string[];
 };
@@ -285,6 +287,7 @@ export async function getPrintShrimpOrdersPageData(): Promise<PrintShrimpOrdersP
     configurationMessage: config
       ? 'PrintShrimp API is configured.'
       : 'Set PRINTSHRIMP_API_KEY before retrieving orders.',
+    returnEmail: getPrintShrimpReturnEmail(),
     products,
     sizes: [...PRINTSHRIMP_SUPPORTED_SIZES],
   };
@@ -527,7 +530,7 @@ export async function createPrintShrimpOrderPreview(
       gift_message: input.giftMessage,
       customerInfo: {
         name: input.name,
-        email: input.email,
+        email: getPrintShrimpReturnEmail(),
         address1: input.address1,
         address2: input.address2,
         city: input.city,

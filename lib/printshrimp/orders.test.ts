@@ -96,6 +96,7 @@ beforeEach(() => {
   mocks.isDropboxPathNotFound.mockClear();
   vi.stubEnv('PRINTSHRIMP_API_KEY', 'test-api-key');
   vi.stubEnv('PRINTSHRIMP_API_TIMEOUT_MS', '5000');
+  vi.stubEnv('PRINTSHRIMP_RETURN_EMAIL', 'returns@example.com');
 });
 
 afterEach(() => {
@@ -156,7 +157,7 @@ describe('PrintShrimp orders', () => {
     });
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
       external_order_number: 'ORD-123',
-      customerInfo: { city: 'London', state: 'London', zip: 'SW1A 1AA' },
+      customerInfo: { email: 'returns@example.com', city: 'London', state: 'London', zip: 'SW1A 1AA' },
       products: [{
         sku: 'SEA_CREATURES_GREEN_SEA_TURTLE',
         size: 'A4',

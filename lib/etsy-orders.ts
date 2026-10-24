@@ -12,6 +12,7 @@ import { getEtsyOAuthConnectionStatus, getEtsyOrderAccessToken } from '@/lib/ets
 import { prisma } from '@/lib/prisma';
 import { PRINTSHRIMP_SUPPORTED_SIZES } from '@/lib/printshrimp/artwork';
 import { PrintShrimpAdapterError } from '@/lib/printshrimp/client';
+import { getPrintShrimpReturnEmail } from '@/lib/printshrimp/config';
 import { getPrintShrimpCustomFont, type PrintShrimpCustomFontId } from '@/lib/printshrimp/custom-fonts';
 import {
   generatePrintShrimpCustomArtworkPreview,
@@ -450,7 +451,6 @@ function parseOrderId(value: string) {
 function buildOrderPayload(order: NonNullable<Awaited<ReturnType<typeof loadOrder>>>, resendNumber?: number) {
   const missing = [
     !order.name && 'recipient name',
-    !order.buyerEmail && 'email address',
     !order.address1 && 'address line 1',
     !order.city && 'town or city',
     !order.postcode && 'postcode',
@@ -478,7 +478,7 @@ function buildOrderPayload(order: NonNullable<Awaited<ReturnType<typeof loadOrde
     gift_message: order.giftMessage ?? '',
     customerInfo: {
       name: order.name ?? '',
-      email: order.buyerEmail ?? '',
+      email: getPrintShrimpReturnEmail(),
       address1: order.address1 ?? '',
       address2: order.address2 ?? '',
       city: order.city ?? '',

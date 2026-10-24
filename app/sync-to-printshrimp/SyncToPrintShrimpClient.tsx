@@ -25,6 +25,7 @@ function Status({ listing }: { listing: SyncToPrintShrimpData['sections'][number
 
 export function SyncToPrintShrimpClient({ initialData }: { initialData: SyncToPrintShrimpData }) {
   const [data, setData] = useState(initialData);
+  const [view, setView] = useState<'local' | 'etsy'>('local');
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,28 +58,46 @@ export function SyncToPrintShrimpClient({ initialData }: { initialData: SyncToPr
     }
   }
 
-  async function syncSection(section: SyncToPrintShrimpData['sections'][number]) {
+  async function syncSection(
+    section: SyncToPrintShrimpData['sections'][number] | SyncToPrintShrimpData['localSections'][number],
+  ) {
     const listings = section.listings.filter((listing) => listing.canSync);
     for (const listing of listings) await syncListing(listing.id);
   }
 
+  const showingLocalView = view === 'local';
+  const displayedSections = showingLocalView ? data.localSections : data.sections;
+
   return <div className="grid gap-6">
     <div>
       <h1 className="text-2xl font-semibold">Sync to PrintShrimp</h1>
-      <p className="mt-2 text-muted-foreground">Convert and synchronise the six Digital Download print ratios for each complete listing.</p>
+      <p className="mt-2 text-muted-foreground">
+        {showingLocalView
+          ? 'Physical print listings are grouped by their local section.'
+          : 'Physical print listings are grouped by their Etsy section.'}
+      </p>
+    </div>
+
+    <div className="flex w-fit rounded-lg border bg-card p-1" role="tablist" aria-label="PrintShrimp sync view">
+      <Button type="button" variant={view === 'local' ? 'default' : 'ghost'} role="tab" aria-selected={view === 'local'} onClick={() => setView('local')}>
+        Local View
+      </Button>
+      <Button type="button" variant={view === 'etsy' ? 'default' : 'ghost'} role="tab" aria-selected={view === 'etsy'} onClick={() => setView('etsy')}>
+        Etsy View
+      </Button>
     </div>
 
     {!data.adapter.configured ? <div role="alert" className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{data.adapter.message}</div> : null}
     {error ? <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">{error}</div> : null}
 
-    {data.sections.map((section) => {
+    {displayedSections.map((section) => {
       const isExpanded = expanded.has(section.id);
       return <Card key={section.id}>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
           <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" aria-expanded={isExpanded} onClick={() => toggle(section.id)}>
             {isExpanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
             <CardTitle>{section.sectionName}</CardTitle>
-            <span className="text-sm font-normal text-muted-foreground">({section.listings.length} listings)</span>
+            <span className="text-sm font-normal text-muted-foreground">({section.listings.length} listing{section.listings.length === 1 ? '' : 's'})</span>
           </button>
           <Button variant="outline" disabled={busy !== null || !section.listings.some((listing) => listing.canSync)} onClick={() => syncSection(section)}>
             Sync All
@@ -87,10 +106,11 @@ export function SyncToPrintShrimpClient({ initialData }: { initialData: SyncToPr
         {isExpanded ? <CardContent>
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader><TableRow><TableHead>Listing</TableHead><TableHead>Etsy listing ID</TableHead><TableHead>Etsy SKU</TableHead><TableHead>Complete</TableHead><TableHead>Six files</TableHead><TableHead>Source changed</TableHead><TableHead>PrintShrimp status</TableHead><TableHead>Last successful sync</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Listing</TableHead>{showingLocalView ? <TableHead>Etsy Sections</TableHead> : null}<TableHead>Etsy listing ID</TableHead><TableHead>Etsy SKU</TableHead><TableHead>Complete</TableHead><TableHead>Six files</TableHead><TableHead>Source changed</TableHead><TableHead>PrintShrimp status</TableHead><TableHead>Last successful sync</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader>
               <TableBody>{section.listings.map((listing) => <TableRow key={listing.id}>
                 <TableCell><div className="font-medium">{listing.listingName}</div>{listing.validationError || listing.lastError ? <div className="mt-1 max-w-sm text-xs text-destructive">{listing.validationError ?? listing.lastError}</div> : null}<div className="mt-1 text-xs text-muted-foreground">{listing.ratioFiles.map((item) => `${item.ratio}: ${item.fileName ?? 'missing'}`).join(' · ')}</div></TableCell>
-                <TableCell>{[listing.etsyPrintId ? `Print ${listing.etsyPrintId}` : null, listing.etsyDownloadId ? `Download ${listing.etsyDownloadId}` : null].filter(Boolean).join(' / ') || '—'}</TableCell>
+                {showingLocalView ? <TableCell>{listing.etsySectionNames.join(' / ')}</TableCell> : null}
+                <TableCell>{[listing.etsyPrintId ? `Print ${listing.etsyPrintId}` : null, listing.etsyCustomisedId ? `Customised ${listing.etsyCustomisedId}` : null].filter(Boolean).join(' / ') || '—'}</TableCell>
                 <TableCell>{listing.etsySku || '—'}</TableCell>
                 <TableCell>{listing.isComplete ? 'Yes' : 'No'}</TableCell>
                 <TableCell>{listing.hasAllSixFiles ? 'Yes' : 'No'}</TableCell>

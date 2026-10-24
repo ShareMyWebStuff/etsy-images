@@ -33,6 +33,33 @@ const data: SubSectionListingsPageData = {
 };
 
 describe('SubSectionListingsTable categories', () => {
+  it('edits a listing with its current settings and saves the selected template', async () => {
+    const editData: SubSectionListingsPageData = {
+      ...data,
+      templates: [
+        { id: 10, name: 'Current template', itemCount: 3, templateType: 'multiple' },
+        { id: 11, name: 'Single template', itemCount: 1, templateType: 'single' },
+      ],
+      listings: [{ ...data.listings[0], numberOfItems: 3, ourCategoryId: 10 }],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: editData }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SubSectionListingsTable data={editData} shopId="66615491" sectionId="3" subSectionId="8" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit listing' }));
+    expect((screen.getByLabelText('Listing name') as HTMLInputElement).value).toBe('Sea Creatures Set');
+    expect((screen.getByLabelText('Template') as HTMLSelectElement).value).toBe('10');
+    fireEvent.change(screen.getByLabelText('Listing name'), { target: { value: 'New name' } });
+    fireEvent.change(screen.getByLabelText('No of Items'), { target: { value: '1' } });
+    expect(screen.queryByRole('option', { name: 'Current template' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Template'), { target: { value: '11' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/shops/listings', expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({ shopId: '66615491', listingId: '500', sectionId: '3', subSectionId: '8', listingName: 'New name', numberOfItems: 1, includeAllItems: false, ourCategoryId: 11 }),
+    })));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Edit Listing' })).toBeNull());
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });

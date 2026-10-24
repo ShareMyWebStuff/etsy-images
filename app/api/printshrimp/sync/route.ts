@@ -20,7 +20,7 @@ export async function POST(request: Request) {
       : error instanceof PrintShrimpSyncInProgressError ? 409
         : upstreamStatus >= 400 && upstreamStatus < 500 && upstreamStatus !== 401 && upstreamStatus !== 403 && upstreamStatus !== 429 ? 400
           : upstreamStatus === 401 || upstreamStatus === 403 || upstreamStatus === 429 ? 503
-        : /choose|complete|missing|multiple|sku|filename|source|artwork|listing not found/i.test(message) ? 400 : 502;
+        : /choose|complete|configured for prints|missing|multiple|sku|filename|source|artwork|listing not found/i.test(message) ? 400 : 502;
     return NextResponse.json({ error: message }, { status });
   }
 }

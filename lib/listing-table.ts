@@ -31,6 +31,8 @@ export type SubSectionListingsPageData = {
   listings: Array<{
     id: string;
     listingName: string;
+    numberOfItems?: number | null;
+    ourCategoryId?: number | null;
     sourceSectionName: string | null;
     templateProducts: ListingTemplateProducts | null;
     status: string;
@@ -178,6 +180,7 @@ export async function getSubSectionListingsPageData(
         },
       },
       numberOfItems: true,
+      ourCategoryId: true,
       includeAllItems: true,
       downloadsRevision: true,
       zippedRevision: true,
@@ -283,6 +286,8 @@ export async function getSubSectionListingsPageData(
       return {
         id: String(listing.id),
         listingName: listing.localDirectoryName ?? listing.title,
+        numberOfItems: listing.numberOfItems,
+        ourCategoryId: listing.ourCategoryId,
         sourceSectionName: category.name,
         templateProducts: category.templateProducts,
         status: !isMultiple && !hasThumbnail

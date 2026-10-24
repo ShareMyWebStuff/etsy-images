@@ -1075,6 +1075,7 @@ export function OurCategoryEditorClient({
         {isMultiple
           ? data.categoryId ? 'Edit Multiple Template' : 'Create Multiple Template'
           : data.categoryId ? 'Edit Our Template' : 'Create Our Template'}
+        {data.categoryId && values.name.trim() ? `: ${values.name.trim()}` : ''}
       </h1>
       <div className="flex w-fit flex-wrap gap-1 rounded-md border p-1" role="tablist" aria-label="Our Template sections">
         {([['details', 'Details'], ['print-details', 'Print Details'], ['image-templates', 'Image Templates']] as const).map(([key, label]) => (

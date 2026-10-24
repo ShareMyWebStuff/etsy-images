@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { readFile } from '@/lib/s3-listing-storage';
+import { readFile, rename } from '@/lib/s3-listing-storage';
 import path from 'node:path';
 import {
   createListingDirectory,
@@ -949,6 +949,69 @@ export async function createLocalListing(
   await createListingDirectory(context.shop.displayName, context.section.title, context.subSection.name, trimmedListingName);
 
   return createLocalListingRow(context, trimmedListingName, configuration);
+}
+
+export async function updateLocalListing(
+  shopId: string, sectionId: string, subSectionId: string, listingId: string,
+  listingName: string, numberOfItems: number, ourCategoryId: number,
+) {
+  const context = await getListingContext(shopId, sectionId, subSectionId);
+  if (!ALLOWED_ITEM_COUNTS.has(numberOfItems)) throw new Error('Choose 1, 3, 6, or 12 items.');
+  if (!Number.isSafeInteger(ourCategoryId) || ourCategoryId < 1) throw new Error('Choose a template.');
+  const name = listingName.trim();
+  if (!name) throw new Error('Enter a listing name.');
+  if (name === '.' || name === '..') throw new Error('Enter a valid listing name.');
+  const etsySectionId = context.section.etsyShopSectionId === null ? null : Number(context.section.etsyShopSectionId);
+  const listing = await prisma.etsyListing.findFirst({
+    where: {
+      id: Number(listingId), shopId: context.shop.etsyShopId.toString(),
+      OR: [
+        { subSectionId: context.subSection.id },
+        ...(etsySectionId === null ? [] : [{ subSectionId: null, shopSectionId: etsySectionId }]),
+      ],
+    },
+  });
+  if (!listing) throw new Error('Listing not found.');
+  const template = await prisma.ourCategory.findFirst({ where: { id: ourCategoryId, shopId: context.shop.id } });
+  if (!template) throw new Error('The selected template was not found for this shop.');
+  if (template.itemCount !== numberOfItems || template.templateType !== (numberOfItems === 1 ? 'single' : 'multiple')) {
+    throw new Error('The selected template does not match the number of items.');
+  }
+  const oldName = listing.localDirectoryName ?? listing.title;
+  const directory = (value: string) => getListingDirectoryPath(context.shop.displayName, context.section.title, context.subSection.name, value);
+  const oldPath = directory(oldName);
+  const newPath = directory(name);
+  let moved = false;
+  if (name !== oldName) {
+    const duplicate = await prisma.etsyListing.findFirst({
+      where: { subSectionId: context.subSection.id, id: { not: listing.id }, OR: [{ localDirectoryName: name }, { title: name }] },
+    });
+    if (duplicate) throw new Error('A listing with this name already exists.');
+    if (await listingDirectoryExists(context.shop.displayName, context.section.title, context.subSection.name, name)) {
+      throw new Error('A listing folder with this name already exists.');
+    }
+    if (await listingDirectoryExists(context.shop.displayName, context.section.title, context.subSection.name, oldName)) {
+      await rename(oldPath, newPath);
+      moved = true;
+    }
+  }
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.etsyListing.update({ where: { id: listing.id }, data: {
+        localDirectoryName: name, numberOfItems, includeAllItems: false, ourCategoryId,
+        ...(listing.title === oldName ? { title: name } : {}),
+        ...(listing.title === oldName && name !== oldName ? { detailsChanged: true } : {}),
+        ...(listing.ourCategoryId !== ourCategoryId ? { roomTheme: template.roomTheme } : {}),
+      } });
+      if (listing.numberOfItems !== numberOfItems) {
+        await tx.etsyListingGroupItem.deleteMany({ where: { groupListingId: listing.id } });
+      }
+      await ensureListingProductDefaultsInTransaction(tx, listing.id);
+    });
+  } catch (error) {
+    if (moved) await rename(newPath, oldPath);
+    throw error;
+  }
 }
 
 export async function deleteListing(shopId: string, sectionId: string, subSectionId: string, listingId: string) {

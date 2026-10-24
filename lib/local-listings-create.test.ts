@@ -7,7 +7,9 @@ const mocks = vi.hoisted(() => {
     },
     etsyListing: {
       create: vi.fn(),
+      update: vi.fn(),
     },
+    etsyListingGroupItem: { deleteMany: vi.fn() },
     ourCategory: {
       findFirst: vi.fn(),
     },
@@ -21,6 +23,7 @@ const mocks = vi.hoisted(() => {
     listingFindFirst: vi.fn(),
     listingFindMany: vi.fn(),
     listingDelete: vi.fn(),
+    rename: vi.fn(),
     createListingDirectory: vi.fn(),
     createSubSectionDirectory: vi.fn(),
     listingDirectoryExists: vi.fn(),
@@ -36,6 +39,7 @@ vi.mock('@/lib/prisma', () => ({
     etsyShop: { findUnique: mocks.shopFindUnique },
     etsyShopSection: { findFirst: mocks.sectionFindFirst },
     etsyShopSubSection: { findFirst: mocks.subSectionFindFirst },
+    ourCategory: { findFirst: mocks.tx.ourCategory.findFirst },
     etsyListing: {
       findFirst: mocks.listingFindFirst,
       findMany: mocks.listingFindMany,
@@ -60,13 +64,13 @@ vi.mock('@/lib/listing-products', () => ({
   saveListingProducts: mocks.saveListingProducts,
 }));
 
-vi.mock('@/lib/s3-listing-storage', () => ({ readFile: vi.fn() }));
+vi.mock('@/lib/s3-listing-storage', () => ({ readFile: vi.fn(), rename: mocks.rename }));
 vi.mock('@/lib/dropbox-bundle', () => ({
   deleteDropboxBundleFolder: vi.fn(),
   isDropboxInstructionPdfFile: vi.fn(),
 }));
 
-import { createLocalListing } from '@/lib/local-listings';
+import { createLocalListing, updateLocalListing } from '@/lib/local-listings';
 
 function configureContext() {
   mocks.shopFindUnique.mockResolvedValue({
@@ -84,6 +88,41 @@ function configureContext() {
   });
   mocks.subSectionFindFirst.mockResolvedValue({ id: 3, name: 'Animals' });
 }
+
+describe('editing local listing settings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    configureContext();
+    mocks.listingFindFirst.mockResolvedValueOnce({ id: 79, localDirectoryName: 'Old name', title: 'Generated Etsy title', numberOfItems: 1, ourCategoryId: 10 });
+    mocks.listingFindFirst.mockResolvedValue(null);
+    mocks.tx.ourCategory.findFirst.mockResolvedValue({ id: 12, itemCount: 3, templateType: 'multiple', roomTheme: 'Sea' });
+    mocks.listingDirectoryExists.mockResolvedValue(false);
+    mocks.tx.etsyListing.update.mockResolvedValue({ id: 79 });
+    mocks.ensureDefaultsInTransaction.mockResolvedValue(undefined);
+  });
+
+  it('updates settings, clears an incompatible group and preserves the generated Etsy title', async () => {
+    await updateLocalListing('66615491', '2', '3', '79', 'New name', 3, 12);
+    expect(mocks.tx.etsyListing.update).toHaveBeenCalledWith({ where: { id: 79 }, data: {
+      localDirectoryName: 'New name', numberOfItems: 3, includeAllItems: false, ourCategoryId: 12, roomTheme: 'Sea',
+    } });
+    expect(mocks.tx.etsyListingGroupItem.deleteMany).toHaveBeenCalledWith({ where: { groupListingId: 79 } });
+    expect(mocks.ensureDefaultsInTransaction).toHaveBeenCalledWith(mocks.tx, 79);
+  });
+
+  it('rejects a template with a different item count before moving files or updating the listing', async () => {
+    await expect(updateLocalListing('66615491', '2', '3', '79', 'New name', 1, 12)).rejects.toThrow('does not match');
+    expect(mocks.rename).not.toHaveBeenCalled();
+    expect(mocks.tx.etsyListing.update).not.toHaveBeenCalled();
+  });
+
+  it('restores the listing folder if saving the database fails', async () => {
+    mocks.listingDirectoryExists.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    mocks.tx.etsyListing.update.mockRejectedValueOnce(new Error('Database unavailable'));
+    await expect(updateLocalListing('66615491', '2', '3', '79', 'New name', 3, 12)).rejects.toThrow('Database unavailable');
+    expect(mocks.rename).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe('single local listing creation recovery', () => {
   beforeEach(() => {

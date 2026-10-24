@@ -21,6 +21,7 @@ import {
   getPrintShrimpArtworkClient,
   type PrintShrimpArtworkClient,
 } from '@/lib/printshrimp/client';
+import { isPrintShrimpPhysicalListing } from '@/lib/printshrimp/eligibility';
 import {
   PrintShrimpSyncInProgressError,
   PRINTSHRIMP_SYNC_LEASE_MS,
@@ -37,29 +38,35 @@ type ListingRecord = Awaited<ReturnType<typeof loadListingRecords>>[number];
 
 export type PrintShrimpListingStatus = 'INCOMPLETE' | 'INVALID' | 'NOT_SYNCED' | 'NEEDS_SYNC' | 'SYNCING' | 'FAILED' | 'SYNCED';
 
+export type SyncToPrintShrimpListing = {
+  id: string;
+  listingName: string;
+  etsyPrintId: string | null;
+  etsyCustomisedId: string | null;
+  etsySku: string;
+  etsySectionNames: string[];
+  isComplete: boolean;
+  hasAllSixFiles: boolean;
+  status: PrintShrimpListingStatus;
+  lastSuccessfulSyncAt: string | null;
+  sourceChanged: boolean | null;
+  validationError: string | null;
+  lastError: string | null;
+  canSync: boolean;
+  syncDisabledReason: string | null;
+  ratioFiles: Array<{ ratio: PrintShrimpRatio; fileName: string | null; synced: boolean }>;
+};
+
+type SyncToPrintShrimpSection = {
+  id: string;
+  sectionName: string;
+  listings: SyncToPrintShrimpListing[];
+};
+
 export type SyncToPrintShrimpData = {
   adapter: ReturnType<typeof getPrintShrimpAdapterStatus>;
-  sections: Array<{
-    id: string;
-    sectionName: string;
-    listings: Array<{
-      id: string;
-      listingName: string;
-      etsyPrintId: string | null;
-      etsyDownloadId: string | null;
-      etsySku: string;
-      isComplete: boolean;
-      hasAllSixFiles: boolean;
-      status: PrintShrimpListingStatus;
-      lastSuccessfulSyncAt: string | null;
-      sourceChanged: boolean | null;
-      validationError: string | null;
-      lastError: string | null;
-      canSync: boolean;
-      syncDisabledReason: string | null;
-      ratioFiles: Array<{ ratio: PrintShrimpRatio; fileName: string | null; synced: boolean }>;
-    }>;
-  }>;
+  localSections: SyncToPrintShrimpSection[];
+  sections: SyncToPrintShrimpSection[];
 };
 
 function loadListingRecords(ids?: number[]) {
@@ -68,7 +75,7 @@ function loadListingRecords(ids?: number[]) {
     select: {
       id: true,
       etsyId: true,
-      etsyDownloadId: true,
+      etsyCustomisedId: true,
       title: true,
       localDirectoryName: true,
       productConfig: { select: { sku: true } },
@@ -182,97 +189,126 @@ function latestDate(values: Array<Date | null>) {
 
 export async function getSyncToPrintShrimpData(): Promise<SyncToPrintShrimpData> {
   const etsyData = await getSyncToEtsyData();
-  const etsyListings = etsyData.sections.flatMap((section) => section.listings);
+  const etsySections = etsyData.sections
+    .map((section) => ({ ...section, listings: section.listings.filter(isPrintShrimpPhysicalListing) }))
+    .filter((section) => section.listings.length > 0);
+  const localSections = etsyData.localSections
+    .map((section) => ({ ...section, listings: section.listings.filter(isPrintShrimpPhysicalListing) }))
+    .filter((section) => section.listings.length > 0);
+  const etsyListings = etsySections.flatMap((section) => section.listings);
   const completionById = new Map(etsyListings.map((listing) => [Number(listing.id), listing.isComplete]));
   const records = await loadListingRecords([...completionById.keys()]);
   const recordById = new Map(records.map((listing) => [listing.id, listing]));
   const adapter = getPrintShrimpAdapterStatus();
 
+  const listingViews = new Map<number, Omit<SyncToPrintShrimpListing, 'etsySectionNames'>>();
+  await Promise.all(records.map(async (listing) => {
+    const isComplete = completionById.get(listing.id) ?? false;
+    const etsySku = listing.productConfig?.sku?.trim() ?? '';
+    let skuError: string | null = null;
+    try {
+      validatePrintShrimpBaseSku(etsySku);
+    } catch (error) {
+      skuError = error instanceof Error ? error.message : 'The Etsy SKU is invalid.';
+    }
+
+    const shouldInspectSourceContents = !skuError && isComplete && (adapter.configured || listing.printShrimpArtworkSyncs.length > 0);
+    const inspection = !shouldInspectSourceContents
+      ? { mapping: mapPrintShrimpRatioFiles(listing.files), hashes: new Map<PrintShrimpRatio, string>(), error: null }
+      : await inspectListingSources(listing, etsySku);
+    const validationError = skuError ?? ratioValidationMessage(inspection.mapping) ?? inspection.error;
+    const hasAllSixFiles = inspection.mapping.missingRatios.length === 0 && inspection.mapping.duplicateRatios.length === 0;
+    const stored = new Map(asStoredItems(listing).map((item) => [item.ratio, item]));
+    const hasPreviousSuccess = [...stored.values()].some((item) => item.lastSuccessfulSourceHash !== null);
+    const currentRows = PRINTSHRIMP_RATIOS.map((ratio) => {
+      const item = stored.get(ratio);
+      const identity = etsySku ? getPrintShrimpArtworkIdentity(etsySku, ratio) : null;
+      const currentHash = inspection.hashes.get(ratio);
+      const current = Boolean(
+        item
+        && item.status === 'SYNCED'
+        && currentHash
+        && item.lastSuccessfulSourceHash === currentHash
+        && item.printShrimpSku === identity?.sku,
+      );
+      return { ratio, item, current };
+    });
+    const sourceChanged = hasPreviousSuccess
+      ? currentRows.some(({ item, current }) => Boolean(item?.lastSuccessfulSourceHash) && !current)
+      : null;
+    const observedAt = new Date();
+    const staleRun = currentRows.some(({ item }) => item?.status === 'RUNNING' && !isActivePrintShrimpSync(item, observedAt));
+    const lastError = listing.printShrimpArtworkSyncs.find((item) => item.status === 'FAILED' && item.lastError)?.lastError
+      ?? (staleRun ? 'The previous PrintShrimp sync was interrupted. Retry the listing.' : null);
+    const allCurrent = currentRows.every(({ current }) => current);
+    const anyRunning = currentRows.some(({ item }) => item ? isActivePrintShrimpSync(item, observedAt) : false);
+    const anyStored = currentRows.some(({ item }) => Boolean(item));
+    const status: PrintShrimpListingStatus = !isComplete
+      ? 'INCOMPLETE'
+      : validationError ? 'INVALID'
+      : anyRunning ? 'SYNCING'
+      : lastError ? 'FAILED'
+      : allCurrent ? 'SYNCED'
+      : anyStored ? 'NEEDS_SYNC'
+      : 'NOT_SYNCED';
+    const syncDisabledReason = !isComplete
+      ? 'Complete this listing before syncing it to PrintShrimp.'
+      : validationError
+        ? validationError
+        : !adapter.configured ? adapter.message : null;
+
+    listingViews.set(listing.id, {
+      id: String(listing.id),
+      listingName: listing.localDirectoryName ?? listing.title,
+      etsyPrintId: listing.etsyId,
+      etsyCustomisedId: listing.etsyCustomisedId,
+      etsySku,
+      isComplete,
+      hasAllSixFiles,
+      status,
+      lastSuccessfulSyncAt: latestDate(listing.printShrimpArtworkSyncs.map((item) => item.lastSuccessfulSyncAt)),
+      sourceChanged,
+      validationError,
+      lastError,
+      canSync: isComplete && !validationError && adapter.configured && !anyRunning,
+      syncDisabledReason,
+      ratioFiles: PRINTSHRIMP_RATIOS.map((ratio) => ({
+        ratio,
+        fileName: inspection.mapping.files.get(ratio)?.originalFileName ?? inspection.mapping.files.get(ratio)?.localFileName ?? null,
+        synced: currentRows.find((row) => row.ratio === ratio)?.current ?? false,
+      })),
+    });
+  }));
+
+  const viewFor = (listingId: string, etsySectionNames: string[]) => {
+    const view = listingViews.get(Number(listingId));
+    if (!view) throw new Error(`Listing ${listingId} was not found.`);
+    return { ...view, etsySectionNames };
+  };
+
   return {
     adapter,
-    sections: await Promise.all(etsyData.sections.map(async (section) => ({
+    localSections: localSections.map((section) => {
+      const grouped = new Map<string, { listingId: string; etsySectionNames: Set<string> }>();
+      for (const listing of section.listings) {
+        const current = grouped.get(listing.id);
+        if (current) current.etsySectionNames.add(listing.etsyCategory);
+        else grouped.set(listing.id, { listingId: listing.id, etsySectionNames: new Set([listing.etsyCategory]) });
+      }
+      return {
+        id: section.id,
+        sectionName: section.sectionName,
+        listings: [...grouped.values()].map((listing) => viewFor(
+          listing.listingId,
+          [...listing.etsySectionNames].sort((first, second) => first.localeCompare(second)),
+        )),
+      };
+    }),
+    sections: etsySections.map((section) => ({
       id: section.id,
       sectionName: section.sectionName,
-      listings: await Promise.all(section.listings.map(async (etsyListing) => {
-        const listing = recordById.get(Number(etsyListing.id));
-        if (!listing) throw new Error(`Listing ${etsyListing.id} was not found.`);
-        const isComplete = completionById.get(listing.id) ?? false;
-        const etsySku = listing.productConfig?.sku?.trim() ?? '';
-        let skuError: string | null = null;
-        try {
-          validatePrintShrimpBaseSku(etsySku);
-        } catch (error) {
-          skuError = error instanceof Error ? error.message : 'The Etsy SKU is invalid.';
-        }
-
-        const shouldInspectSourceContents = !skuError && isComplete && (adapter.configured || listing.printShrimpArtworkSyncs.length > 0);
-        const inspection = !shouldInspectSourceContents
-          ? { mapping: mapPrintShrimpRatioFiles(listing.files), hashes: new Map<PrintShrimpRatio, string>(), error: null }
-          : await inspectListingSources(listing, etsySku);
-        const validationError = skuError ?? ratioValidationMessage(inspection.mapping) ?? inspection.error;
-        const hasAllSixFiles = inspection.mapping.missingRatios.length === 0 && inspection.mapping.duplicateRatios.length === 0;
-        const stored = new Map(asStoredItems(listing).map((item) => [item.ratio, item]));
-        const hasPreviousSuccess = [...stored.values()].some((item) => item.lastSuccessfulSourceHash !== null);
-        const currentRows = PRINTSHRIMP_RATIOS.map((ratio) => {
-          const item = stored.get(ratio);
-          const identity = etsySku ? getPrintShrimpArtworkIdentity(etsySku, ratio) : null;
-          const currentHash = inspection.hashes.get(ratio);
-          const current = Boolean(
-            item
-            && item.status === 'SYNCED'
-            && currentHash
-            && item.lastSuccessfulSourceHash === currentHash
-            && item.printShrimpSku === identity?.sku,
-          );
-          return { ratio, item, current };
-        });
-        const sourceChanged = hasPreviousSuccess
-          ? currentRows.some(({ item, current }) => Boolean(item?.lastSuccessfulSourceHash) && !current)
-          : null;
-        const observedAt = new Date();
-        const staleRun = currentRows.some(({ item }) => item?.status === 'RUNNING' && !isActivePrintShrimpSync(item, observedAt));
-        const lastError = listing.printShrimpArtworkSyncs.find((item) => item.status === 'FAILED' && item.lastError)?.lastError
-          ?? (staleRun ? 'The previous PrintShrimp sync was interrupted. Retry the listing.' : null);
-        const allCurrent = currentRows.every(({ current }) => current);
-        const anyRunning = currentRows.some(({ item }) => item ? isActivePrintShrimpSync(item, observedAt) : false);
-        const anyStored = currentRows.some(({ item }) => Boolean(item));
-        const status: PrintShrimpListingStatus = !isComplete
-          ? 'INCOMPLETE'
-          : validationError ? 'INVALID'
-          : anyRunning ? 'SYNCING'
-          : lastError ? 'FAILED'
-          : allCurrent ? 'SYNCED'
-          : anyStored ? 'NEEDS_SYNC'
-          : 'NOT_SYNCED';
-        const syncDisabledReason = !isComplete
-          ? 'Complete this listing before syncing it to PrintShrimp.'
-          : validationError
-            ? validationError
-            : !adapter.configured ? adapter.message : null;
-
-        return {
-          id: String(listing.id),
-          listingName: listing.localDirectoryName ?? listing.title,
-          etsyPrintId: listing.etsyId,
-          etsyDownloadId: listing.etsyDownloadId,
-          etsySku,
-          isComplete,
-          hasAllSixFiles,
-          status,
-          lastSuccessfulSyncAt: latestDate(listing.printShrimpArtworkSyncs.map((item) => item.lastSuccessfulSyncAt)),
-          sourceChanged,
-          validationError,
-          lastError,
-          canSync: isComplete && !validationError && adapter.configured && !anyRunning,
-          syncDisabledReason,
-          ratioFiles: PRINTSHRIMP_RATIOS.map((ratio) => ({
-            ratio,
-            fileName: inspection.mapping.files.get(ratio)?.originalFileName ?? inspection.mapping.files.get(ratio)?.localFileName ?? null,
-            synced: currentRows.find((row) => row.ratio === ratio)?.current ?? false,
-          })),
-        };
-      })),
-    }))),
+      listings: section.listings.map((listing) => viewFor(listing.id, [section.sectionName])),
+    })),
   };
 }
 
@@ -418,8 +454,14 @@ export async function syncListingToPrintShrimp(listingId: string, client: PrintS
   const numericListingId = Number(listingId);
   if (!Number.isInteger(numericListingId) || numericListingId < 1) throw new Error('Choose a valid listing to sync.');
   const etsyData = await getSyncToEtsyData();
-  const canonicalListing = etsyData.sections.flatMap((section) => section.listings).find((listing) => Number(listing.id) === numericListingId);
-  if (!canonicalListing) throw new Error('Listing not found.');
+  const matchingListings = etsyData.sections
+    .flatMap((section) => section.listings)
+    .filter((listing) => Number(listing.id) === numericListingId);
+  if (matchingListings.length === 0) throw new Error('Listing not found.');
+  const canonicalListing = matchingListings.find(isPrintShrimpPhysicalListing);
+  if (!canonicalListing) {
+    throw new Error('Only listings configured for Prints / Frames or Customised Prints can be synced to PrintShrimp.');
+  }
   if (!canonicalListing.isComplete) throw new Error('Complete this listing before syncing it to PrintShrimp.');
 
   const listing = (await loadListingRecords([numericListingId]))[0];

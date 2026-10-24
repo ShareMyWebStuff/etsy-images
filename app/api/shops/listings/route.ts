@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createLocalListing, deleteListing } from '@/lib/local-listings';
+import { createLocalListing, deleteListing, updateLocalListing } from '@/lib/local-listings';
 import { getSubSectionListingsPageData } from '@/lib/listing-table';
 
 type CreateListingRequest = {
@@ -78,6 +78,24 @@ export async function POST(request: Request) {
       { error: error instanceof Error ? error.message : 'Unable to create listing.' },
       { status: 500 }
     );
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const body = await request.json() as CreateListingRequest & { listingId?: string };
+    if (!body.shopId || !body.sectionId || !body.subSectionId || !body.listingId) {
+      return NextResponse.json({ error: 'Missing listing context.' }, { status: 400 });
+    }
+    if (typeof body.listingName !== 'string' || ![1, 3, 6, 12].includes(body.numberOfItems ?? 0)
+      || !Number.isSafeInteger(body.ourCategoryId) || !body.ourCategoryId) {
+      return NextResponse.json({ error: 'Enter a listing name, choose 1, 3, 6, or 12 items, and choose a template.' }, { status: 400 });
+    }
+    await updateLocalListing(body.shopId, body.sectionId, body.subSectionId, body.listingId,
+      body.listingName, body.numberOfItems!, body.ourCategoryId);
+    return NextResponse.json({ data: await getSubSectionListingsPageData(body.shopId, body.sectionId, body.subSectionId) });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unable to update listing.' }, { status: 400 });
   }
 }
 

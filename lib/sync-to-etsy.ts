@@ -13,17 +13,58 @@ import { effectiveListingCustomisation } from '@/lib/listing-customisation';
 
 const MAX_ETSY_DOWNLOAD_SIZE_BYTES = 20 * 1024 * 1024;
 
-export type SyncToEtsyData = {
-  sections: Array<{
-    id: string;
+export type SyncToEtsyListing = {
+  id: string;
+  listingName: string;
+  subjectName: string;
+  localDirectoryName: string | null;
+  subSectionId: string;
+  subSectionName: string;
+  hasEtsyListing: boolean;
+  hasActiveEtsyListing: boolean;
+  isComplete: boolean;
+  isSynced: boolean;
+  isPublished: boolean;
+  isInactive: boolean;
+  canSync: boolean;
+  pendingChanges: string[];
+  syncDisabledReason: string | null;
+  etsyProductType: 'physical' | 'digital';
+  etsyListingMode: 'physical' | 'download' | 'both';
+  etsyCategory: string;
+  categoryUses: string[];
+  syncVariants: EtsySyncVariant[];
+  listOnEtsy: boolean;
+};
+
+export type SyncToEtsySection = {
+  id: string;
+  categoryId: string;
+  shopId: string;
+  sectionName: string;
+  etsyShopSectionId: number;
+  hasEtsySection: boolean;
+  showSubject: boolean;
+  listings: SyncToEtsyListing[];
+};
+
+export type LocalSyncToEtsySection = {
+  id: string;
+  shopId: string;
+  sectionName: string;
+  showSubject: boolean;
+  etsySections: Array<{
     categoryId: string;
-    shopId: string;
     sectionName: string;
     etsyShopSectionId: number;
     hasEtsySection: boolean;
-    showSubject: boolean;
-    listings: Array<{ id: string; listingName: string; subjectName: string; localDirectoryName: string | null; subSectionId: string; subSectionName: string; hasEtsyListing: boolean; hasActiveEtsyListing: boolean; isComplete: boolean; isSynced: boolean; isPublished: boolean; isInactive: boolean; canSync: boolean; pendingChanges: string[]; syncDisabledReason: string | null; etsyProductType: 'physical' | 'digital'; etsyListingMode: 'physical' | 'download' | 'both'; etsyCategory: string; categoryUses: string[]; syncVariants: EtsySyncVariant[]; listOnEtsy: boolean }>;
   }>;
+  listings: SyncToEtsyListing[];
+};
+
+export type SyncToEtsyData = {
+  localSections: LocalSyncToEtsySection[];
+  sections: SyncToEtsySection[];
 };
 
 export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
@@ -375,11 +416,44 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
         })))).filter((listing): listing is NonNullable<typeof listing> => listing !== null),
     })));
 
-  const categories = new Map<string, SyncToEtsyData['sections'][number]>();
+  type PreparedLocalSection = (typeof localSections)[number];
+  type PreparedListing = PreparedLocalSection['listings'][number];
+  type PreparedTemplateCategory = PreparedListing['templateCategories'][number];
+
+  const buildCategoryListing = (
+    listing: PreparedListing,
+    category: PreparedTemplateCategory,
+  ): SyncToEtsyListing => {
+    const { templateCategories: _templateCategories, variantStatuses, ...baseListing } = listing;
+    const statuses = category.variants.map((variant) => variantStatuses[variant]);
+    const pendingChanges = [...new Set(statuses.flatMap((status) => status.pendingChanges))];
+    return {
+      ...baseListing,
+      etsyProductType: category.variants.length === 1 && category.variants[0] === 'download' ? 'digital' : 'physical',
+      etsyListingMode: category.variants.length > 1
+        ? 'both'
+        : category.variants[0] === 'download' ? 'download' : 'physical',
+      etsyCategory: category.title,
+      categoryUses: category.uses,
+      syncVariants: category.variants,
+      hasEtsyListing: statuses.some((status) => status.hasEtsyListing),
+      hasActiveEtsyListing: statuses.some((status) => status.hasActiveEtsyListing),
+      isComplete: statuses.every((status) => status.isComplete),
+      isSynced: statuses.every((status) => status.isSynced),
+      isPublished: statuses.every((status) => status.isPublished),
+      isInactive: statuses.every((status) => status.isInactive),
+      canSync: statuses.some((status) => status.canSync),
+      pendingChanges,
+      syncDisabledReason: statuses.some((status) => status.canSync)
+        ? null
+        : statuses.find((status) => status.syncDisabledReason)?.syncDisabledReason ?? null,
+    };
+  };
+
+  const categories = new Map<string, SyncToEtsySection>();
   for (const localSection of localSections) {
     for (const listing of localSection.listings) {
-      const { templateCategories, variantStatuses, ...baseListing } = listing;
-      for (const category of templateCategories) {
+      for (const category of listing.templateCategories) {
         const key = `${localSection.shopId}:${category.id}`;
         let grouped = categories.get(key);
         if (!grouped) {
@@ -397,38 +471,59 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
         } else {
           grouped.showSubject ||= localSection.showSubject;
         }
-        const statuses = category.variants.map((variant) => variantStatuses[variant]);
-        const pendingChanges = [...new Set(statuses.flatMap((status) => status.pendingChanges))];
-        grouped.listings.push({
-          ...baseListing,
-          etsyProductType: category.variants.length === 1 && category.variants[0] === 'download' ? 'digital' : 'physical',
-          etsyListingMode: category.variants.length > 1
-            ? 'both'
-            : category.variants[0] === 'download' ? 'download' : 'physical',
-          etsyCategory: category.title,
-          categoryUses: category.uses,
-          syncVariants: category.variants,
-          hasEtsyListing: statuses.some((status) => status.hasEtsyListing),
-          hasActiveEtsyListing: statuses.some((status) => status.hasActiveEtsyListing),
-          isComplete: statuses.every((status) => status.isComplete),
-          isSynced: statuses.every((status) => status.isSynced),
-          isPublished: statuses.every((status) => status.isPublished),
-          isInactive: statuses.every((status) => status.isInactive),
-          canSync: statuses.some((status) => status.canSync),
-          pendingChanges,
-          syncDisabledReason: statuses.some((status) => status.canSync)
-            ? null
-            : statuses.find((status) => status.syncDisabledReason)?.syncDisabledReason ?? null,
-        });
+        grouped.listings.push(buildCategoryListing(listing, category));
       }
     }
   }
 
+  const localViewSections: LocalSyncToEtsySection[] = localSections.map((localSection) => {
+    const etsySections = new Map<number, LocalSyncToEtsySection['etsySections'][number]>();
+    const listings: SyncToEtsyListing[] = [];
+    for (const listing of localSection.listings) {
+      for (const category of listing.templateCategories) {
+        if (!etsySections.has(category.id)) {
+          etsySections.set(category.id, {
+            categoryId: String(category.id),
+            sectionName: category.title,
+            etsyShopSectionId: category.etsyShopSectionId,
+            hasEtsySection: category.existsOnEtsy,
+          });
+        }
+        listings.push(buildCategoryListing(listing, category));
+      }
+    }
+    return {
+      id: `local:${localSection.id}`,
+      shopId: localSection.shopId,
+      sectionName: localSection.sectionName,
+      showSubject: localSection.showSubject,
+      etsySections: [...etsySections.values()].sort((first, second) => (
+        first.sectionName.localeCompare(second.sectionName, undefined, { sensitivity: 'base' })
+      )),
+      listings: listings.sort((first, second) => (
+        first.listingName.localeCompare(second.listingName, undefined, { sensitivity: 'base' })
+        || first.etsyCategory.localeCompare(second.etsyCategory, undefined, { sensitivity: 'base' })
+      )),
+    };
+  }).filter((section) => section.listings.length > 0);
+
   return {
-    sections: [...categories.values()].sort((first, second) => (
+    localSections: localViewSections.sort((first, second) => (
       first.sectionName.localeCompare(second.sectionName, undefined, { sensitivity: 'base' })
       || first.shopId.localeCompare(second.shopId)
     )),
+    sections: [...categories.values()]
+      .map((section) => ({
+        ...section,
+        listings: [...section.listings].sort((first, second) => (
+          first.listingName.localeCompare(second.listingName, undefined, { sensitivity: 'base' })
+          || first.etsyCategory.localeCompare(second.etsyCategory, undefined, { sensitivity: 'base' })
+        )),
+      }))
+      .sort((first, second) => (
+        first.sectionName.localeCompare(second.sectionName, undefined, { sensitivity: 'base' })
+        || first.shopId.localeCompare(second.shopId)
+      )),
   };
 }
 
