@@ -43,6 +43,8 @@ describe('combined listing details prompt', () => {
     expect(prompt).not.toContain('FRAME_COLOURS = "No Frame');
     expect(prompt).toContain('DIGITAL DOWNLOAD RULES');
     expect(prompt).toContain('<ETSY_LISTING_DATA>');
+    expect(prompt).toContain('counting every letter, number, space and punctuation mark');
+    expect(prompt).toContain('"blue morpho butterfly" has 21 characters and is invalid');
   });
 
   it('parses the structured response used by the automation', () => {

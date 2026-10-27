@@ -369,7 +369,7 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
           return {
             id: String(listing.id),
             listingName: listing.localDirectoryName ?? listing.title,
-            subjectName: listing.sourceSection?.title ?? 'Uncategorised',
+            subjectName: listing.sourceSection?.title ?? section.title,
             localDirectoryName: listing.localDirectoryName,
             subSectionId: String(subSection.id),
             subSectionName: subSection.name,

@@ -21,6 +21,7 @@ import {
 import { normalizeListingArtworkOrientation } from '@/lib/listing-print-crops';
 import { prisma } from '@/lib/prisma';
 import { printableDownloadDescriptionGuide } from '@/lib/printable-download-specs';
+import { generateValidatedListingResponse } from '@/lib/generated-etsy-tags';
 
 // This model is available for on-demand inference in the application's default
 // eu-west-2 region. Keep AWS_BEDROCK_MODEL_ID as an escape hatch for accounts
@@ -128,8 +129,9 @@ export async function generateListingDetailsWithBedrock(context: ListingEditorCo
   };
   const missing = missingCombinedListingDetailsPromptFields(values);
   if (missing.length > 0) throw new Error(`Complete ${missing.join(', ')} on Overview before generating details.`);
-  const responseText = await sendListingDetailsPrompt(buildCombinedListingDetailsPrompt(values));
-  const generated = parseGeneratedListingDetails(responseText);
+  const generated = await generateValidatedListingResponse(
+    buildCombinedListingDetailsPrompt(values), sendListingDetailsPrompt, parseGeneratedListingDetails,
+  );
   await saveGeneratedListingDetails(context, generated);
   await saveListingDetails({ ...context, quantity: data.listing.quantity && data.listing.quantity > 0 ? data.listing.quantity : 999, digitalQuantity: 999 });
   await setListingEtsySku(context);
@@ -203,7 +205,7 @@ export async function generateMultipleListingDetailsWithBedrock(context: Listing
     printableDownloadDescriptionGuide(orientation),
   ].join('\n')).join('\n\n');
 
-  const responseText = await sendListingDetailsPrompt(buildMultipleListingDetailsPrompt({
+  const prompt = buildMultipleListingDetailsPrompt({
     sectionName: data.section.sectionName,
     listingName: data.listing.localDirectoryName ?? data.listing.title,
     listingDescription: data.listing.listingDescription,
@@ -219,8 +221,10 @@ export async function generateMultipleListingDetailsWithBedrock(context: Listing
     digitalFileGuides,
     recommendedPaper: 'Good-quality matte photo or art paper around 200–250 gsm',
     licenceType: 'Personal use only: printing for the buyer’s own home décor or one personal printed gift is permitted. File sharing, redistribution, digital resale, commercial reproduction, selling printed copies, and modifying the artwork for resale are prohibited. A printing service may receive the relevant file only to produce the permitted personal print or gift.',
-  }));
-  const generated = parseGeneratedMultipleListingDetails(responseText);
+  });
+  const generated = await generateValidatedListingResponse(
+    prompt, sendListingDetailsPrompt, parseGeneratedMultipleListingDetails,
+  );
   await saveGeneratedListingDetails(context, generated);
   await saveListingDetails({
     ...context,

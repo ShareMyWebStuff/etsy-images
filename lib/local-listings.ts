@@ -1710,6 +1710,34 @@ async function persistDigitalProductMapping(
   });
 }
 
+async function prepareExistingListingForDigitalSync(
+  etsyListingId: string,
+  product: ListingProductForSync,
+  listingSku: string,
+  amountPence: number,
+  quantity: number,
+) {
+  const remote = await fetchEtsyListingMutation<Record<string, unknown>>(
+    `/listings/${encodeURIComponent(etsyListingId)}?legacy=false`, { method: 'GET' },
+  );
+  const remoteType = remote?.listing_type ?? remote?.type;
+  if (remoteType === 'download') return;
+  if (remoteType !== 'physical' && remoteType !== 'both') {
+    throw new Error(`Unable to verify the Etsy listing type for digital listing ${etsyListingId}.`);
+  }
+  const inventory = await fetchEtsyListingMutation<EtsyInventory>(
+    `/listings/${encodeURIComponent(etsyListingId)}/inventory?legacy=false`, { method: 'GET' },
+  );
+  // The inventory reset runs while the listing is still physical, so retain
+  // an existing processing profile until Etsy accepts the type conversion.
+  const readinessStateId = (inventory.products ?? [])
+    .filter((item) => item.is_deleted !== true)
+    .flatMap((item) => (item.offerings ?? []).filter((offering) => offering.is_deleted !== true))
+    .map((offering) => positiveEtsyId(offering.readiness_state_id))
+    .find((id) => id !== null) ?? positiveEtsyId(remote?.readiness_state_id);
+  await putSingleDigitalInventory(etsyListingId, product, listingSku, amountPence, quantity, readinessStateId);
+}
+
 async function syncPhysicalProductInventory(
   listing: { id: number; etsyId: string | null; quantity: number | null; productConfig: { sku: string | null } | null; products: ListingProductForSync[] },
   deliverySettings: PhysicalDeliverySettings,
@@ -2055,6 +2083,16 @@ export async function syncListingToEtsy(
   }
   const enabled = configuredVariants.filter((variant) => requested.includes(variant));
 
+  if (enabled.includes('download') && listing.etsyDownloadId) {
+    const physicalOwner = await prisma.etsyListing.findFirst({
+      where: { OR: [{ etsyId: listing.etsyDownloadId }, { etsyCustomisedId: listing.etsyDownloadId }] },
+      select: { id: true },
+    });
+    if (physicalOwner) {
+      throw new Error('The digital Etsy ID is also linked to a physical print listing. Correct the Etsy listing IDs before syncing the digital download.');
+    }
+  }
+
   const physicalProducts = listing.products.filter((product) => product.productType === 'physical');
   const digitalProduct = listing.products.find((product) => product.productType === 'digital');
   const configuredDownloadSection = listing.ourCategory?.digitalDownload
@@ -2179,6 +2217,11 @@ export async function syncListingToEtsy(
     const mutationPath = existingId
       ? `${shopPath}/${encodeURIComponent(existingId)}${isDownload ? '' : '?legacy=false'}`
       : `${shopPath}${isDownload ? '' : '?legacy=false'}`;
+    if (isDownload && existingId) {
+      await prepareExistingListingForDigitalSync(
+        existingId, digitalProduct!, listingSku, basePriceAmount, listing.digitalQuantity ?? 999,
+      );
+    }
     const payload = await fetchEtsyListingMutation<unknown>(mutationPath, {
       method: existingId ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

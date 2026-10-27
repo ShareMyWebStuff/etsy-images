@@ -1,5 +1,6 @@
 import type { GeneratedListingDetails } from '@/lib/combined-listing-details-prompt';
 import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
+import { GENERATED_ETSY_TAG_RULES, validateGeneratedEtsyTagLengths } from '@/lib/generated-etsy-tags';
 
 export type MultipleListingPromptItem = {
   position: number;
@@ -146,6 +147,8 @@ ETSY TAGS
 
 Return exactly 13 distinct tags shared by the physical and digital versions. Every tag must be 20 characters or fewer, contain no emoji, and be relevant to the complete grouped collection. Cover the subjects, shared theme, children's or nursery décor, print sets, gallery walls, digital printables and appropriate gifting searches. Do not use unsupported colours, styles, materials or personalisation terms.
 
+${GENERATED_ETSY_TAG_RULES}
+
 ETSY COLOURS
 
 Choose the two best representative Etsy colours for the collection as a whole using the artwork descriptions and the saved source colours. Prefer colours that recur across the grouped artworks; do not simply copy the first artwork. The secondary colour must differ from the primary colour.
@@ -190,8 +193,7 @@ export function parseGeneratedMultipleListingDetails(responseText: string): Gene
     .filter(Boolean)
     .filter((tag, index, all) => all.findIndex((candidate) => candidate.toLocaleLowerCase() === tag.toLocaleLowerCase()) === index);
   if (tags.length !== 13) throw new Error('AWS Bedrock must return exactly 13 distinct Etsy tags for a grouped listing.');
-  const longTag = tags.find((tag) => Array.from(tag).length > 20);
-  if (longTag) throw new Error(`AWS Bedrock returned an Etsy tag longer than 20 characters: ${longTag}`);
+  validateGeneratedEtsyTagLengths(tags);
 
   const printTitle = requiredText(record.printTitle, 'the Print title');
   const digitalTitle = requiredText(record.digitalTitle, 'the Digital Download title');

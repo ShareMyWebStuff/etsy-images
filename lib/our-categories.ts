@@ -46,7 +46,7 @@ import { createListingPersonalisationPreview } from '@/lib/listing-personalisati
 import { removeListingImages } from '@/lib/listing-image-reset';
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';
 import type { ListingArtworkOrientation, ListingPrintCropSettings } from '@/lib/listing-print-crops';
-import { mkdir, readFile, readImagePreview, rm, unlink, writeFile } from '@/lib/s3-listing-storage';
+import { copyFile, mkdir, readFile, readImagePreview, rm, unlink, writeFile } from '@/lib/s3-listing-storage';
 
 const TEMPLATE_DIRECTORY = 'EtsyListingTemplates';
 const MAX_TEMPLATE_BYTES = 25 * 1024 * 1024;
@@ -164,6 +164,7 @@ export type OurCategoryListRow = {
   followedTemplateName: string | null;
   listingCount: number;
   imageTemplateCount: number;
+  itemCount?: number;
 };
 
 function defaultBooleanMap(keys: readonly string[]) {
@@ -535,7 +536,7 @@ export async function getOurCategories(): Promise<OurCategoryListRow[]> {
   const [rows, metadata] = await Promise.all([
     prisma.ourCategory.findMany({
       orderBy: { name: 'asc' },
-      select: { id: true, name: true, _count: { select: { listings: true, imageTemplates: true } } },
+      select: { id: true, name: true, itemCount: true, _count: { select: { listings: true, imageTemplates: true } } },
     }),
     prisma.$queryRaw<Array<{ id: number; templateType: string; followedTemplateName: string | null }>>`
       SELECT template.id, template.templateType, followed.name AS followedTemplateName
@@ -551,6 +552,7 @@ export async function getOurCategories(): Promise<OurCategoryListRow[]> {
     followedTemplateName: metadataById.get(row.id)?.followedTemplateName ?? null,
     listingCount: row._count.listings,
     imageTemplateCount: row._count.imageTemplates,
+    itemCount: row.itemCount,
   }));
 }
 
@@ -1233,6 +1235,85 @@ export async function updateOurCategoryImageTemplate(templateId: string, formDat
     return templateView({ ...updated, ...calibration });
   } catch (error) {
     if (replacementPath) await unlink(replacementPath).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function copyOurTemplateImages(sourceCategoryId: string, targetCategoryId: string) {
+  const sourceId = Number(sourceCategoryId);
+  const targetId = Number(targetCategoryId);
+  if (![sourceId, targetId].every((id) => Number.isSafeInteger(id) && id > 0) || sourceId === targetId) {
+    throw new Error('Choose different source and destination templates.');
+  }
+  const validate = async (client: Prisma.TransactionClient) => {
+    const rows = await client.ourCategory.findMany({
+      where: { id: { in: [sourceId, targetId] } },
+      include: { _count: { select: { imageTemplates: true } } },
+    });
+    const source = rows.find((row) => row.id === sourceId);
+    const target = rows.find((row) => row.id === targetId);
+    if (!source || !target) throw new Error('The selected template no longer exists.');
+    if (source.templateType !== target.templateType) throw new Error('Choose templates of the same type.');
+    if (source.itemCount !== target.itemCount) throw new Error('Choose templates with the same number of items.');
+    if (source._count.imageTemplates === 0) throw new Error('Copy From must have at least one image template.');
+    if (target._count.imageTemplates > 0) {
+      throw new Error('Copy To must have no image templates.');
+    }
+    return { source, target };
+  };
+  await validate(prisma);
+  const images = await prisma.ourCategoryImageTemplate.findMany({
+    where: { categoryId: sourceId }, orderBy: [{ position: 'asc' }, { id: 'asc' }],
+  });
+  const copiedPaths: string[] = [];
+  try {
+    const prepared: Array<{ image: OurCategoryImageTemplate; view: OurCategoryImageTemplateView; stored: OurCategoryImageTemplate; imagePath: string }> = [];
+    for (const image of images) {
+      const [view, stored] = await Promise.all([resolvedImageTemplateView(image), resolvedStoredImageTemplate(image)]);
+      const extension = path.extname(stored.imagePath) || '.png';
+      const imagePath = path.join(ETSY_LISTINGS_DIRECTORY, TEMPLATE_DIRECTORY, String(targetId), `${randomUUID()}${extension}`);
+      // Register before copying so partial S3 copies and previews are cleaned up on failure.
+      copiedPaths.push(imagePath);
+      await copyFile(stored.imagePath, imagePath);
+      prepared.push({ image, view, stored, imagePath });
+    }
+    await prisma.$transaction(async (tx) => {
+      await validate(tx);
+      const currentImages = await tx.ourCategoryImageTemplate.findMany({
+        where: { categoryId: sourceId }, orderBy: [{ position: 'asc' }, { id: 'asc' }],
+      });
+      if (currentImages.length !== images.length || currentImages.some((image, index) =>
+        image.id !== images[index].id || image.updatedAt.getTime() !== images[index].updatedAt.getTime())) {
+        throw new Error('The source template changed during copying. Please try again.');
+      }
+      for (const [position, { image, view, stored, imagePath }] of prepared.entries()) {
+        await tx.ourCategoryImageTemplate.create({ data: {
+          categoryId: targetId,
+          name: image.name,
+          description: image.description,
+          imagePath,
+          originalFileName: stored.originalFileName,
+          contentType: stored.contentType,
+          sizeBytes: stored.sizeBytes,
+          imageWidth: view.imageWidth,
+          imageHeight: view.imageHeight,
+          openingCorners: view.openingRegions[0]?.corners as unknown as Prisma.InputJsonValue ?? Prisma.JsonNull,
+          openingRegions: view.openingRegions as unknown as Prisma.InputJsonValue,
+          topText: view.topText,
+          bottomText: view.bottomText,
+          fontId: view.fontId,
+          displayFonts: view.displayFonts,
+          borderEnabled: view.borderEnabled,
+          borderSizePercent: view.borderSizePercent,
+          useOnPrints: view.useOnPrints,
+          useOnCustomised: view.useOnCustomised,
+          useOnDigital: view.useOnDigital,
+          position,
+        } });
+      }
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30000 });
+  } catch (error) {
+    await Promise.allSettled(copiedPaths.map((imagePath) => unlink(imagePath)));
     throw error;
   }
 }

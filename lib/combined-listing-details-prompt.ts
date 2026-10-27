@@ -1,5 +1,6 @@
 import { buildDetailsGeneratePrompt } from '@/lib/details-generate-prompt';
 import { buildDownloadDetailsPrompt } from '@/lib/download-details-prompt';
+import { GENERATED_ETSY_TAG_RULES, validateGeneratedEtsyTagLengths } from '@/lib/generated-etsy-tags';
 
 export type CombinedListingDetailsPromptValues = {
   sectionName: string;
@@ -122,6 +123,8 @@ Create two distinct Etsy listings for the same artwork:
 
 Use the complete copywriting, accuracy, title, description and tag rules in both supplied rule sets. The application has one shared Tags tab, so return one set of exactly 13 distinct tags suitable for the artwork and both listing formats. Every tag must be 20 characters or fewer.
 
+${GENERATED_ETSY_TAG_RULES}
+
 PHYSICAL PRINT RULES
 ====================
 ${printPrompt}
@@ -193,6 +196,7 @@ ACCURACY RULES
 - The digital bundle contains six high-resolution JPEG artwork files represented by DIGITAL_FILES_INCLUDED, plus a separate How_To_Print_Guide.pdf. Do not describe it as seven JPEG files and do not add sizes that are not represented in DIGITAL_FILES_INCLUDED.
 - Keep titles at 140 characters or fewer.
 - Return exactly 13 distinct Etsy tags. Each tag must be 20 characters or fewer.
+${GENERATED_ETSY_TAG_RULES}
 - Use natural British English. Avoid keyword stuffing and repeated sentences.
 - Return plain text only. Do not use Markdown code fences, JSON, commentary, explanations or downloadable files.
 
@@ -324,8 +328,7 @@ function validateGeneratedListingDetails(generated: GeneratedListingDetails) {
   if (generated.tags.length === 0 || generated.tags.length > 13) {
     throw new Error('The output must contain between 1 and 13 distinct Etsy tags.');
   }
-  const longTag = generated.tags.find((tag) => Array.from(tag).length > 20);
-  if (longTag) throw new Error(`The Etsy tag "${longTag}" is longer than 20 characters.`);
+  validateGeneratedEtsyTagLengths(generated.tags);
   return generated;
 }
 
