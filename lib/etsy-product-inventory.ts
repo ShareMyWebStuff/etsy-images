@@ -171,15 +171,18 @@ export function buildPersonalizationQuestions(
   customisePrints: boolean,
   customTop: boolean,
   customBottom: boolean,
+  customisationFeePence: number,
 ) {
-  if (!customisePrints) return [];
+  if (!customisePrints || (!customTop && !customBottom)) return [];
+  if (!Number.isSafeInteger(customisationFeePence) || customisationFeePence < 0) {
+    throw new Error('Set a valid customisation fee on the Set Prices page before syncing.');
+  }
 
   const textInputBase = {
     question_type: 'text_input' as const,
     required: false,
     max_allowed_characters: 40,
-    // Etsy requires an explicit zero to remove an existing add-on charge.
-    add_on_price: 0,
+    add_on_price: customisationFeePence / 100,
   };
   return [
     {
@@ -188,12 +191,17 @@ export function buildPersonalizationQuestions(
       required: true,
       options: ETSY_PERSONALISATION_FONT_OPTIONS.map((label) => ({ label })),
     },
-    customTop ? {
+    customTop && customBottom ? {
+      ...textInputBase,
+      question_text: 'Custom Text',
+      max_allowed_characters: 100,
+      instructions: 'Use Top: and/or Bottom: before your wording on separate lines. Max 40 characters each. One fee; leave blank for none.',
+    } : customTop ? {
       ...textInputBase,
       question_text: 'Top Text',
       instructions: 'Enter the wording exactly as you would like it to appear at the top.',
     } : null,
-    customBottom ? {
+    !customTop && customBottom ? {
       ...textInputBase,
       question_text: 'Bottom Text',
       instructions: 'Enter the wording exactly as you would like it to appear at the bottom.',

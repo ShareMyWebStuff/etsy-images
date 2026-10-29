@@ -1110,17 +1110,37 @@ export async function deleteListingFromEtsy(shopId: string, sectionId: string, s
   }
 }
 
-export async function publishListing(shopId: string, sectionId: string, subSectionId: string, listingId: string) {
+function etsyListingStateTargets(
+  listing: {
+    etsyId: string | null; state: string | null;
+    etsyCustomisedId: string | null; etsyCustomisedState: string | null;
+    etsyDownloadId: string | null; etsyDownloadState: string | null;
+  },
+  requestedVariants?: EtsySyncVariant[],
+) {
+  const remoteListings = [
+    { variant: 'print' as const, id: listing.etsyId, state: listing.state },
+    { variant: 'customised' as const, id: listing.etsyCustomisedId, state: listing.etsyCustomisedState },
+    { variant: 'download' as const, id: listing.etsyDownloadId, state: listing.etsyDownloadState },
+  ];
+  if (requestedVariants !== undefined && (requestedVariants.length === 0
+    || requestedVariants.some((variant) => !['print', 'customised', 'download'].includes(variant)))) {
+    throw new Error('Choose the Etsy product type to update.');
+  }
+  const selected = remoteListings.filter((remote) => requestedVariants?.includes(remote.variant) ?? remote.id !== null);
+  if (selected.length === 0 || selected.some((remote) => !remote.id)) {
+    throw new Error('Sync the selected Etsy product before changing its publication status.');
+  }
+  if (selected.some((remote) => remoteListings.some((other) => other.id === remote.id && !selected.includes(other)))) {
+    throw new Error('The selected Etsy ID is shared with another product type. Correct the Etsy listing IDs before changing its publication status.');
+  }
+  return selected;
+}
+
+export async function publishListing(shopId: string, sectionId: string, subSectionId: string, listingId: string, requestedVariants?: EtsySyncVariant[]) {
   const context = await getListingContext(shopId, sectionId, subSectionId);
   const listing = await loadListingForAction(context.subSection.id, listingId);
-  const configured = [
-    ...(listing.etsyId ? [{ variant: 'print' as const, id: listing.etsyId }] : []),
-    ...(listing.etsyCustomisedId ? [{ variant: 'customised' as const, id: listing.etsyCustomisedId }] : []),
-    ...(listing.etsyDownloadId ? [{ variant: 'download' as const, id: listing.etsyDownloadId }] : []),
-  ];
-  if (configured.length === 0 || configured.some(({ id }) => id === null)) {
-    throw new Error('Sync every enabled print and digital Etsy listing before publishing.');
-  }
+  const configured = etsyListingStateTargets(listing, requestedVariants);
   for (const remote of configured) {
     if (!remote.id) continue;
     const payload = await fetchEtsyListingMutation<unknown>(
@@ -1150,15 +1170,10 @@ export async function publishListing(shopId: string, sectionId: string, subSecti
   }
 }
 
-export async function makeListingInactive(shopId: string, sectionId: string, subSectionId: string, listingId: string) {
+export async function makeListingInactive(shopId: string, sectionId: string, subSectionId: string, listingId: string, requestedVariants?: EtsySyncVariant[]) {
   const context = await getListingContext(shopId, sectionId, subSectionId);
   const listing = await loadListingForAction(context.subSection.id, listingId);
-  const remoteListings = [
-    { variant: 'print' as const, id: listing.etsyId, state: listing.state },
-    { variant: 'customised' as const, id: listing.etsyCustomisedId, state: listing.etsyCustomisedState },
-    { variant: 'download' as const, id: listing.etsyDownloadId, state: listing.etsyDownloadState },
-  ];
-  if (remoteListings.every(({ id }) => id === null)) throw new Error('This listing does not have an Etsy listing id.');
+  const remoteListings = etsyListingStateTargets(listing, requestedVariants);
   for (const remote of remoteListings) {
     if (!remote.id || (remote.state !== 'active' && remote.state !== 'published')) continue;
     const payload = await fetchEtsyListingMutation<unknown>(
@@ -1866,14 +1881,15 @@ function personalizationQuestions(payload: unknown): EtsyPersonalizationQuestion
     : [];
 }
 
-async function syncListingPersonalization(
+export async function syncListingPersonalization(
   shopId: string,
   etsyListingId: string,
   customisePrints: boolean,
   customTop: boolean,
-  customBottom: boolean
+  customBottom: boolean,
+  customisationFeePence: number,
 ) {
-  const desired = buildPersonalizationQuestions(customisePrints, customTop, customBottom);
+  const desired = buildPersonalizationQuestions(customisePrints, customTop, customBottom, customisationFeePence);
   const currentPayload = await fetchEtsyListingMutation<unknown>(
     `/listings/${encodeURIComponent(etsyListingId)}/personalization`,
     { method: 'GET' }
@@ -2134,13 +2150,24 @@ export async function syncListingToEtsy(
     ...(enabled.some((variant) => variant !== 'download') ? physicalProducts : []),
     ...(enabled.includes('download') && digitalProduct ? [digitalProduct] : []),
   ];
-  const priceKeys = [...new Set(relevantProducts.map(({ priceKey }) => priceKey))];
+  const needsCustomisationFee = customisation.customisePrints && (customisation.customTop || customisation.customBottom)
+    && (enabled.includes('customised') || (enabled.includes('print') && customisedSharesPrintSection));
+  const priceKeys = [...new Set([
+    ...relevantProducts.map(({ priceKey }) => priceKey),
+    ...(needsCustomisationFee ? ['customisation_fee'] : []),
+  ])];
   const savedPrices = await prisma.adminProductPrice.findMany({
     where: { productKey: { in: priceKeys } },
     select: { productKey: true, amountPence: true },
   });
   const prices = new Map(savedPrices.map(({ productKey, amountPence }) => [productKey, amountPence]));
   for (const product of relevantProducts) productPricePence(product, prices);
+  const customisationFeePence = needsCustomisationFee
+    ? prices.get('customisation_fee') ?? PRICE_OPTION_BY_KEY.get('customisation_fee')!.defaultAmountPence
+    : 0;
+  if (!Number.isSafeInteger(customisationFeePence) || customisationFeePence < 0) {
+    throw new Error('Set a valid customisation fee on the Set Prices page before syncing.');
+  }
 
   const etsyShopId = context.shop.etsyShopId.toString();
   const ensuredSectionIds = new Map<number, number>();
@@ -2326,6 +2353,7 @@ export async function syncListingToEtsy(
       !isDownload && (variant === 'customised' || customisedSharesPrintSection) && customisation.customisePrints,
       !isDownload && (variant === 'customised' || customisedSharesPrintSection) && customisation.customTop,
       !isDownload && (variant === 'customised' || customisedSharesPrintSection) && customisation.customBottom,
+      customisationFeePence,
     );
     if (isDownload) {
       const etsyDownloadFiles = selectEtsyDigitalDownloadPdf(listing.files);

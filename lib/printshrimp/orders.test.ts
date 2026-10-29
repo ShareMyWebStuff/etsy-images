@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import sharp from 'sharp';
 
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
@@ -29,6 +30,7 @@ import {
   getPrintShrimpOrderArtworkUrl,
   getPrintShrimpOrdersPageData,
   retrievePrintShrimpOrders,
+  retrievePrintShrimpOrder,
   submitPrintShrimpOrder,
   type PrintShrimpOrderPreviewInput,
 } from '@/lib/printshrimp/orders';
@@ -105,6 +107,39 @@ afterEach(() => {
 });
 
 describe('PrintShrimp orders', () => {
+  it('looks up a Pending unpaid order directly by ID instead of using the paid-order list', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ success: true, order: {
+      order_id: 'pending-1', external_order_number: 'ETSY-123', status: 'Pending', paid: false,
+    } }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await retrievePrintShrimpOrder({ orderId: 'pending-1', externalOrderNumber: 'ETSY-123' })).toMatchObject({ status: 'Pending', paid: false });
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://api.printshrimp.com/functions/v1/api-get-order?order_id=pending-1');
+  });
+
+  it('can find an existing submitted order by external number and rejects a mismatched response', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ success: true, order: {
+      order_id: 'existing-1', external_order_number: 'ETSY-123', status: 'Paid',
+    } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await retrievePrintShrimpOrder({ externalOrderNumber: 'ETSY-123' });
+    expect(String(fetchMock.mock.calls[0][0])).toContain('external_order_number=ETSY-123');
+    fetchMock.mockResolvedValue(Response.json({ success: true, order: { order_id: 'wrong', status: 'Shipped' } }));
+    await expect(retrievePrintShrimpOrder({ orderId: 'existing-1' })).rejects.toThrow('different order ID');
+  });
+  it('generates border-only artwork without text or a font file for the exact ordered size', async () => {
+    mocks.findUnique.mockResolvedValue(previewListing());
+    const source = await sharp({ create: { width: 100, height: 141, channels: 3, background: '#204060' } }).png().toBuffer();
+    const readFont = vi.fn();
+    const personalise = vi.fn();
+    const convert = vi.fn(async (buffer: Buffer) => ({ jpeg: buffer, width: 2480, height: 3508, density: 300 }));
+    const result = await generatePrintShrimpCustomArtworkPreview({
+      listingId: '339', size: 'A4', topText: '', bottomText: '', fontId: 'nunito-semibold',
+      borderEnabled: true, externalOrderNumber: 'ETSY-123',
+    }, { readStorageFile: vi.fn().mockResolvedValue(source), readFont, personalise, convert });
+    expect(readFont).not.toHaveBeenCalled();
+    expect(personalise).not.toHaveBeenCalled();
+    expect(await sharp(result.buffer).metadata()).toMatchObject({ width: 2480, height: 3508, density: 300 });
+  });
   it('retrieves every page of paid orders using the API key header', async () => {
     const firstPageOrders = Array.from({ length: 25 }, (_, index) => ({
       order_id: `order-${index + 1}`,

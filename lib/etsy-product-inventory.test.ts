@@ -45,12 +45,11 @@ describe('Etsy product inventory', () => {
     expect(plan.body.products).toHaveLength(2);
     expect(plan.body.products[0].property_values.map((value) => value.values[0])).toEqual(['20 x 28', 'No Frame', 'No']);
     expect(plan.body.products[1].property_values.map((value) => value.values[0])).toEqual(['20 x 28', 'No Frame', 'Yes']);
-    const both = buildPersonalizationQuestions(true, true, true);
-    expect(both).toHaveLength(3);
+    const both = buildPersonalizationQuestions(true, true, true, 300);
+    expect(both).toHaveLength(2);
     expect(both.map((question) => question.question_text)).toEqual([
       'Font Style',
-      'Top Text',
-      'Bottom Text',
+      'Custom Text',
     ]);
     expect(both[0]).toMatchObject({
       question_type: 'dropdown',
@@ -65,11 +64,26 @@ describe('Etsy product inventory', () => {
         { label: 'Sacramento' },
       ],
     });
-    expect(both.slice(1).every((question) => 'add_on_price' in question && question.add_on_price === 0)).toBe(true);
-    expect(both.slice(1).every((question) => 'max_allowed_characters' in question && question.max_allowed_characters === 40)).toBe(true);
-    expect(buildPersonalizationQuestions(true, true, false).map(({ question_text }) => question_text)).toEqual(['Font Style', 'Top Text']);
-    expect(buildPersonalizationQuestions(true, false, true).map(({ question_text }) => question_text)).toEqual(['Font Style', 'Bottom Text']);
-    expect(buildPersonalizationQuestions(false, true, true)).toEqual([]);
+    expect(both[1]).toMatchObject({ question_type: 'text_input', required: false, add_on_price: 3, max_allowed_characters: 100 });
+    expect('instructions' in both[1] && both[1].instructions.length).toBeLessThanOrEqual(120);
+    expect(buildPersonalizationQuestions(true, true, false, 300).map(({ question_text }) => question_text)).toEqual(['Font Style', 'Top Text']);
+    expect(buildPersonalizationQuestions(true, false, true, 300).map(({ question_text }) => question_text)).toEqual(['Font Style', 'Bottom Text']);
+    expect(buildPersonalizationQuestions(false, true, true, 300)).toEqual([]);
+  });
+
+  it.each([[true, false], [false, true], [true, true]])('applies the configured fee to exactly one optional text question (top %s, bottom %s)', (top, bottom) => {
+    const questions = buildPersonalizationQuestions(true, top, bottom, 300);
+    const paidQuestions = questions.filter((question) => 'add_on_price' in question && question.add_on_price > 0);
+    expect(paidQuestions).toHaveLength(1);
+    expect(paidQuestions[0]).toMatchObject({ add_on_price: 3, required: false });
+    expect(questions[0]).not.toHaveProperty('add_on_price');
+  });
+
+  it('supports a changed fee, an explicit zero fee and no enabled text areas', () => {
+    expect(buildPersonalizationQuestions(true, true, false, 450)[1]).toMatchObject({ add_on_price: 4.5 });
+    expect(buildPersonalizationQuestions(true, true, true, 0)[1]).toMatchObject({ add_on_price: 0 });
+    expect(buildPersonalizationQuestions(true, false, false, 300)).toEqual([]);
+    expect(() => buildPersonalizationQuestions(true, true, true, -1)).toThrow('valid customisation fee');
   });
 
   it('maps the added 5 x 7 and 12 x 18 sizes to Etsy variation labels', () => {

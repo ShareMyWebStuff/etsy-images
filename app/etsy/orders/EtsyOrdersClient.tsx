@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { EtsyOrderDetailsData, EtsyOrdersPageData, EtsyOrderRow } from '@/lib/etsy-orders';
+import { EtsyOrderProcessingQueue } from './EtsyOrderProcessingQueue';
 
 function dateTime(value: string | null) {
   return value ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Unknown';
@@ -41,6 +42,7 @@ export function EtsyOrdersClient({ initialData }: { initialData: EtsyOrdersPageD
   const [loadingOrder, setLoadingOrder] = useState<string | null>(null);
   const [working, setWorking] = useState<'generate' | 'create' | null>(null);
   const [customStep, setCustomStep] = useState(0);
+  const [queueOpen, setQueueOpen] = useState(false);
 
   async function refreshOrders() {
     const response = await fetch('/api/etsy/orders', { cache: 'no-store' });
@@ -55,10 +57,11 @@ export function EtsyOrdersClient({ initialData }: { initialData: EtsyOrdersPageD
     setSyncMessage(null);
     try {
       const response = await fetch('/api/etsy/orders', { method: 'POST' });
-      const payload = await response.json() as { data?: EtsyOrdersPageData; summary?: { downloaded: number; refreshed: number }; error?: string };
+      const payload = await response.json() as { data?: EtsyOrdersPageData; summary?: { downloaded: number; refreshed: number; printShrimpRefreshed: number; etsyDispatchesUpdated: number; fulfilmentWarnings: string[] }; error?: string };
       if (!response.ok || !payload.data) throw new Error(payload.error ?? 'Unable to download Etsy orders.');
       setData(payload.data);
-      setSyncMessage(`Downloaded or updated ${payload.summary?.downloaded ?? 0} orders and refreshed ${payload.summary?.refreshed ?? 0} unprocessed orders.`);
+      setSyncMessage(`Downloaded or updated ${payload.summary?.downloaded ?? 0} Etsy orders, refreshed ${payload.summary?.refreshed ?? 0} unprocessed orders, checked ${payload.summary?.printShrimpRefreshed ?? 0} PrintShrimp orders and updated ${payload.summary?.etsyDispatchesUpdated ?? 0} Etsy dispatches.`);
+      if (payload.summary?.fulfilmentWarnings?.length) setError(payload.summary.fulfilmentWarnings.join('\n'));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to download Etsy orders.');
     } finally {
@@ -129,10 +132,13 @@ export function EtsyOrdersClient({ initialData }: { initialData: EtsyOrdersPageD
         <h1 className="text-2xl font-semibold">Etsy Orders</h1>
         <p className="mt-1 text-sm text-muted-foreground">Download new Etsy orders, refresh outstanding statuses and create each PrintShrimp order once.</p>
       </div>
-      <Button onClick={syncOrders} disabled={syncing}>
+      <div className="flex flex-wrap gap-2"><Button onClick={syncOrders} disabled={syncing || queueOpen}>
         {syncing ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
         {syncing ? 'Downloading…' : 'Download new orders'}
       </Button>
+      <Button type="button" variant="outline" onClick={() => setQueueOpen(true)} disabled={syncing || selected !== null || loadingOrder !== null}>
+        <PackageCheck className="h-4 w-4" />Process new orders
+      </Button></div>
     </div>
 
     {error ? <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
@@ -158,7 +164,13 @@ export function EtsyOrdersClient({ initialData }: { initialData: EtsyOrdersPageD
             <TableCell>{order.countryIso || '—'}</TableCell>
             <TableCell>{order.isPaid ? 'Yes' : 'No'}</TableCell>
             <TableCell>{dateTime(order.orderedAt)}</TableCell>
-            <TableCell><div>{statusLabel(order.processingStatus)}</div><div className="text-xs text-muted-foreground">Etsy: {order.etsyStatus || 'unknown'}</div></TableCell>
+            <TableCell>
+              <div>{statusLabel(order.processingStatus)}</div>
+              <div className="text-xs text-muted-foreground">Etsy: {order.etsyStatus || 'unknown'}</div>
+              {order.printShrimpStatus ? <div className="text-xs text-muted-foreground">PrintShrimp: {order.printShrimpStatus}</div> : null}
+              {order.printShrimpTracking ? <div className="text-xs">Tracking: {order.printShrimpCourier} {order.printShrimpTracking}</div> : null}
+              {order.printShrimpSyncError ? <div className="max-w-sm text-xs text-destructive">{order.printShrimpSyncError}</div> : null}
+            </TableCell>
             <TableCell className="text-right">
               {order.processingStatus === 'COMPLETED' ? <Button size="sm" variant="outline" onClick={() => openOrder(order, true)} disabled={loadingOrder !== null}>
                 {loadingOrder === order.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />} Completed
@@ -217,5 +229,6 @@ export function EtsyOrdersClient({ initialData }: { initialData: EtsyOrdersPageD
         </div> : null}
       </DialogContent>
     </Dialog>
+    {queueOpen ? <EtsyOrderProcessingQueue onClose={() => setQueueOpen(false)} onProcessed={refreshOrders} hasWriteScope={data.hasTransactionsWriteScope} /> : null}
   </div>;
 }

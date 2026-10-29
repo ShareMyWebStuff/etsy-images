@@ -598,7 +598,7 @@ export async function syncOneListing(listingId: string, requestedVariants?: Etsy
   );
 }
 
-export async function publishOneListing(listingId: string) {
+export async function publishOneListing(listingId: string, variants: EtsySyncVariant[]) {
   const listing = await prisma.etsyListing.findUnique({
     where: { id: Number(listingId) },
     include: { subSection: { include: { shopSection: { include: { shop: true } } } } },
@@ -606,10 +606,10 @@ export async function publishOneListing(listingId: string) {
   const section = listing?.subSection?.shopSection;
   const shop = section?.shop;
   if (!listing || !listing.subSection || !section || !shop) throw new Error('Listing context not found.');
-  await publishListing(shop.etsyShopId.toString(), String(section.id), String(listing.subSection.id), String(listing.id));
+  await publishListing(shop.etsyShopId.toString(), String(section.id), String(listing.subSection.id), String(listing.id), variants);
 }
 
-export async function makeOneListingInactive(listingId: string) {
+export async function makeOneListingInactive(listingId: string, variants: EtsySyncVariant[]) {
   const listing = await prisma.etsyListing.findUnique({
     where: { id: Number(listingId) },
     include: { subSection: { include: { shopSection: { include: { shop: true } } } } },
@@ -617,11 +617,11 @@ export async function makeOneListingInactive(listingId: string) {
   const section = listing?.subSection?.shopSection;
   const shop = section?.shop;
   if (!listing || !listing.subSection || !section || !shop) throw new Error('Listing context not found.');
-  if (listing.state !== 'active' && listing.state !== 'published'
-    && listing.etsyDownloadState !== 'active' && listing.etsyDownloadState !== 'published') {
+  const states = { print: listing.state, customised: listing.etsyCustomisedState, download: listing.etsyDownloadState };
+  if (!variants.some((variant) => states[variant] === 'active' || states[variant] === 'published')) {
     throw new Error('Only a published listing can be made inactive.');
   }
-  await makeListingInactive(shop.etsyShopId.toString(), String(section.id), String(listing.subSection.id), String(listing.id));
+  await makeListingInactive(shop.etsyShopId.toString(), String(section.id), String(listing.subSection.id), String(listing.id), variants);
 }
 
 export async function deleteOneListingFromEtsy(listingId: string) {

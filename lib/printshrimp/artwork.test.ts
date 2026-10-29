@@ -3,6 +3,7 @@ import sharp from 'sharp';
 
 import {
   convertPrintShrimpArtwork,
+  fitPrintShrimpOrderArtwork,
   getPrintShrimpArtworkIdentity,
   getPrintShrimpVariantSizes,
   identifyPrintShrimpRatio,
@@ -17,6 +18,18 @@ function file(id: number, name: string, width: number, height: number): PrintShr
 }
 
 describe('PrintShrimp artwork mapping', () => {
+  it('renders the ordered dimensions with a white border inside the paper, preserving orientation', async () => {
+    const source = await sharp({ create: { width: 100, height: 140, channels: 3, background: '#204060' } }).png().toBuffer();
+    const output = await fitPrintShrimpOrderArtwork(source, '5x7', true);
+    const metadata = await sharp(output).metadata();
+    expect(metadata).toMatchObject({ width: 1500, height: 2100, density: 300 });
+    const { data, info } = await sharp(output).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    expect([...data.subarray(0, 3)]).toEqual([255, 255, 255]);
+    const center = (1050 * info.width + 750) * info.channels;
+    expect([...data.subarray(center, center + 3)]).toEqual([32, 64, 96]);
+    const landscape = await fitPrintShrimpOrderArtwork(await sharp(source).rotate(90).toBuffer(), '5x7', false);
+    expect(await sharp(landscape).metadata()).toMatchObject({ width: 2100, height: 1500 });
+  });
   const allFiles = [
     file(1, 'Artwork_ISO_A1.jpeg', 7016, 9933),
     file(2, 'Artwork_5x7.jpeg', 6000, 8400),

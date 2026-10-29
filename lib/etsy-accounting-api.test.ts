@@ -5,9 +5,32 @@ import {
   getEtsyLedgerDateWindows,
   getEtsyLedgerEntries,
   getEtsyReceipts,
+  createEtsyReceiptShipment,
+  EtsyShipmentError,
 } from '@/lib/etsy-accounting-api';
 
 describe('Etsy accounting pagination', () => {
+  it('sends dispatch tracking through the shipment endpoint using POST', async () => {
+    vi.stubEnv('ETSY_KEYSTRING', 'key'); vi.stubEnv('ETSY_SHARED_SECRET', 'secret');
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ receipt_id: 123 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await createEtsyReceiptShipment({ accessToken: 'token', shopId: '1', receiptId: '123', trackingCode: 'AB123GB', carrierName: 'royal-mail' });
+    expect(fetchMock).toHaveBeenCalledWith('https://openapi.etsy.com/v3/application/shops/1/receipts/123/tracking', expect.objectContaining({
+      method: 'POST', body: new URLSearchParams({ tracking_code: 'AB123GB', carrier_name: 'royal-mail' }),
+    }));
+  });
+
+  it('preserves uncertainty after a dispatch timeout so a notification is not blindly repeated', async () => {
+    vi.stubEnv('ETSY_KEYSTRING', 'key'); vi.stubEnv('ETSY_SHARED_SECRET', 'secret');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Timeout')));
+    await expect(createEtsyReceiptShipment({ accessToken: 'token', shopId: '1', receiptId: '123', trackingCode: '', carrierName: '' })).rejects.toMatchObject({ status: null });
+  });
+
+  it('reports a definite Etsy permission rejection separately from an uncertain outcome', async () => {
+    vi.stubEnv('ETSY_KEYSTRING', 'key'); vi.stubEnv('ETSY_SHARED_SECRET', 'secret');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ error: 'Not authorised' }, { status: 403 })));
+    await expect(createEtsyReceiptShipment({ accessToken: 'token', shopId: '1', receiptId: '123', trackingCode: '', carrierName: '' })).rejects.toBeInstanceOf(EtsyShipmentError);
+  });
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();

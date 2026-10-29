@@ -7,8 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { SyncToEtsyData } from '@/lib/sync-to-etsy';
+import type { EtsySyncVariant } from '@/lib/etsy-sync-images';
 
-type PublishTarget = { id: string; listingName: string };
+type PublishTarget = { id: string; listingName: string; variants: EtsySyncVariant[]; etsyCategory: string };
 type DeleteTarget = { id: string; listingName: string };
 type SyncAllProgress = {
   sectionName: string;
@@ -22,14 +23,16 @@ type SyncAllProgress = {
 type SyncToEtsyClientProps = {
   initialData: SyncToEtsyData;
   mode?: 'sync' | 'publish';
+  shops: Array<{ id: string; name: string }>;
 };
 
-export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClientProps) {
+export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEtsyClientProps) {
   const [data, setData] = useState(initialData);
+  const [selectedShopId, setSelectedShopId] = useState(shops[0]?.id ?? '');
   const [syncView, setSyncView] = useState<'local' | 'etsy'>('local');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [publishTarget, setPublishTarget] = useState<PublishTarget | null>(null);
+  const [publishTarget, setPublishTarget] = useState<(PublishTarget & { isInactive: boolean }) | null>(null);
   const [inactiveTarget, setInactiveTarget] = useState<PublishTarget | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [syncAllProgress, setSyncAllProgress] = useState<SyncAllProgress | null>(null);
@@ -67,7 +70,7 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
     if (!publishTarget) return;
     const target = publishTarget;
     setPublishTarget(null);
-    await runAction('/api/etsy/publish', { listingId: target.id }, `publish-${target.id}`, 'Unable to publish listing.');
+    await runAction('/api/etsy/publish', { listingId: target.id, variants: target.variants }, `publish-${target.id}-${target.variants.join('-')}`, target.isInactive ? 'Unable to re-activate listing.' : 'Unable to publish listing.');
   }
 
   async function deleteConfirmed() {
@@ -81,7 +84,7 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
     if (!inactiveTarget) return;
     const target = inactiveTarget;
     setInactiveTarget(null);
-    await runAction('/api/etsy/publish', { listingId: target.id, action: 'inactive' }, `inactive-${target.id}`, 'Unable to make listing inactive.');
+    await runAction('/api/etsy/publish', { listingId: target.id, action: 'inactive', variants: target.variants }, `inactive-${target.id}-${target.variants.join('-')}`, 'Unable to make listing inactive.');
   }
 
   async function syncAllSection(
@@ -141,8 +144,9 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
     }
   }
 
-  const showingLocalView = mode === 'sync' && syncView === 'local';
-  const displayedSections = showingLocalView ? data.localSections : data.sections;
+  const showingLocalView = syncView === 'local';
+  const displayedSections = (showingLocalView ? data.localSections : data.sections)
+    .filter((section) => section.shopId === selectedShopId);
 
   return <>
     <div className="grid gap-6">
@@ -153,18 +157,38 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
             ? showingLocalView
               ? 'Local sections are grouped by their template-assigned Etsy sections. Expand a section to sync or delete individual listings.'
               : 'Categories come from each listing’s assigned template. Add any missing category to Etsy, then sync its listings.'
-            : 'From this screen you can publish your synced draft listings on Etsy.'}
+            : 'Choose a shop to publish synced drafts or re-activate inactive listings on Etsy. Use Local View or Etsy View to group listings by their section names.'}
         </p>
       </div>
-      {mode === 'sync' ? <div className="flex w-fit rounded-lg border bg-card p-1" role="tablist" aria-label="Sync view">
+      <label className="grid w-full max-w-sm gap-2 text-sm font-medium" htmlFor="etsy-shop">
+        Shop
+        <select
+          id="etsy-shop"
+          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+          value={selectedShopId}
+          disabled={busy !== null || shops.length === 0}
+          onChange={(event) => {
+            setSelectedShopId(event.target.value);
+            setExpandedSectionIds(new Set());
+            setError(null);
+          }}
+        >
+          {shops.length === 0 ? <option value="">No shops available</option> : null}
+          {shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name}</option>)}
+        </select>
+      </label>
+      <div className="flex w-fit rounded-lg border bg-card p-1" role="tablist" aria-label={mode === 'publish' ? 'Publish view' : 'Sync view'}>
         <Button type="button" variant={syncView === 'local' ? 'default' : 'ghost'} role="tab" aria-selected={syncView === 'local'} onClick={() => setSyncView('local')}>
           Local View
         </Button>
         <Button type="button" variant={syncView === 'etsy' ? 'default' : 'ghost'} role="tab" aria-selected={syncView === 'etsy'} onClick={() => setSyncView('etsy')}>
           Etsy View
         </Button>
-      </div> : null}
+      </div>
       {error ? <p className="text-sm font-medium text-destructive">{error}</p> : null}
+      {displayedSections.length === 0 ? <p className="text-sm text-muted-foreground">
+        {shops.length === 0 ? 'No shops are available.' : 'No listings are available for this shop.'}
+      </p> : null}
       {displayedSections.map((section) => {
         const isExpanded = expandedSectionIds.has(section.id);
         const isLocalSection = 'etsySections' in section;
@@ -203,7 +227,7 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
           {mode === 'publish' ? <Button
             type="button"
             variant="outline"
-            onClick={() => runAction('/api/etsy/check-statuses', { listingIds: section.listings.map((listing) => listing.id) }, `check-statuses-${section.id}`, 'Unable to check Etsy listing statuses.')}
+            onClick={() => runAction('/api/etsy/check-statuses', { listingIds: [...new Set(section.listings.map((listing) => listing.id))] }, `check-statuses-${section.id}`, 'Unable to check Etsy listing statuses.')}
             disabled={busy !== null || !section.listings.some((listing) => listing.hasEtsyListing)}
           >
             <RefreshCw className={`mr-2 h-4 w-4 ${busy === `check-statuses-${section.id}` ? 'animate-spin' : ''}`} aria-hidden="true" />
@@ -289,8 +313,8 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
               <TableCell className="text-right"><div className="flex justify-end gap-2">
                 {mode === 'sync' && (!listing.hasEtsyListing || listing.canSync) ? <Button className="w-36" title={listing.syncDisabledReason ?? undefined} onClick={() => runAction('/api/etsy/upload', { listingId: listing.id, variants: listing.syncVariants }, `listing-${listingActionKey}`, 'Unable to sync listing.')} disabled={!listing.canSync || busy !== null}>{busy === `listing-${listingActionKey}` ? 'Syncing...' : listing.syncVariants.length > 1 ? 'Sync All' : listing.syncVariants[0] === 'download' ? 'Sync Digital' : listing.syncVariants[0] === 'customised' ? 'Sync Customised' : 'Sync Print'}</Button> : null}
                 {mode === 'sync' && listing.hasEtsyListing ? <Button className="w-36" variant="destructive" onClick={() => setDeleteTarget({ id: listing.id, listingName: listing.listingName })} disabled={listing.hasActiveEtsyListing || busy !== null}>{busy === `delete-${listing.id}` ? 'Deleting...' : 'Delete from Etsy'}</Button> : null}
-                {mode === 'publish' && !listing.isPublished ? <Button className="w-36" onClick={() => setPublishTarget({ id: listing.id, listingName: listing.listingName })} disabled={!listing.hasEtsyListing || busy !== null}>{busy === `publish-${listing.id}` ? 'Publishing...' : 'Publish'}</Button> : null}
-                {mode === 'publish' && listing.isPublished ? <Button className="w-36" variant="outline" onClick={() => setInactiveTarget({ id: listing.id, listingName: listing.listingName })} disabled={busy !== null}>{busy === `inactive-${listing.id}` ? 'Updating...' : 'Make Inactive'}</Button> : null}
+                {mode === 'publish' && !listing.isPublished ? <Button className="w-36" onClick={() => setPublishTarget({ id: listing.id, listingName: listing.listingName, isInactive: listing.isInactive, variants: listing.syncVariants, etsyCategory: listing.etsyCategory })} disabled={!listing.hasEtsyListing || busy !== null}>{busy === `publish-${listingActionKey}` ? listing.isInactive ? 'Re-activating...' : 'Publishing...' : listing.isInactive ? 'Re-activate' : 'Publish'}</Button> : null}
+                {mode === 'publish' && listing.isPublished ? <Button className="w-36" variant="outline" onClick={() => setInactiveTarget({ id: listing.id, listingName: listing.listingName, variants: listing.syncVariants, etsyCategory: listing.etsyCategory })} disabled={busy !== null}>{busy === `inactive-${listingActionKey}` ? 'Updating...' : 'Make Inactive'}</Button> : null}
               </div></TableCell>
             </TableRow>})}
           </TableBody></Table>
@@ -321,8 +345,8 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
 
     {mode === 'publish' ? <Dialog open={publishTarget !== null} onOpenChange={(open) => { if (!open && busy === null) setPublishTarget(null); }}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Publish listing?</DialogTitle></DialogHeader>
-        <p>Do you want to publish {publishTarget?.listingName} to Etsy?</p>
+        <DialogHeader><DialogTitle>{publishTarget?.isInactive ? 'Re-activate listing?' : 'Publish listing?'}</DialogTitle></DialogHeader>
+        <p>Do you want to {publishTarget?.isInactive ? 're-activate' : 'publish'} {publishTarget?.listingName} ({publishTarget?.etsyCategory}) {publishTarget?.isInactive ? 'on' : 'to'} Etsy?</p>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => setPublishTarget(null)}>No</Button>
           <Button type="button" onClick={publishConfirmed}>Yes</Button>
@@ -333,7 +357,7 @@ export function SyncToEtsyClient({ initialData, mode = 'sync' }: SyncToEtsyClien
     {mode === 'publish' ? <Dialog open={inactiveTarget !== null} onOpenChange={(open) => { if (!open && busy === null) setInactiveTarget(null); }}>
       <DialogContent>
         <DialogHeader><DialogTitle>Make listing inactive?</DialogTitle></DialogHeader>
-        <p>Are you sure {inactiveTarget?.listingName} should be made inactive?</p>
+        <p>Are you sure {inactiveTarget?.listingName} ({inactiveTarget?.etsyCategory}) should be made inactive?</p>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => setInactiveTarget(null)}>Cancel</Button>
           <Button type="button" onClick={inactiveConfirmed}>Confirm</Button>

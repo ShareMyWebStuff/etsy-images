@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import sharp from 'sharp';
+import { LISTING_PAPER_SIZE_SPECS } from '@/lib/listing-paper-size-groups';
 import {
   getPrintableDownloadRole,
   isPrintableDownloadImageValid,
@@ -188,4 +189,22 @@ export async function convertPrintShrimpArtwork(source: Buffer) {
     height: inputMetadata.height,
     density: outputMetadata.density ?? 300,
   };
+}
+
+/** Render at the ordered physical size, using the app's standard 5% white border. */
+export async function fitPrintShrimpOrderArtwork(source: Buffer, size: string, borderEnabled: boolean) {
+  const paper = LISTING_PAPER_SIZE_SPECS[size.toLocaleLowerCase() as keyof typeof LISTING_PAPER_SIZE_SPECS];
+  if (!paper) throw new Error('Select a supported PrintShrimp size.');
+  const metadata = await sharp(source).metadata();
+  const landscape = (metadata.width ?? 0) > (metadata.height ?? 0);
+  const short = Math.round(paper.widthMillimetres / 25.4 * 300);
+  const long = Math.round(paper.heightMillimetres / 25.4 * 300);
+  const width = landscape ? long : short;
+  const height = landscape ? short : long;
+  const border = borderEnabled ? Math.max(1, Math.round(Math.min(width, height) * 0.05)) : 0;
+  return sharp(source)
+    .flatten({ background: '#FFFFFF' })
+    .resize(width - border * 2, height - border * 2, { fit: borderEnabled ? 'contain' : 'cover', background: '#FFFFFF' })
+    .extend({ top: border, bottom: border, left: border, right: border, background: '#FFFFFF' })
+    .withMetadata({ density: 300 }).png({ compressionLevel: 1 }).toBuffer();
 }

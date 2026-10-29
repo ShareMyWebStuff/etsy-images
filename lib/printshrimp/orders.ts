@@ -13,6 +13,7 @@ import type { PrintableDownloadRatio } from '@/lib/printable-download-specs';
 import { effectiveListingCustomisation } from '@/lib/listing-customisation';
 import {
   convertPrintShrimpArtwork,
+  fitPrintShrimpOrderArtwork,
   getPrintShrimpRatioForSize,
   mapPrintShrimpRatioFiles,
   PRINTSHRIMP_SUPPORTED_SIZES,
@@ -45,6 +46,8 @@ export type PrintShrimpOrder = Record<string, unknown> & {
   external_order_number?: string | null;
   status?: string;
   paid?: boolean;
+  tracking?: string | null;
+  tracking_courier?: string | null;
 };
 
 type PrintShrimpOrderListResponse = {
@@ -218,6 +221,37 @@ export async function retrievePrintShrimpOrders() {
     return true;
   });
   return { orders, totalOrders: firstPage.totalOrders };
+}
+
+/** A specific lookup includes unpaid Pending orders, unlike the paid-orders list. */
+export async function retrievePrintShrimpOrder(reference: { orderId?: string | null; externalOrderNumber?: string | null }): Promise<PrintShrimpOrder> {
+  const config = getPrintShrimpClientConfig();
+  if (!config) throw new PrintShrimpConfigurationError('Set PRINTSHRIMP_API_KEY before refreshing PrintShrimp order statuses.');
+  const url = new URL(PRINTSHRIMP_GET_ORDER_PATH, PRINTSHRIMP_API_BASE_URL);
+  if (reference.orderId) url.searchParams.set('order_id', reference.orderId);
+  else if (reference.externalOrderNumber) url.searchParams.set('external_order_number', reference.externalOrderNumber);
+  else throw new Error('Choose the PrintShrimp order to refresh.');
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { Accept: 'application/json', [PRINTSHRIMP_API_KEY_HEADER]: config.apiKey },
+      signal: AbortSignal.timeout(config.timeoutMilliseconds), cache: 'no-store',
+    });
+  } catch {
+    throw new PrintShrimpAdapterError('The PrintShrimp order status request could not be completed. Please try again.', true);
+  }
+  const payload = await response.json().catch(() => ({})) as { success?: boolean; order?: PrintShrimpOrder; error?: string };
+  if (!response.ok || payload.success === false) {
+    throw new PrintShrimpAdapterError(`PrintShrimp API returned ${response.status}: ${safeRemoteMessage(payload.error, config.apiKey)}`);
+  }
+  if (!payload.order || typeof payload.order.order_id !== 'string' || typeof payload.order.status !== 'string') {
+    throw new PrintShrimpAdapterError('PrintShrimp returned invalid order status data.');
+  }
+  if (reference.orderId && payload.order.order_id !== reference.orderId) throw new Error('PrintShrimp returned a different order ID.');
+  if (reference.externalOrderNumber && payload.order.external_order_number !== reference.externalOrderNumber) {
+    throw new Error('PrintShrimp returned a different external order number.');
+  }
+  return payload.order;
 }
 
 export async function getPrintShrimpOrdersPageData(): Promise<PrintShrimpOrdersPageData> {
@@ -395,6 +429,7 @@ async function renderCustomOrderArtwork(input: {
   topText: string;
   bottomText: string;
   fontId: PrintShrimpCustomFontId;
+  borderEnabled?: boolean;
   externalOrderNumber: string;
   dependencies: PrintShrimpOrderPreviewDependencies;
 }) {
@@ -415,35 +450,40 @@ async function renderCustomOrderArtwork(input: {
     input.listing.subSection.name,
     input.listing.localDirectoryName ?? `Listing-${input.listingId}`,
   );
-  const [source, font] = await Promise.all([
-    input.dependencies.readStorageFile(path.join(listingPath, 'downloads', sourceFile.localFileName)),
-    input.dependencies.readFont(path.join(process.cwd(), 'public', 'fonts', ...fontChoice.relativePath)),
-  ]);
+  const source = await input.dependencies.readStorageFile(path.join(listingPath, 'downloads', sourceFile.localFileName));
   const personalisation = resolvedOrderPersonalisation(
     input.listing,
     input.topText,
     input.bottomText,
     printableDownloadRatioForPrintShrimp(ratio),
   );
-  if (!personalisation.topText && !personalisation.bottomText) {
+  if ((input.topText || input.bottomText) && !personalisation.topText && !personalisation.bottomText) {
     throw new Error('The assigned template and listing text-area settings do not allow the supplied customised text.');
   }
-  const personalised = await input.dependencies.personalise(
-    source,
-    font,
-    { headerText: personalisation.topText, footerText: personalisation.bottomText, textTransform: 'NONE' },
-    {
-      width: sourceFile.widthPixels,
-      height: sourceFile.heightPixels,
-      density: 300,
-      requireSourceAlpha: false,
-      fontFamily: fontChoice.family,
-      fontWeight: fontChoice.weight,
-      ...(personalisation.headerTextArea ? { headerTextArea: personalisation.headerTextArea } : {}),
-      ...(personalisation.footerTextArea ? { footerTextArea: personalisation.footerTextArea } : {}),
-    },
-  );
-  const converted = await input.dependencies.convert(personalised.buffer);
+  let artwork = source;
+  if (personalisation.topText || personalisation.bottomText) {
+    const font = await input.dependencies.readFont(path.join(process.cwd(), 'public', 'fonts', ...fontChoice.relativePath));
+    const personalised = await input.dependencies.personalise(
+      source,
+      font,
+      { headerText: personalisation.topText, footerText: personalisation.bottomText, textTransform: 'NONE' },
+      {
+        width: sourceFile.widthPixels,
+        height: sourceFile.heightPixels,
+        density: 300,
+        requireSourceAlpha: false,
+        fontFamily: fontChoice.family,
+        fontWeight: fontChoice.weight,
+        ...(personalisation.headerTextArea ? { headerTextArea: personalisation.headerTextArea } : {}),
+        ...(personalisation.footerTextArea ? { footerTextArea: personalisation.footerTextArea } : {}),
+      },
+    );
+    artwork = personalised.buffer;
+  }
+  if (input.borderEnabled !== undefined) {
+    artwork = await fitPrintShrimpOrderArtwork(artwork, input.size, input.borderEnabled);
+  }
+  const converted = await input.dependencies.convert(artwork);
   if (converted.jpeg.byteLength > 50 * 1024 * 1024) {
     throw new Error('The customised PrintShrimp artwork exceeds the 50 MB limit.');
   }
@@ -669,7 +709,7 @@ export async function submitPrintShrimpOrder(
 export type PrintShrimpCustomArtworkPreviewInput = Pick<
   PrintShrimpOrderPreviewInput,
   'listingId' | 'size' | 'topText' | 'bottomText' | 'fontId' | 'externalOrderNumber'
->;
+> & { borderEnabled?: boolean };
 
 export async function generatePrintShrimpCustomArtworkPreview(
   input: PrintShrimpCustomArtworkPreviewInput,
@@ -689,7 +729,7 @@ export async function generatePrintShrimpCustomArtworkPreview(
   }
   const topText = textValue(input.topText, 'Top text', 40);
   const bottomText = textValue(input.bottomText, 'Bottom text', 40);
-  if (!topText && !bottomText) throw new Error('Enter Top text or Bottom text before generating the preview.');
+  if (!topText && !bottomText && !input.borderEnabled) throw new Error('Enter Top text or Bottom text, or select a border before generating the preview.');
   if (!getPrintShrimpCustomFont(input.fontId)) throw new Error('Select a valid custom text font.');
   const externalOrderNumber = textValue(input.externalOrderNumber, 'ORDER No', 100);
   const listing = await loadOrderListing(listingId);
@@ -700,7 +740,7 @@ export async function generatePrintShrimpCustomArtworkPreview(
     bottomText,
     printableDownloadRatioForPrintShrimp(getPrintShrimpRatioForSize(input.size)),
   );
-  if (!allowedPersonalisation.topText && !allowedPersonalisation.bottomText) {
+  if ((topText || bottomText) && !allowedPersonalisation.topText && !allowedPersonalisation.bottomText) {
     throw new Error('The assigned template and listing text-area settings do not allow the supplied customised text.');
   }
   const sku = validatePrintShrimpBaseSku(listing.productConfig?.sku);
@@ -713,6 +753,7 @@ export async function generatePrintShrimpCustomArtworkPreview(
     bottomText,
     fontId: input.fontId,
     externalOrderNumber,
+    borderEnabled: input.borderEnabled,
     dependencies,
   });
 }

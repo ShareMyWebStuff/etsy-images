@@ -20,6 +20,8 @@ import {
   type PreparedPrintShrimpOrderPayload,
 } from '@/lib/printshrimp/orders';
 import { stagePrintShrimpArtwork } from '@/lib/printshrimp/s3-staging';
+import { getEtsyItemCustomisation, getEtsyOrderType } from '@/lib/etsy-order-customisation';
+import { printShrimpFulfilmentDetails, refreshPrintShrimpFulfilment } from '@/lib/etsy-order-fulfilment';
 
 const ORDER_SYNC_OVERLAP_SECONDS = 7 * 24 * 60 * 60;
 const ACTIVE_PROCESSING_STATUSES: EtsyOrderProcessingStatus[] = ['UNPROCESSED', 'BLOCKED', 'FAILED', 'UNKNOWN'];
@@ -134,14 +136,30 @@ function fontIdFromValue(value: string | null) {
   return Object.entries(FONT_ID_BY_NAME).find(([name]) => normalized.includes(name))?.[1] ?? 'nunito-semibold';
 }
 
+function customTextLines(value: string | null) {
+  if (!value) return { topText: null, bottomText: null };
+  const labels = Array.from(value.matchAll(/\b(top(?:\s*text)?|bottom(?:\s*text)?)\s*:/gi));
+  if (labels.length === 0) return { topText: text(value, 40), bottomText: null };
+  const result: { topText: string | null; bottomText: string | null } = { topText: null, bottomText: null };
+  labels.forEach((label, index) => {
+    const start = label.index! + label[0].length;
+    const end = labels[index + 1]?.index ?? value.length;
+    const wording = value.slice(start, end).trim().replace(/[;|]\s*$/, '').trim();
+    result[label[1].toLocaleLowerCase().startsWith('top') ? 'topText' : 'bottomText'] = text(wording, 40);
+  });
+  return result;
+}
+
 export function parseEtsyOrderTransaction(transaction: EtsyTransactionResponse) {
   const transactionRecord = transaction as JsonRecord;
   const productData = record(transactionRecord.product_data);
   const pairs = variationPairs(transaction);
   const frameValue = variationValue(pairs, /frame/i, /finish/i);
-  const topText = variationValue(pairs, /^top\s*text$/i, /text.*top/i)?.slice(0, 40) ?? null;
-  const bottomText = variationValue(pairs, /^bottom\s*text$/i, /text.*bottom/i)?.slice(0, 40) ?? null;
+  const combinedText = customTextLines(variationValue(pairs, /^custom\s*text$/i));
+  const topText = variationValue(pairs, /^top\s*text$/i, /text.*top/i)?.slice(0, 40) ?? combinedText.topText;
+  const bottomText = variationValue(pairs, /^bottom\s*text$/i, /text.*bottom/i)?.slice(0, 40) ?? combinedText.bottomText;
   const fontValue = variationValue(pairs, /^font(?:\s*style)?$/i);
+  const customisation = getEtsyItemCustomisation({ rawJson: transaction, topText, bottomText });
   const noFrame = !frameValue || /no\s*frame|unframed/i.test(frameValue);
   return {
     etsyTransactionId: positiveBigInt(transaction.transaction_id),
@@ -156,7 +174,7 @@ export function parseEtsyOrderTransaction(transaction: EtsyTransactionResponse) 
     fontId: fontIdFromValue(fontValue),
     topText,
     bottomText,
-    isCustomised: Boolean(topText || bottomText),
+    isCustomised: customisation.border || Boolean(topText || bottomText),
     rawJson: jsonValue(transaction),
   };
 }
@@ -254,6 +272,7 @@ async function persistEtsyOrderReceipt(
         || previous.topText !== item.topText
         || previous.bottomText !== item.bottomText
         || previous.fontId !== item.fontId
+        || getEtsyItemCustomisation(previous).border !== getEtsyItemCustomisation(item).border
       );
       const itemData = {
         etsyListingId: item.etsyListingId,
@@ -354,7 +373,8 @@ export async function syncEtsyOrders() {
       throw error;
     }
   }
-  return summary;
+  const fulfilment = await refreshPrintShrimpFulfilment((orderId) => refreshOneOrder(orderId));
+  return { ...summary, ...fulfilment };
 }
 
 export function buildLocalListingHref(listing: {
@@ -398,6 +418,7 @@ function serializeOrder(order: Awaited<ReturnType<typeof loadOrder>>) {
     printShrimpAttemptedAt: order.printShrimpAttemptedAt?.toISOString() ?? null,
     printShrimpSubmittedAt: order.printShrimpSubmittedAt?.toISOString() ?? null,
     printShrimpOrderId: order.printShrimpOrderId ?? null,
+    ...printShrimpFulfilmentDetails(order.printShrimpResponse),
     processError: order.processError ?? null,
     rawJson: order.rawJson,
     items: order.items.map((item) => ({
@@ -414,10 +435,10 @@ function serializeOrder(order: Awaited<ReturnType<typeof loadOrder>>) {
       productType: item.productType ?? '',
       frameColour: item.frameColour ?? '',
       paperType: item.paperType ?? '',
-      fontId: item.fontId ?? '',
       topText: item.topText ?? '',
       bottomText: item.bottomText ?? '',
-      isCustomised: item.isCustomised,
+      isCustomised: getEtsyItemCustomisation(item).orderType === 'Customised',
+      ...getEtsyItemCustomisation(item),
       artworkUrl: item.artworkUrl,
       artworkFileName: item.artworkFileName,
       artworkGeneratedAt: item.artworkGeneratedAt?.toISOString() ?? null,
@@ -459,15 +480,17 @@ function buildOrderPayload(order: NonNullable<Awaited<ReturnType<typeof loadOrde
   ].filter((value): value is string => Boolean(value));
   const products: Array<Record<string, unknown>> = [];
   for (const item of order.items) {
+    const customisation = getEtsyItemCustomisation(item);
+    if (customisation.error) missing.push(`${item.title || 'item'}: ${customisation.error}`);
     if (!item.listingId) missing.push(`${item.title || 'item'} local listing match`);
     if (!item.size) missing.push(`${item.title || 'item'} supported size`);
     if (!item.sku) missing.push(`${item.title || 'item'} SKU`);
-    if (item.isCustomised && !item.artworkUrl) missing.push(`${item.title || 'item'} customised artwork`);
+    if (customisation.orderType === 'Customised' && !item.artworkUrl) missing.push(`${item.title || 'item'} customised artwork`);
     if (!item.size || !item.productType || !item.sku) continue;
     const base = item.productType === 'Frame'
       ? { size: item.size, type: 'Frame', variant: item.frameColour || 'Black' }
       : { size: item.size, type: 'Print', paper_type: item.paperType || 'Matte' };
-    const product = item.isCustomised
+    const product = customisation.orderType === 'Customised'
       ? { ...base, image: { artwork_url: item.artworkUrl } }
       : { sku: item.sku, ...base };
     for (let quantity = 0; quantity < Math.max(1, item.quantity); quantity += 1) products.push(product);
@@ -511,15 +534,28 @@ export async function getEtsyOrdersPageData() {
   };
 }
 
+export async function getEtsyOrdersForProcessing() {
+  const orders = await prisma.etsyOrder.findMany({
+    where: { processingStatus: 'UNPROCESSED', isPaid: true, isShipped: false, isCanceled: false, attempts: { none: {} } },
+    orderBy: [{ orderedAt: 'desc' }, { id: 'desc' }],
+    select: { id: true, etsyReceiptId: true, name: true, orderedAt: true },
+  });
+  return orders.map((order) => ({
+    id: String(order.id), etsyReceiptId: order.etsyReceiptId.toString(), name: order.name ?? '', orderedAt: order.orderedAt?.toISOString() ?? null,
+  }));
+}
+
 export async function getEtsyOrderDetails(orderIdValue: string) {
   const order = await loadOrder(parseOrderId(orderIdValue));
   if (!order) throw new Error('Etsy order not found.');
   const { payload, missing } = buildOrderPayload(order);
+  const orderType = getEtsyOrderType(order.items.map(getEtsyItemCustomisation));
   return {
     order: serializeOrder(order)!,
     payload,
     missing,
-    isCustomised: order.items.some((item) => item.isCustomised),
+    isCustomised: orderType === 'Customised',
+    orderType,
     canCreate: missing.length === 0 && order.processingStatus === 'UNPROCESSED' && order.attempts.length === 0,
   };
 }
@@ -528,8 +564,14 @@ export async function generateEtsyOrderArtwork(orderIdValue: string) {
   const orderId = parseOrderId(orderIdValue);
   const order = await loadOrder(orderId);
   if (!order) throw new Error('Etsy order not found.');
+  if (order.processingStatus !== 'UNPROCESSED' || order.attempts.length > 0) {
+    throw new Error('This order is no longer available for artwork generation. Refresh its processing status before continuing.');
+  }
   const generated: Array<{ itemId: string; url: string; fileName: string }> = [];
-  for (const item of order.items.filter((candidate) => candidate.isCustomised)) {
+  const customisations = order.items.map(getEtsyItemCustomisation);
+  const invalid = customisations.find((item) => item.error);
+  if (invalid) throw new Error(invalid.error!);
+  for (const item of order.items.filter((candidate) => getEtsyItemCustomisation(candidate).orderType === 'Customised')) {
     if (!item.listingId) throw new Error(`${item.title || 'The customised item'} is not linked to a local listing.`);
     if (!item.size) throw new Error(`${item.title || 'The customised item'} does not have a supported PrintShrimp size.`);
     const fontId = getPrintShrimpCustomFont(item.fontId) ? item.fontId as PrintShrimpCustomFontId : 'nunito-semibold';
@@ -539,6 +581,7 @@ export async function generateEtsyOrderArtwork(orderIdValue: string) {
       topText: item.topText ?? '',
       bottomText: item.bottomText ?? '',
       fontId,
+      borderEnabled: getEtsyItemCustomisation(item).border,
       externalOrderNumber: `ETSY-${order.etsyReceiptId.toString()}`,
     });
     const objectKey = `printshrimp-staging/etsy-orders/${order.etsyReceiptId.toString()}/${item.id}-${rendered.fileName}`;

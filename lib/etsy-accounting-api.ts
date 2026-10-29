@@ -162,6 +162,37 @@ export async function acknowledgeEtsyReceiptForProcessing(params: {
   );
 }
 
+export class EtsyShipmentError extends Error {
+  constructor(message: string, readonly status: number | null) { super(message); }
+}
+
+export async function createEtsyReceiptShipment(params: {
+  accessToken: string; shopId: string; receiptId: string; trackingCode: string; carrierName: string;
+}) {
+  const body = new URLSearchParams();
+  if (params.trackingCode) {
+    body.set('tracking_code', params.trackingCode);
+    body.set('carrier_name', params.carrierName || 'other');
+  }
+  let response: Response;
+  try {
+    response = await fetch(`https://openapi.etsy.com/v3/application/shops/${encodeURIComponent(params.shopId)}/receipts/${encodeURIComponent(params.receiptId)}/tracking`, {
+      method: 'POST', signal: AbortSignal.timeout(30_000),
+      headers: {
+        Accept: 'application/json', Authorization: `Bearer ${params.accessToken}`,
+        'Content-Type': 'application/x-www-form-urlencoded', 'x-api-key': getEtsyApiKeyHeader(),
+      }, body,
+    });
+  } catch {
+    throw new EtsyShipmentError('The Etsy dispatch update outcome is uncertain. Check Etsy before attempting another dispatch notification.', null);
+  }
+  const text = await response.text();
+  if (!response.ok) {
+    throw new EtsyShipmentError(`Etsy dispatch API returned ${response.status}${text ? `: ${text}` : ''}`, response.status);
+  }
+  // A successful status is sufficient; receipt state is verified with a separate GET.
+}
+
 export async function* getEtsyLedgerEntryWindows(params: {
   accessToken: string;
   shopId: string;
