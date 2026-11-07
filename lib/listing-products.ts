@@ -4,6 +4,7 @@ import { getOrCreateEtsyListingSku } from '@/lib/etsy-listing-sku';
 import { digitalPriceKeyForSection } from '@/lib/set-prices-core';
 import { getTemplateDownloadSectionId } from '@/lib/template-download-section';
 import { effectiveListingCustomisation, type ListingCustomisationSettings } from '@/lib/listing-customisation';
+import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
 
 export const ETSY_PRODUCT_SIZES = [
   { key: 'a5', label: 'A5' },
@@ -72,6 +73,8 @@ type NormalizedListingProducts = {
   listOnEtsy: boolean;
   digitalDownload: boolean;
   printsFrames: boolean;
+  printsFramesOverride?: boolean | null;
+  digitalDownloadOverride?: boolean | null;
   customTop: boolean;
   customBottom: boolean;
   customisePrints: boolean;
@@ -329,7 +332,7 @@ async function persistListingProducts(
   config: NormalizedListingProducts
 ) {
   const definitions = buildListingProductDefinitions(listing, config);
-  if (config.listOnEtsy && definitions.length === 0) {
+  if (config.listOnEtsy && (config.printsFrames || config.digitalDownload) && definitions.length === 0) {
     throw new Error('Select at least one Etsy product, or uncheck List this listing on Etsy.');
   }
   const [existingProducts, otherSkus] = await Promise.all([
@@ -368,6 +371,8 @@ async function persistListingProducts(
       listOnEtsy: config.listOnEtsy,
       digitalDownload: config.digitalDownload,
       printsFrames: config.printsFrames,
+      printsFramesOverride: config.printsFramesOverride,
+      digitalDownloadOverride: config.digitalDownloadOverride,
       customTop: config.customTop,
       customBottom: config.customBottom,
       customisePrints: config.customisePrints,
@@ -380,6 +385,8 @@ async function persistListingProducts(
       listOnEtsy: config.listOnEtsy,
       digitalDownload: config.digitalDownload,
       printsFrames: config.printsFrames,
+      printsFramesOverride: config.printsFramesOverride,
+      digitalDownloadOverride: config.digitalDownloadOverride,
       customTop: config.customTop,
       customBottom: config.customBottom,
       customisePrints: config.customisePrints,
@@ -523,11 +530,15 @@ export async function saveListingProducts(input: SaveListingProductsInput) {
       const listing = await loadListingForContext(tx, input);
       const templateOptions = getTemplateProductOptions(listing.ourCategory, listing.etsyProductType === 'digital' ? 'digital' : 'physical');
       const customisation = effectiveListingCustomisation(listing.ourCategory, submittedConfig);
+      const templateSettings = effectiveListingTemplateSettings(listing.ourCategory, {
+        ...listing.productConfig,
+        ...customisation,
+      });
       const config = {
         ...submittedConfig,
         ...(listing.ourCategory ? {
-          digitalDownload: listing.ourCategory.digitalDownload,
-          printsFrames: listing.ourCategory.printsFrames || customisation.customisePrints,
+          digitalDownload: templateSettings.digitalDownload,
+          printsFrames: templateSettings.printsFrames || customisation.customisePrints,
           ...customisation,
         } : {}),
         ...templateOptions,
@@ -676,10 +687,14 @@ export async function ensureListingProductDefaultsInTransaction(
     listing.ourCategory ?? resetDefaults,
     options?.resetToProductType ? resetDefaults : listing.productConfig,
   );
+  const templateSettings = effectiveListingTemplateSettings(listing.ourCategory, {
+    ...listing.productConfig,
+    ...customisation,
+  });
   const templatePrintsEnabled = listing.ourCategory
-    ? listing.ourCategory.printsFrames || customisation.customisePrints
+    ? templateSettings.printsFrames || customisation.customisePrints
     : resetDefaults?.printsFrames ?? listing.productConfig?.printsFrames ?? true;
-  const templateDownloadsEnabled = listing.ourCategory?.digitalDownload
+  const templateDownloadsEnabled = (listing.ourCategory ? templateSettings.digitalDownload : undefined)
     ?? resetDefaults?.digitalDownload
     ?? listing.productConfig?.digitalDownload
     ?? options?.digitalDownload
@@ -735,12 +750,25 @@ export async function ensureListingProductDefaultsInTransaction(
 
 export async function saveListingCustomisationSettings(
   context: ListingProductsContext,
-  requested: ListingCustomisationSettings,
+  requested: ListingCustomisationSettings & { printsFrames?: boolean; digitalDownload?: boolean },
 ) {
   await prisma.$transaction(async (tx) => {
     const listing = await loadListingForContext(tx, context);
+    for (const key of ['printsFrames', 'digitalDownload', 'customisePrints'] as const) {
+      if (requested[key] === true && !listing.ourCategory?.[key]) {
+        throw new Error('This option is disabled on the assigned template.');
+      }
+    }
     const customisation = effectiveListingCustomisation(listing.ourCategory, requested);
     const current = listing.productConfig;
+    const overrides = {
+      printsFramesOverride: requested.printsFrames ?? current?.printsFramesOverride ?? null,
+      digitalDownloadOverride: requested.digitalDownload ?? current?.digitalDownloadOverride ?? null,
+    };
+    const templateSettings = effectiveListingTemplateSettings(listing.ourCategory, {
+      ...overrides,
+      ...customisation,
+    });
     const templateOptions = getTemplateProductOptions(
       listing.ourCategory,
       listing.etsyProductType === 'digital' ? 'digital' : 'physical',
@@ -751,8 +779,9 @@ export async function saveListingCustomisationSettings(
     const config: NormalizedListingProducts = {
       ...defaults,
       listOnEtsy: current?.listOnEtsy ?? true,
-      digitalDownload: listing.ourCategory?.digitalDownload ?? current?.digitalDownload ?? defaults.digitalDownload,
-      printsFrames: Boolean(listing.ourCategory?.printsFrames) || customisation.customisePrints,
+      digitalDownload: templateSettings.digitalDownload,
+      printsFrames: templateSettings.printsFrames || customisation.customisePrints,
+      ...overrides,
       ...customisation,
       giftMessageEnabled: current?.giftMessageEnabled ?? false,
       downloadSectionId: getTemplateDownloadSectionId(listing.ourCategory),

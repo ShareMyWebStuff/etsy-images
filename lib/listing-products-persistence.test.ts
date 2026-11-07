@@ -115,7 +115,12 @@ describe('multi-listing product type reconciliation', () => {
     expect(update).not.toHaveProperty('etsyOfferingId');
   });
 
-  it('rebuilds stale listing products from the assigned template product modes', async () => {
+  it.each([
+    { overrides: {}, digital: true, physical: true, customised: true },
+    { overrides: { printsFramesOverride: false, digitalDownloadOverride: false }, digital: false, physical: true, customised: true },
+    { overrides: { printsFramesOverride: false, digitalDownloadOverride: false, customisePrints: false }, digital: false, physical: false, customised: false },
+    { overrides: { printsFramesOverride: false, digitalDownloadOverride: true, customisePrints: false }, digital: true, physical: false, customised: false },
+  ])('reconciles product modes while preserving listing overrides: $overrides', async ({ overrides, digital, physical, customised }) => {
     const configUpsert = vi.fn().mockResolvedValue({});
     const productUpsert = vi.fn().mockResolvedValue({});
     const tx = {
@@ -140,6 +145,7 @@ describe('multi-listing product type reconciliation', () => {
             downloadSectionId: 60449656,
             returnPolicyId: null,
             sku: 'DINOSAUR_ALBERTOSAURUS',
+            ...overrides,
           },
           ourCategory: {
             printsFrames: true,
@@ -169,9 +175,9 @@ describe('multi-listing product type reconciliation', () => {
 
     expect(configUpsert).toHaveBeenCalledWith(expect.objectContaining({
       update: expect.objectContaining({
-        digitalDownload: true,
-        printsFrames: true,
-        customisePrints: true,
+        digitalDownload: digital,
+        printsFrames: physical,
+        customisePrints: customised,
         downloadSectionId: 60449656,
       }),
     }));
@@ -179,14 +185,14 @@ describe('multi-listing product type reconciliation', () => {
       call.where.listingId_productKey.productKey === 'digital'
       && call.update.productType === 'digital'
       && call.update.etsyListingId === '4541724479'
-    ))).toBe(true);
+    ))).toBe(digital);
     expect(productUpsert.mock.calls.some(([call]) => (
       call.where.listingId_productKey.productKey === 'unframed_a4'
       && call.update.frameKey === 'no_frame'
-    ))).toBe(true);
+    ))).toBe(physical);
     expect(productUpsert.mock.calls.some(([call]) => (
       call.where.listingId_productKey.productKey === 'framed_a4'
       && call.update.frameKey === 'frame'
-    ))).toBe(true);
+    ))).toBe(physical);
   });
 });

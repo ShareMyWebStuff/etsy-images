@@ -857,12 +857,16 @@ async function ensureDropboxUploadFolders(token: string, folderPath: string, fil
 }
 
 async function uploadDropboxFile(token: string, dropboxPath: string, contents: Buffer) {
+  // HTTP headers require byte-sized characters. JSON Unicode escapes keep the
+  // original Dropbox path intact while making the header safe for every name.
+  const apiArg = JSON.stringify({ path: dropboxPath, mode: 'overwrite', autorename: false, mute: true })
+    .replace(/[\u007f-\uffff]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
   const response = await fetch('https://content.dropboxapi.com/2/files/upload', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/octet-stream',
-      'Dropbox-API-Arg': JSON.stringify({ path: dropboxPath, mode: 'overwrite', autorename: false, mute: true }),
+      'Dropbox-API-Arg': apiArg,
     },
     body: new Uint8Array(contents),
   });

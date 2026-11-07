@@ -26,6 +26,7 @@
     "db:listing-text-areas": "node scripts/add-listing-personalisation-text-areas.cjs",
     "db:listing-print-crops": "node scripts/add-listing-print-crop-settings.cjs",
     "db:listing-orientation": "node scripts/add-listing-artwork-orientation.cjs",
+    "db:listing-template-overrides": "node scripts/add-listing-template-overrides.cjs",
     "db:listing-thumbnail-dimensions": "node scripts/add-listing-thumbnail-dimensions.cjs",
     "db:artwork-background-colour": "node scripts/add-artwork-background-colour.cjs",
     "db:backup:refresh": "node scripts/refresh-database-backups.cjs",

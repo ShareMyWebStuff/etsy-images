@@ -306,15 +306,24 @@ describe('Dropbox shared-link changes', () => {
     expect(result).toBe('https://dl.dropboxusercontent.com/scl/fi/file-id/artwork.png?rlkey=abc');
   });
 
-  it('uploads ordinary Digital Download files individually and removes the old Dropbox ZIP', async () => {
+  it.each([
+    { artworkFileName: 'Green_Turtle_A2.jpg', folderPath: null },
+    { artworkFileName: 'Mr and Mrs Scarecrow\u2019s afternoon tea_ISO_A1.jpg', folderPath: null },
+    { artworkFileName: 'Caf\u00e9_\u2013_\u6253\u5370.jpg', folderPath: null },
+    { artworkFileName: 'Wall_\ud83c\udf3b.jpg', folderPath: null },
+    { artworkFileName: 'Green_Turtle_A2.jpg', folderPath: '/Scarecrow\u2019s_\u6253\u5370_\ud83c\udf3b' },
+  ])('uploads $artworkFileName into $folderPath without renaming it and removes the old Dropbox ZIP', async ({ artworkFileName, folderPath }) => {
     const newUrl = 'https://www.dropbox.com/scl/fo/unzipped-link';
     const listing = makeListing();
     listing.dropboxFiles = [];
     listing.files = [
-      { id: 30, localFileName: 'file_1.jpg', originalFileName: 'Green_Turtle_A2.jpg', filename: 'file_1.jpg', rawJson: {} },
+      { id: 30, localFileName: 'file_1.jpg', originalFileName: artworkFileName, filename: 'file_1.jpg', rawJson: {} },
       { id: 31, localFileName: 'file_2.pdf', originalFileName: 'How_To_Print.pdf', filename: 'file_2.pdf', rawJson: {} },
     ];
-    listingRecord.value = listing;
+    listingRecord.value = {
+      ...listing,
+      ...(folderPath ? { dropboxBundle: { folderPath, sharedUrl: newUrl } } : {}),
+    };
     storage.objects.set('D:/Listings/Current/downloads/file_1.jpg', Buffer.from('A2 artwork'));
     storage.objects.set('D:/Listings/Current/downloads/file_2.pdf', Buffer.from('print guide PDF'));
 
@@ -347,11 +356,14 @@ describe('Dropbox shared-link changes', () => {
 
     const uploadCalls = vi.mocked(fetch).mock.calls.filter(([input]) => String(input).includes('content.dropboxapi.com/2/files/upload'));
     const uploads = uploadCalls.map(([, init]) => {
-      const apiArg = JSON.parse(String((init?.headers as Record<string, string>)?.['Dropbox-API-Arg'])) as { path: string };
+      const apiArgHeader = String((init?.headers as Record<string, string>)?.['Dropbox-API-Arg']);
+      expect(apiArgHeader).toMatch(/^[\x00-\x7f]*$/);
+      expect(() => new Headers(init?.headers)).not.toThrow();
+      const apiArg = JSON.parse(apiArgHeader) as { path: string };
       return { path: apiArg.path, contents: Buffer.from(init?.body as Uint8Array).toString() };
     });
     expect(uploads).toEqual(expect.arrayContaining([
-      { path: expect.stringMatching(/\/Green_Turtle_A2\.jpg$/), contents: 'A2 artwork' },
+      { path: folderPath ? `${folderPath}/${artworkFileName}` : expect.stringContaining(`/${artworkFileName}`), contents: 'A2 artwork' },
       { path: expect.stringMatching(/\/How_To_Print\.pdf$/), contents: 'print guide PDF' },
     ]));
     expect(uploads).toHaveLength(2);

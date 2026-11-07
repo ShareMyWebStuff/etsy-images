@@ -40,7 +40,7 @@ import {
 } from '@/lib/set-prices-core';
 import { prisma } from '@/lib/prisma';
 import { ensureRegisteredEtsySectionExists } from '@/lib/local-shop-sections';
-import { effectiveListingCustomisation } from '@/lib/listing-customisation';
+import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
 
 export type NewListingConfiguration = {
   numberOfItems: number | null;
@@ -417,7 +417,8 @@ function parseEtsyListingUrl(payload: unknown) {
 }
 
 async function fetchEtsyListingMutation<T>(path: string, init: RequestInit) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  const maxEditLockAttempts = 5;
+  for (let attempt = 0; attempt < maxEditLockAttempts; attempt += 1) {
     const accessToken = await getValidEtsyAccessToken();
     const response = await fetch(`https://openapi.etsy.com/v3/application${path}`, {
       ...init,
@@ -432,16 +433,27 @@ async function fetchEtsyListingMutation<T>(path: string, init: RequestInit) {
     const responseText = await response.text();
 
     if (response.ok) return (responseText ? JSON.parse(responseText) : null) as T;
-    if (response.status !== 429 || attempt === 2) {
+    // Etsy can keep a short edit lock after accepting the preceding update.
+    // Retry only this explicitly rejected request; replaying the whole listing
+    // sync could repeat uploads or create another draft.
+    const editingLocked = response.status === 409 && /is being edited by another process/i.test(responseText);
+    const maxAttempts = editingLocked ? maxEditLockAttempts : 3;
+    if ((!editingLocked && response.status !== 429) || attempt + 1 >= maxAttempts) {
+      if (editingLocked) {
+        const listingId = responseText.match(/listing_id\s+(\d+)/i)?.[1]
+          ?? path.match(/\/listings\/(\d+)/)?.[1];
+        const listingLabel = listingId ? `listing ${listingId}` : 'this listing';
+        throw new Error(`Etsy is still processing another edit to ${listingLabel}. Wait a moment, then try syncing again.`);
+      }
       throw new Error(`Etsy API returned ${response.status} ${response.statusText}${responseText ? `: ${responseText}` : ''}`);
     }
     const retryAfter = Number(response.headers.get('retry-after'));
     const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
       ? Math.min(retryAfter * 1000, 30_000)
-      : 1000 * (2 ** attempt);
+      : (editingLocked ? 2000 : 1000) * (2 ** attempt);
     await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
-  throw new Error('Etsy API rate limit retry failed.');
+  throw new Error('Etsy API request retry failed.');
 }
 
 export async function refreshEtsySectionListings(sectionId: string) {
@@ -2071,7 +2083,8 @@ export async function syncListingToEtsy(
   }
 
   const settings = listing.productConfig;
-  const customisation = effectiveListingCustomisation(listing.ourCategory, settings);
+  const templateSettings = effectiveListingTemplateSettings(listing.ourCategory, settings);
+  const customisation = templateSettings;
   const templateProductOptions = getTemplateProductOptions(
     listing.ourCategory,
     listing.etsyProductType === 'digital' ? 'digital' : 'physical',
@@ -2083,14 +2096,14 @@ export async function syncListingToEtsy(
   const enabledTemplateFrameKeys = templateFrameOptions
     .filter(({ enabled }) => enabled)
     .map(({ frameKey }) => frameKey);
-  const printSection = listing.ourCategory?.printsFrames ? listing.ourCategory.printFrameSection : null;
+  const printSection = templateSettings.printsFrames ? listing.ourCategory?.printFrameSection ?? null : null;
   const customisedSection = customisation.customisePrints ? listing.ourCategory?.customisedSection ?? null : null;
   const customisedSharesPrintSection = Boolean(
     printSection && customisedSection && printSection.id === customisedSection.id,
   );
   const configuredVariants = getTemplateEtsySyncVariants(listing.ourCategory ? {
     ...listing.ourCategory,
-    customisePrints: customisation.customisePrints,
+    ...templateSettings,
   } : null);
   if (configuredVariants.length === 0) throw new Error('Enable Prints / Frames, Customised Prints or Digital Download on the assigned template before syncing.');
   const requested = requestedVariants ? [...new Set(requestedVariants)] : configuredVariants;
@@ -2111,13 +2124,13 @@ export async function syncListingToEtsy(
 
   const physicalProducts = listing.products.filter((product) => product.productType === 'physical');
   const digitalProduct = listing.products.find((product) => product.productType === 'digital');
-  const configuredDownloadSection = listing.ourCategory?.digitalDownload
-    ? listing.ourCategory.downloadSection
+  const configuredDownloadSection = templateSettings.digitalDownload
+    ? listing.ourCategory?.downloadSection
     : null;
   const missingTemplateSections = [
-    listing.ourCategory?.printsFrames && !listing.ourCategory.printFrameSection ? 'Print / Frame' : null,
+    templateSettings.printsFrames && !listing.ourCategory?.printFrameSection ? 'Print / Frame' : null,
     customisation.customisePrints && !listing.ourCategory?.customisedSection ? 'Customised' : null,
-    listing.ourCategory?.digitalDownload && !listing.ourCategory.downloadSection ? 'Digital Download' : null,
+    templateSettings.digitalDownload && !listing.ourCategory?.downloadSection ? 'Digital Download' : null,
   ].filter((value): value is string => value !== null);
   if (missingTemplateSections.length > 0) {
     throw new Error(`Select the ${missingTemplateSections.join(', ')} Etsy ${missingTemplateSections.length === 1 ? 'category' : 'categories'} on the assigned template before syncing.`);

@@ -74,6 +74,17 @@ function mockEtsy(remoteType = 'physical', failReset = false) {
 }
 
 describe('digital Etsy conversion ordering', () => {
+  it('refuses a digital sync when the listing has disabled downloads', async () => {
+    const current = digitalListing();
+    mocks.reload.mockResolvedValue({
+      ...current,
+      productConfig: { ...current.productConfig, digitalDownloadOverride: false },
+    });
+    const fetchMock = mockEtsy();
+    await expect(syncListingToEtsy('66615491', '2', '3', '79', ['download'])).rejects.toThrow('before syncing');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('resets physical variations before requesting the download type, retaining the processing profile', async () => {
     const fetchMock = mockEtsy();
     await expect(syncListingToEtsy('66615491', '2', '3', '79', ['download'])).rejects.toThrow('Stopped at listing mutation');

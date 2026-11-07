@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     if (!current.etsyProducts.config.listOnEtsy) {
       return NextResponse.json({ error: 'Enable List this listing on Etsy before syncing.' }, { status: 409 });
     }
-    if (!current.template?.printsFrames && !current.etsyProducts.config.customisePrints && !current.template?.digitalDownload) {
+    if (!current.etsyProducts.config.printsFrames && !current.etsyProducts.config.customisePrints && !current.etsyProducts.config.digitalDownload) {
       return NextResponse.json(
         { error: 'Enable Prints / Frames, Customised Prints or Digital Download before syncing.' },
         { status: 409 },

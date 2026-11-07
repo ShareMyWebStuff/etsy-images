@@ -151,6 +151,8 @@ model EtsyListingProductConfig {
   listOnEtsy         Boolean     @default(true)
   digitalDownload    Boolean     @default(false)
   printsFrames       Boolean     @default(true)
+  printsFramesOverride Boolean?
+  digitalDownloadOverride Boolean?
   customTop          Boolean     @default(true)
   customBottom       Boolean     @default(true)
   customisePrints    Boolean     @default(true)

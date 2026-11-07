@@ -56,6 +56,7 @@ import { copyFile, mkdir, readFile, readImagePreview, readdir, rename, rm, stat,
 import { PRICE_OPTIONS } from '@/lib/set-prices-core';
 import { getTemplateDownloadSectionId, hasRequiredTemplateDownloadSection } from '@/lib/template-download-section';
 import { effectiveListingCustomisation } from '@/lib/listing-customisation';
+import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
 import { analyseListingThumbnailDimensions, type ListingThumbnailRatio } from '@/lib/listing-thumbnail-ratio';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
@@ -210,6 +211,8 @@ export type ListingEditorData = {
       listOnEtsy: boolean;
       digitalDownload: boolean;
       printsFrames: boolean;
+      printsFramesOverride?: boolean | null;
+      digitalDownloadOverride?: boolean | null;
       customTop: boolean;
       customBottom: boolean;
       customisePrints: boolean;
@@ -672,7 +675,10 @@ async function mapEditorData(
     hasRequiredDigitalDownloads: !isMultipleTemplate && hasRequiredPrintableDownloads(data.listing.files),
     hasCurrentZips: zippedFilesAreCurrent,
     hasCurrentDropbox: dropboxIsCurrent,
-    hasDownloadSection: hasRequiredTemplateDownloadSection(data.listing.ourCategory),
+    hasDownloadSection: hasRequiredTemplateDownloadSection(data.listing.ourCategory ? {
+      ...data.listing.ourCategory,
+      ...effectiveListingTemplateSettings(data.listing.ourCategory, data.listing.productConfig),
+    } : null),
     hasTags: data.listing.tags.length > 0,
     hasTitle: normalize(data.listing.title).length > 0,
     hasEtsyDescription: normalize(data.listing.description).length > 0,
@@ -886,6 +892,8 @@ async function mapEditorData(
         listOnEtsy: data.listing.productConfig?.listOnEtsy ?? true,
         digitalDownload: data.listing.productConfig?.digitalDownload ?? false,
         printsFrames: data.listing.productConfig?.printsFrames ?? true,
+        printsFramesOverride: data.listing.productConfig?.printsFramesOverride ?? null,
+        digitalDownloadOverride: data.listing.productConfig?.digitalDownloadOverride ?? null,
         customTop: listingCustomisation.customTop,
         customBottom: listingCustomisation.customBottom,
         customisePrints: listingCustomisation.customisePrints,

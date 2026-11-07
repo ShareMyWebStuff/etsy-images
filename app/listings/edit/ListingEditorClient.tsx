@@ -1,5 +1,7 @@
 'use client';
 
+import { ListingTemplateProductSettings } from './ListingTemplateProductSettings';
+
 import { ChangeEvent, FormEvent, MouseEvent, useRef, useState } from 'react';
 import Link from 'next/link';
 import { closestCenter, DndContext, DragEndEvent, DragOverlay, DragStartEvent, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -1556,12 +1558,14 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     }
   }
 
-  async function saveListingCustomisation(next: {
+  async function saveListingTemplateSettings(next: {
     customisePrints: boolean;
     customTop: boolean;
     customBottom: boolean;
+    printsFrames?: boolean;
+    digitalDownload?: boolean;
   }) {
-    setBusyKey('listing-customisation');
+    setBusyKey('listing-template-settings');
     setError(null);
     try {
       const response = await fetch('/api/shops/listings/editor/customisation', {
@@ -1569,9 +1573,9 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...context, ...next }),
       });
-      await parseResponse(response, 'Unable to save the listing customisation settings.');
+      await parseResponse(response, 'Unable to save the listing template settings.');
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the listing customisation settings.');
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the listing template settings.');
     } finally {
       setBusyKey(null);
     }
@@ -2270,11 +2274,6 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     const sourceReady = multiple
       ? data.groupItems.length === requiredItems && data.groupItems.every((item) => item.thumbnailFileName)
       : Boolean(data.thumbnail);
-    const templateCapabilities = [
-      { label: 'Print / Frames', enabled: data.template?.printsFrames ?? false },
-      { label: 'Customised Prints', enabled: data.template?.customisePrints ?? false },
-      { label: 'Digital Downloads', enabled: data.template?.digitalDownload ?? false },
-    ];
 
     return (
       <div className="grid gap-6">
@@ -2283,18 +2282,18 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
             <h2 id="template-settings-heading" className="text-lg font-semibold">Template Settings</h2>
             <p className="text-sm text-muted-foreground">Template: {data.template?.name ?? 'No template selected'}</p>
           </div>
-          <div className="flex flex-wrap gap-x-8 gap-y-3">
-            {templateCapabilities.map(({ label, enabled }) => (
-              <div key={label} className="flex items-center gap-2 text-sm font-medium">
-                <span>{label}</span>
-                {enabled ? (
-                  <CheckCircle2 className="h-5 w-5 text-green-700" aria-label={`${label} enabled`} />
-                ) : (
-                  <XCircle className="h-5 w-5 text-red-700" aria-label={`${label} not enabled`} />
-                )}
-              </div>
-            ))}
-          </div>
+          <ListingTemplateProductSettings
+            template={data.template}
+            listing={data.etsyProducts.config}
+            saving={busyKey !== null}
+            onChange={(key, checked) => void saveListingTemplateSettings({
+              customisePrints: data.etsyProducts.config.customisePrints,
+              customTop: key === 'customisePrints' ? checked && Boolean(data.template?.customTop) : data.etsyProducts.config.customTop,
+              customBottom: key === 'customisePrints' ? checked && Boolean(data.template?.customBottom) : data.etsyProducts.config.customBottom,
+              [key]: checked,
+            })}
+          />
+          {busyKey === 'listing-template-settings' ? <p className="text-xs text-muted-foreground">Saving template settings...</p> : null}
           <div className="grid max-w-sm gap-2 border-t pt-4">
             <label className="text-sm font-medium" htmlFor="listing-background-colour">Background Colour</label>
             <div className="flex items-center gap-2">
@@ -2330,29 +2329,13 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
             </div>
           </div>
           {data.template?.customisePrints ? <div className="grid gap-3 border-t pt-4">
-            <p className="text-sm text-muted-foreground">
-              The template sets the available options. These listing settings can switch personalisation off, but cannot enable an option disabled by the template.
-            </p>
-            <label className="flex items-center gap-2 text-sm font-medium">
-              <input
-                type="checkbox"
-                checked={data.etsyProducts.config.customisePrints}
-                disabled={busyKey !== null}
-                onChange={(event) => void saveListingCustomisation({
-                  customisePrints: event.target.checked,
-                  customTop: event.target.checked && data.template!.customTop,
-                  customBottom: event.target.checked && data.template!.customBottom,
-                })}
-              />
-              Customise
-            </label>
             <div className="ml-6 flex flex-wrap gap-x-8 gap-y-3 border-l pl-4">
               {data.template.customTop ? <label className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
                   checked={data.etsyProducts.config.customisePrints && data.etsyProducts.config.customTop}
                   disabled={busyKey !== null || !data.etsyProducts.config.customisePrints}
-                  onChange={(event) => void saveListingCustomisation({
+                  onChange={(event) => void saveListingTemplateSettings({
                     customisePrints: event.target.checked || data.etsyProducts.config.customBottom,
                     customTop: event.target.checked,
                     customBottom: data.etsyProducts.config.customBottom,
@@ -2365,7 +2348,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                   type="checkbox"
                   checked={data.etsyProducts.config.customisePrints && data.etsyProducts.config.customBottom}
                   disabled={busyKey !== null || !data.etsyProducts.config.customisePrints}
-                  onChange={(event) => void saveListingCustomisation({
+                  onChange={(event) => void saveListingTemplateSettings({
                     customisePrints: event.target.checked || data.etsyProducts.config.customTop,
                     customTop: data.etsyProducts.config.customTop,
                     customBottom: event.target.checked,
@@ -2374,7 +2357,6 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 Bottom Text
               </label> : null}
             </div>
-            {busyKey === 'listing-customisation' ? <p className="text-xs text-muted-foreground">Saving customisation settings...</p> : null}
           </div> : null}
         </section>
 

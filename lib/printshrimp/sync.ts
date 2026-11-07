@@ -188,7 +188,7 @@ function latestDate(values: Array<Date | null>) {
 }
 
 export async function getSyncToPrintShrimpData(): Promise<SyncToPrintShrimpData> {
-  const etsyData = await getSyncToEtsyData();
+  const etsyData = await getSyncToEtsyData({ checkRemoteSections: false });
   const etsySections = etsyData.sections
     .map((section) => ({ ...section, listings: section.listings.filter(isPrintShrimpPhysicalListing) }))
     .filter((section) => section.listings.length > 0);
@@ -212,7 +212,10 @@ export async function getSyncToPrintShrimpData(): Promise<SyncToPrintShrimpData>
       skuError = error instanceof Error ? error.message : 'The Etsy SKU is invalid.';
     }
 
-    const shouldInspectSourceContents = !skuError && isComplete && (adapter.configured || listing.printShrimpArtworkSyncs.length > 0);
+    // Unsynced listings have no previous source hash to compare. Validate their
+    // recorded file metadata here and read the artwork when Sync is requested.
+    const shouldInspectSourceContents = !skuError && isComplete
+      && listing.printShrimpArtworkSyncs.some((item) => Boolean(item.lastSuccessfulSourceHash));
     const inspection = !shouldInspectSourceContents
       ? { mapping: mapPrintShrimpRatioFiles(listing.files), hashes: new Map<PrintShrimpRatio, string>(), error: null }
       : await inspectListingSources(listing, etsySku);
@@ -453,7 +456,7 @@ async function prepareArtwork(listing: ListingRecord, baseSku: string, temporary
 export async function syncListingToPrintShrimp(listingId: string, client: PrintShrimpArtworkClient = getPrintShrimpArtworkClient()) {
   const numericListingId = Number(listingId);
   if (!Number.isInteger(numericListingId) || numericListingId < 1) throw new Error('Choose a valid listing to sync.');
-  const etsyData = await getSyncToEtsyData();
+  const etsyData = await getSyncToEtsyData({ checkRemoteSections: false });
   const matchingListings = etsyData.sections
     .flatMap((section) => section.listings)
     .filter((listing) => Number(listing.id) === numericListingId);

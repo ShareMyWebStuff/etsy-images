@@ -9,7 +9,7 @@ import { digitalPriceExcludingUkVat, etsyMoneyToPence } from '@/lib/etsy-digital
 import { getTemplateDownloadSectionId, getTemplatePrintSection, hasRequiredTemplateDownloadSection } from '@/lib/template-download-section';
 import { getRemoteEtsySectionIds } from '@/lib/local-shop-sections';
 import type { EtsySyncVariant } from '@/lib/etsy-sync-images';
-import { effectiveListingCustomisation } from '@/lib/listing-customisation';
+import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
 
 const MAX_ETSY_DOWNLOAD_SIZE_BYTES = 20 * 1024 * 1024;
 
@@ -67,7 +67,9 @@ export type SyncToEtsyData = {
   sections: SyncToEtsySection[];
 };
 
-export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
+export async function getSyncToEtsyData(
+  { checkRemoteSections = true }: { checkRemoteSections?: boolean } = {},
+): Promise<SyncToEtsyData> {
   const sections = await prisma.etsyShopSection.findMany({
     where: { shop: { isNot: null } },
     orderBy: [{ title: 'asc' }],
@@ -93,7 +95,7 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
                   originalFileName: true,
                 },
               },
-              productConfig: { select: { listOnEtsy: true, digitalDownload: true, printsFrames: true, customisePrints: true, customTop: true, customBottom: true, sku: true } },
+              productConfig: { select: { listOnEtsy: true, digitalDownload: true, printsFrames: true, printsFramesOverride: true, digitalDownloadOverride: true, customisePrints: true, customTop: true, customBottom: true, sku: true } },
               ourCategory: {
                 select: {
                   templateType: true,
@@ -123,9 +125,13 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
     select: { productKey: true, amountPence: true },
   });
   const digitalPrices = new Map(savedDigitalPrices.map((price) => [price.productKey, price.amountPence]));
-  const remoteSectionIdsByShop = new Map(await Promise.all(shopIds.map(async (shopId) => (
-    [shopId, new Set(await getRemoteEtsySectionIds(shopId))] as const
-  ))));
+  // PrintShrimp uses local listing completeness and category grouping, without
+  // needing to contact Etsy or verify that its remote sections still exist.
+  const remoteSectionIdsByShop = new Map(checkRemoteSections
+    ? await Promise.all(shopIds.map(async (shopId) => (
+      [shopId, new Set(await getRemoteEtsySectionIds(shopId))] as const
+    )))
+    : []);
 
   const localSections = await Promise.all(sections.map(async (section) => ({
       id: String(section.id),
@@ -142,11 +148,13 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
         })
         .flatMap((subSection) => subSection.listings.map(async (listing) => {
           if (!listing.ourCategory) return null;
-          const customisation = effectiveListingCustomisation(listing.ourCategory, listing.productConfig);
+          const templateSettings = effectiveListingTemplateSettings(listing.ourCategory, listing.productConfig);
+          const effectiveTemplate = { ...listing.ourCategory, ...templateSettings };
+          const customisation = templateSettings;
           const missingTemplateCategories = [
-            listing.ourCategory.printsFrames && !listing.ourCategory.printFrameSection ? 'Print / Frame' : null,
+            templateSettings.printsFrames && !listing.ourCategory.printFrameSection ? 'Print / Frame' : null,
             customisation.customisePrints && !listing.ourCategory.customisedSection ? 'Customised' : null,
-            listing.ourCategory.digitalDownload && !listing.ourCategory.downloadSection ? 'Digital Download' : null,
+            templateSettings.digitalDownload && !listing.ourCategory.downloadSection ? 'Digital Download' : null,
           ].filter((value): value is string => value !== null);
           if (missingTemplateCategories.length > 0) return null;
 
@@ -177,13 +185,13 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
               existsOnEtsy: remoteSectionIdsByShop.get(section.shop!.etsyShopId.toString())?.has(category.etsyShopSectionId) ?? false,
             });
           };
-          if (listing.ourCategory.printsFrames) addTemplateCategory(listing.ourCategory.printFrameSection, 'Print / Frames', 'print');
+          if (templateSettings.printsFrames) addTemplateCategory(listing.ourCategory.printFrameSection, 'Print / Frames', 'print');
           if (customisation.customisePrints) {
-            const sharesPrintCategory = listing.ourCategory.printsFrames
+            const sharesPrintCategory = templateSettings.printsFrames
               && listing.ourCategory.printFrameSection?.id === listing.ourCategory.customisedSection?.id;
             addTemplateCategory(listing.ourCategory.customisedSection, 'Customised', sharesPrintCategory ? 'print' : 'customised');
           }
-          if (listing.ourCategory.digitalDownload) addTemplateCategory(listing.ourCategory.downloadSection, 'Digital Download', 'download');
+          if (templateSettings.digitalDownload) addTemplateCategory(listing.ourCategory.downloadSection, 'Digital Download', 'download');
           const templateCategories = [...templateCategoriesById.values()];
           if (templateCategories.length === 0) return null;
 
@@ -194,11 +202,11 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
             && (file.sizeBytes ?? 0) <= MAX_ETSY_DOWNLOAD_SIZE_BYTES
           );
           const etsyProductType = listing.etsyProductType === 'digital' ? 'digital' as const : 'physical' as const;
-          const printEnabled = listing.ourCategory.printsFrames || customisation.customisePrints;
-          const requiresEtsyDownloads = listing.ourCategory.digitalDownload;
-          const templatePrintSection = getTemplatePrintSection(listing.ourCategory);
+          const printEnabled = templateSettings.printsFrames || customisation.customisePrints;
+          const requiresEtsyDownloads = templateSettings.digitalDownload;
+          const templatePrintSection = getTemplatePrintSection(effectiveTemplate);
           const templatePrintSectionId = templatePrintSection?.etsyShopSectionId ?? null;
-          const templateDownloadSectionId = getTemplateDownloadSectionId(listing.ourCategory);
+          const templateDownloadSectionId = getTemplateDownloadSectionId(effectiveTemplate);
           const allTemplateCategoriesExistOnEtsy = templateCategories.every((category) => category.existsOnEtsy);
           const etsyListingMode = printEnabled && requiresEtsyDownloads
             ? 'both' as const
@@ -230,7 +238,7 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
             hasRequiredDigitalDownloads: listing.ourCategory?.templateType !== 'multiple' && hasRequiredPrintableDownloads(listing.files),
             hasCurrentZips: true,
             hasCurrentDropbox,
-            hasDownloadSection: hasRequiredTemplateDownloadSection(listing.ourCategory),
+            hasDownloadSection: hasRequiredTemplateDownloadSection(effectiveTemplate),
             hasTags: listing.tags.length > 0,
             hasTitle: listing.title.trim().length > 0,
             hasEtsyDescription: (listing.description?.trim().length ?? 0) > 0,
@@ -288,13 +296,13 @@ export async function getSyncToEtsyData(): Promise<SyncToEtsyData> {
             syncedAt === null || syncedAt.getTime() < listing.lastLocalChangeAt.getTime()
           );
           const customisedEnabled = customisation.customisePrints
-            && listing.ourCategory.customisedSection?.id !== listing.ourCategory.printFrameSection?.id;
+            && (!templateSettings.printsFrames || listing.ourCategory.customisedSection?.id !== listing.ourCategory.printFrameSection?.id);
           const customisedSectionId = listing.ourCategory.customisedSection?.etsyShopSectionId ?? null;
           const customisedSectionIsCurrent = !customisedEnabled
             || (customisedSectionId !== null && listing.etsyCustomisedShopSectionId === customisedSectionId);
           const buildVariantStatus = (variant: EtsySyncVariant) => {
             const enabled = variant === 'print'
-              ? listing.ourCategory!.printsFrames
+              ? templateSettings.printsFrames
               : variant === 'customised' ? customisedEnabled : requiresEtsyDownloads;
             const remoteId = variant === 'print'
               ? listing.etsyId
@@ -541,7 +549,7 @@ export async function syncOneListing(listingId: string, requestedVariants?: Etsy
           originalFileName: true,
         },
       },
-      productConfig: { select: { listOnEtsy: true, digitalDownload: true, printsFrames: true } },
+      productConfig: { select: { listOnEtsy: true, digitalDownload: true, printsFrames: true, digitalDownloadOverride: true } },
       ourCategory: { select: { printsFrames: true, customisePrints: true, digitalDownload: true } },
       subSection: { include: { shopSection: { include: { shop: true } } } },
     },
@@ -574,7 +582,9 @@ export async function syncOneListing(listingId: string, requestedVariants?: Etsy
     }
     return;
   }
-  const digitalEnabled = listing.ourCategory?.digitalDownload ?? listing.productConfig?.digitalDownload ?? false;
+  const digitalEnabled = listing.ourCategory
+    ? effectiveListingTemplateSettings(listing.ourCategory, listing.productConfig).digitalDownload
+    : listing.productConfig?.digitalDownload ?? false;
   const variants = requestedVariants ? [...new Set(requestedVariants)] : undefined;
   if (variants?.some((variant) => variant !== 'print' && variant !== 'customised' && variant !== 'download')) {
     throw new Error('Choose a valid Etsy product type to sync.');

@@ -7,7 +7,7 @@ vi.mock('@/lib/etsy-oauth', () => ({
 import { syncListingPersonalization } from '@/lib/local-listings';
 
 beforeEach(() => { vi.stubEnv('ETSY_SHARED_SECRET', 'test-secret'); });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('syncing a single customisation fee to Etsy', () => {
   it('replaces separate free text boxes with one paid box while preserving font option IDs', async () => {
@@ -49,5 +49,101 @@ describe('syncing a single customisation fee to Etsy', () => {
     await syncListingPersonalization('66615491', '111', true, false, true, 450);
     const changed = JSON.parse(fetchMock.mock.calls[1][1].body).personalization_questions;
     expect(changed[1]).toMatchObject({ question_id: '2', question_text: 'Bottom Text', add_on_price: 4.5 });
+  });
+});
+
+describe('temporary Etsy listing edit locks', () => {
+  const locked = () => Response.json({
+    error: 'The Listing with listing_id 4541741363 is being edited by another process. Please try again in a few moments.',
+  }, { status: 409, statusText: 'Conflict' });
+
+  it('waits and retries only the rejected edit, preserving the request body', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ personalization_questions: [] }))
+      .mockResolvedValueOnce(locked())
+      .mockResolvedValueOnce(locked())
+      .mockResolvedValueOnce(Response.json({}));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = syncListingPersonalization('66615491', '4541741363', true, true, true, 300);
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(4000);
+    await result;
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.map(([, init]) => init.method)).toEqual(['GET', 'POST', 'POST', 'POST']);
+    const requests = fetchMock.mock.calls.slice(1).map(([url, { signal: _signal, ...init }]) => [url, init]);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(requests[2]).toEqual(requests[0]);
+  });
+
+  it('stops after bounded retries and identifies the listing that remains locked', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ personalization_questions: [] }))
+      .mockImplementation(async () => locked());
+    vi.stubGlobal('fetch', fetchMock);
+    const assertion = expect(syncListingPersonalization('66615491', '4541741363', true, true, true, 300))
+      .rejects.toThrow(/4541741363.*try syncing again/i);
+    await vi.runAllTimersAsync();
+    await assertion;
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it('respects Retry-After for a listing lock', async () => {
+    vi.useFakeTimers();
+    const response = locked();
+    response.headers.set('Retry-After', '5');
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ personalization_questions: [] }))
+      .mockResolvedValueOnce(response)
+      .mockResolvedValueOnce(Response.json({}));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = syncListingPersonalization('66615491', '4541741363', true, true, true, 300);
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    await result;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([400, 401, 403, 409, 500, 503])('does not retry unrelated HTTP %s failures', async (status) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ personalization_questions: [] }))
+      .mockResolvedValueOnce(Response.json({ error: 'Unrelated API failure' }, { status }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(syncListingPersonalization('66615491', '4541741363', true, true, true, 300))
+      .rejects.toThrow(`Etsy API returned ${status}`);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains rate-limit retries and their Retry-After delay', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ personalization_questions: [] }))
+      .mockResolvedValueOnce(Response.json({ error: 'Rate limit' }, { status: 429, headers: { 'Retry-After': '3' } }))
+      .mockResolvedValueOnce(Response.json({}));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = syncListingPersonalization('66615491', '4541741363', true, true, true, 300);
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    await result;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps the existing limit of three attempts for rate-limit responses', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ personalization_questions: [] }))
+      .mockImplementation(async () => Response.json({ error: 'Rate limit' }, { status: 429 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const assertion = expect(syncListingPersonalization('66615491', '4541741363', true, true, true, 300))
+      .rejects.toThrow('Etsy API returned 429');
+    await vi.runAllTimersAsync();
+    await assertion;
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });

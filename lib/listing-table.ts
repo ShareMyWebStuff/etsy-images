@@ -6,6 +6,7 @@ import { parseCurrentListingPrintCropSettings } from '@/lib/listing-print-crops'
 import { resolveListingCategory, type ListingTemplateProducts } from '@/lib/listing-category';
 import { prisma } from '@/lib/prisma';
 import { hasRequiredTemplateDownloadSection } from '@/lib/template-download-section';
+import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
 
 export type SubSectionListingsPageData = {
   shop: {
@@ -168,7 +169,7 @@ export async function getSubSectionListingsPageData(
       },
       files: { select: { originalFileName: true, localFileName: true, filename: true, widthPixels: true, heightPixels: true, rawJson: true } },
       zippedFiles: { select: { fileName: true, sizeBytes: true } },
-      productConfig: { select: { id: true, sku: true } },
+      productConfig: { select: { id: true, sku: true, printsFramesOverride: true, digitalDownloadOverride: true, customisePrints: true, customTop: true, customBottom: true } },
       products: { select: { id: true } },
       dropboxBundle: { select: { id: true, sharedUrl: true } },
       dropboxFiles: {
@@ -194,6 +195,8 @@ export async function getSubSectionListingsPageData(
           itemCount: true,
           printsFrames: true,
           customisePrints: true,
+          customTop: true,
+          customBottom: true,
           digitalDownload: true,
           printFrameSection: { select: { title: true } },
           customisedSection: { select: { title: true } },
@@ -232,6 +235,10 @@ export async function getSubSectionListingsPageData(
       itemCount: template.templateType === 'multiple' ? template.itemCount : 1,
     })),
     listings: (await Promise.all(listings.map(async (listing) => {
+      const effectiveTemplate = listing.ourCategory ? {
+        ...listing.ourCategory,
+        ...effectiveListingTemplateSettings(listing.ourCategory, listing.productConfig),
+      } : null;
       const hasDetailsTitle = listing.title.trim().length > 0;
       const isMultiple = listing.ourCategory?.templateType === 'multiple';
       const generatedTemplateIds = new Set(listing.images.flatMap((image) => (
@@ -267,7 +274,7 @@ export async function getSubSectionListingsPageData(
         hasRequiredDigitalDownloads: !isMultiple && hasRequiredPrintableDownloads(listing.files),
         hasCurrentZips,
         hasCurrentDropbox,
-        hasDownloadSection: hasRequiredTemplateDownloadSection(listing.ourCategory),
+        hasDownloadSection: hasRequiredTemplateDownloadSection(effectiveTemplate),
         hasTags: listing.tags.length > 0,
         hasTitle: hasDetailsTitle,
         hasEtsyDescription: (listing.description?.trim().length ?? 0) > 0,
@@ -281,7 +288,7 @@ export async function getSubSectionListingsPageData(
       });
       const isPublished = listing.state === 'active' || listing.state === 'published'
         || listing.etsyDownloadState === 'active' || listing.etsyDownloadState === 'published';
-      const category = resolveListingCategory(listing.ourCategory, listing.sourceSection?.title ?? null);
+      const category = resolveListingCategory(effectiveTemplate, listing.sourceSection?.title ?? null);
 
       return {
         id: String(listing.id),

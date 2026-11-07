@@ -102,4 +102,14 @@ describe('category-specific Etsy sync', () => {
       '66615491', '1', '1', '16', ['customised'],
     );
   });
+
+  it('does not require the download PDF when downloads are disabled for the listing', async () => {
+    const current = listing([]);
+    mocks.listingFindUnique.mockResolvedValue({
+      ...current,
+      productConfig: { ...current.productConfig, digitalDownloadOverride: false },
+    });
+    await syncOneListing('16');
+    expect(mocks.syncListingToEtsy).toHaveBeenCalledWith('66615491', '1', '1', '16', undefined);
+  });
 });

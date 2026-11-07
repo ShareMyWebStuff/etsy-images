@@ -10,6 +10,8 @@ type Body = {
   customisePrints?: boolean;
   customTop?: boolean;
   customBottom?: boolean;
+  printsFrames?: boolean;
+  digitalDownload?: boolean;
 };
 
 export async function PUT(request: Request) {
@@ -20,7 +22,9 @@ export async function PUT(request: Request) {
     }
     if (typeof body.customisePrints !== 'boolean'
       || typeof body.customTop !== 'boolean'
-      || typeof body.customBottom !== 'boolean') {
+      || typeof body.customBottom !== 'boolean'
+      || (body.printsFrames !== undefined && typeof body.printsFrames !== 'boolean')
+      || (body.digitalDownload !== undefined && typeof body.digitalDownload !== 'boolean')) {
       return NextResponse.json({ error: 'Choose the listing customisation options.' }, { status: 400 });
     }
     const context = {
@@ -33,6 +37,8 @@ export async function PUT(request: Request) {
       customisePrints: body.customisePrints,
       customTop: body.customTop,
       customBottom: body.customBottom,
+      printsFrames: body.printsFrames,
+      digitalDownload: body.digitalDownload,
     });
     return NextResponse.json({ data: await getListingEditorData(context) });
   } catch (error) {
