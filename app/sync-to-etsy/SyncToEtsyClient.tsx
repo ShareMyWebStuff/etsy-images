@@ -119,7 +119,9 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
           body: JSON.stringify({ listingId: listings[index].id, variants: listings[index].syncVariants }),
         });
         const result = (await response.json()) as { data?: SyncToEtsyData; error?: string };
-        if (!response.ok) throw new Error(result.error ?? `Unable to sync ${listings[index].listingName}.`);
+        if (!response.ok) {
+          throw new Error(`${listings[index].listingName} (${listings[index].etsyCategory}): ${result.error ?? 'Unable to sync listing.'}`);
+        }
         if (result.data) setData(result.data);
         if (index + 1 === listings.length) {
           setSyncAllProgress({
@@ -132,7 +134,7 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
         }
 
         if (index + 1 < listings.length) {
-          await new Promise<void>((resolve) => window.setTimeout(resolve, 60_000));
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 10_000));
         }
       }
     } catch (caught) {
@@ -335,7 +337,7 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
                 ? 'All available listings have been synced.'
                 : syncAllProgress?.message}
           </p>
-          {syncAllProgress?.status === 'running' ? <p className="mt-1 text-xs text-muted-foreground">There is a one-minute pause between each listing.</p> : null}
+          {syncAllProgress?.status === 'running' ? <p className="mt-1 text-xs text-muted-foreground">There is a 10-second pause between each listing.</p> : null}
         </div>
         {syncAllProgress?.status !== 'running' ? <DialogFooter>
           <Button type="button" onClick={() => setSyncAllProgress(null)}>Close</Button>

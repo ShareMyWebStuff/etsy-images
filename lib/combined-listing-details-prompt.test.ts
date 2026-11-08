@@ -56,6 +56,34 @@ describe('combined listing details prompt', () => {
     expect(result.tags).toEqual(['turtle nursery', 'sea creature art']);
   });
 
+  it('corrects repeated title symbols in generated JSON while preserving description text', () => {
+    const result = parseGeneratedListingDetails(`<ETSY_LISTING_DATA>${JSON.stringify({
+      printTitle: 'Mr & Mrs Scarecrow | Unframed & Framed',
+      digitalTitle: 'Mr & Mrs Scarecrow | Nursery & Playroom Download',
+      printDescription: 'Mr & Mrs Scarecrow & their friends.',
+      digitalDescription: 'Print at home & enjoy & share as a gift.',
+      tags: ['scarecrow art'],
+    })}</ETSY_LISTING_DATA>`);
+    expect(result.printTitle).toBe('Mr & Mrs Scarecrow | Unframed and Framed');
+    expect(result.digitalTitle).toBe('Mr & Mrs Scarecrow | Nursery and Playroom Download');
+    expect(result.printDescription).toBe('Mr & Mrs Scarecrow & their friends.');
+  });
+
+  it('corrects repeated title symbols in pasted Set Details output', () => {
+    const result = parseSetDetailsOutput(`Print Title
+Mr & Mrs Scarecrow | Unframed & Framed
+Print Description
+A scarecrow print.
+Digital Title
+Mr & Mrs Scarecrow | Nursery & Playroom Download
+Digital Description
+A printable scarecrow.
+Tags
+scarecrow art`);
+    expect(result.printTitle).toBe('Mr & Mrs Scarecrow | Unframed and Framed');
+    expect(result.digitalTitle).toBe('Mr & Mrs Scarecrow | Nursery and Playroom Download');
+  });
+
   it('builds the Start tab clipboard prompt from the current listing variables', () => {
     const prompt = buildSetDetailsClipboardPrompt(values);
     expect(prompt).toContain('SECTION_NAME = "Sea Creatures Wall Art"');

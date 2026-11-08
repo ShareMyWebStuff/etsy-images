@@ -88,6 +88,20 @@ ${JSON.stringify({
     expect(result.secondaryColour).toBe('beige');
   });
 
+  it('normalises restricted symbols in titles for generated multiple listings', () => {
+    const result = parseGeneratedMultipleListingDetails(`<ETSY_MULTIPLE_LISTING_DATA>${JSON.stringify({
+      printTitle: 'Mr & Mrs Scarecrow Set | Unframed & Framed',
+      printDescription: 'Mr & Mrs Scarecrow & their friends.',
+      digitalTitle: 'Mr & Mrs Scarecrow Set | Nursery & Playroom Download',
+      digitalDescription: 'Printable artworks.',
+      tags: Array.from({ length: 13 }, (_, index) => `scarecrow tag ${index + 1}`),
+      primaryColour: 'green', secondaryColour: 'beige',
+    })}</ETSY_MULTIPLE_LISTING_DATA>`);
+    expect(result.printTitle).toBe('Mr & Mrs Scarecrow Set | Unframed and Framed');
+    expect(result.digitalTitle).toBe('Mr & Mrs Scarecrow Set | Nursery and Playroom Download');
+    expect(result.printDescription).toBe('Mr & Mrs Scarecrow & their friends.');
+  });
+
   it('rejects an invalid colour or fewer than 13 distinct tags', () => {
     expect(() => parseGeneratedMultipleListingDetails(`<ETSY_MULTIPLE_LISTING_DATA>
 ${JSON.stringify({

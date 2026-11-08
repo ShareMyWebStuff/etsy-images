@@ -1,6 +1,7 @@
 import type { GeneratedListingDetails } from '@/lib/combined-listing-details-prompt';
 import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
 import { GENERATED_ETSY_TAG_RULES, validateGeneratedEtsyTagLengths } from '@/lib/generated-etsy-tags';
+import { ETSY_TITLE_RULES, normalizeEtsyListingTitle } from '@/lib/etsy-listing-title';
 
 export type MultipleListingPromptItem = {
   position: number;
@@ -81,6 +82,8 @@ ${values.digitalFileGuides}
 Use all entries in GROUPED_ARTWORKS_JSON. Name the included subjects naturally and accurately, and use each supplied description to distinguish the artworks. Do not omit an artwork, duplicate one, add another subject, or invent colours, characteristics, sizes, finishes, materials, files, personalisation choices or delivery promises.
 
 Write warm, natural British English. Avoid keyword stuffing, repetitive adjectives, exaggerated claims and repeated product information.
+
+${ETSY_TITLE_RULES}
 
 PHYSICAL PRINT LISTING
 
@@ -195,8 +198,8 @@ export function parseGeneratedMultipleListingDetails(responseText: string): Gene
   if (tags.length !== 13) throw new Error('AWS Bedrock must return exactly 13 distinct Etsy tags for a grouped listing.');
   validateGeneratedEtsyTagLengths(tags);
 
-  const printTitle = requiredText(record.printTitle, 'the Print title');
-  const digitalTitle = requiredText(record.digitalTitle, 'the Digital Download title');
+  const printTitle = normalizeEtsyListingTitle(requiredText(record.printTitle, 'the Print title'));
+  const digitalTitle = normalizeEtsyListingTitle(requiredText(record.digitalTitle, 'the Digital Download title'));
   if (Array.from(printTitle).length > 140 || Array.from(digitalTitle).length > 140) {
     throw new Error('AWS Bedrock returned an Etsy title longer than 140 characters.');
   }

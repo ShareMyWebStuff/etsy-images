@@ -1,6 +1,7 @@
 import { buildDetailsGeneratePrompt } from '@/lib/details-generate-prompt';
 import { buildDownloadDetailsPrompt } from '@/lib/download-details-prompt';
 import { GENERATED_ETSY_TAG_RULES, validateGeneratedEtsyTagLengths } from '@/lib/generated-etsy-tags';
+import { ETSY_TITLE_RULES, normalizeEtsyListingTitle } from '@/lib/etsy-listing-title';
 
 export type CombinedListingDetailsPromptValues = {
   sectionName: string;
@@ -195,6 +196,7 @@ ACCURACY RULES
 - Include the supplied GIFT MESSAGES section in the physical Print Description only when GIFT_MESSAGE_ENABLED is "Y". Never include it in the digital description.
 - The digital bundle contains six high-resolution JPEG artwork files represented by DIGITAL_FILES_INCLUDED, plus a separate How_To_Print_Guide.pdf. Do not describe it as seven JPEG files and do not add sizes that are not represented in DIGITAL_FILES_INCLUDED.
 - Keep titles at 140 characters or fewer.
+${ETSY_TITLE_RULES}
 - Return exactly 13 distinct Etsy tags. Each tag must be 20 characters or fewer.
 ${GENERATED_ETSY_TAG_RULES}
 - Use natural British English. Avoid keyword stuffing and repeated sentences.
@@ -322,6 +324,11 @@ function requiredText(value: unknown, label: string) {
 }
 
 function validateGeneratedListingDetails(generated: GeneratedListingDetails) {
+  generated = {
+    ...generated,
+    printTitle: normalizeEtsyListingTitle(generated.printTitle),
+    digitalTitle: normalizeEtsyListingTitle(generated.digitalTitle),
+  };
   if (generated.printTitle.length > 140 || generated.digitalTitle.length > 140) {
     throw new Error('The Etsy titles must be no longer than 140 characters.');
   }

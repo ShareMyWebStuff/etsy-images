@@ -189,6 +189,43 @@ describe('SyncToEtsyClient views', () => {
     expect(screen.getByRole('button', { name: 'Sync Category' })).toBeTruthy();
   });
 
+  it('identifies the failed listing and category in Sync All and shows the current pause', async () => {
+    let respond!: (response: { ok: boolean; json: () => Promise<{ error: string }> }) => void;
+    const fetchMock = vi.fn().mockImplementation(() => new Promise((resolve) => { respond = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SyncToEtsyClient initialData={data} shops={shops} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Sync All' }));
+    expect(screen.getByText('There is a 10-second pause between each listing.')).toBeTruthy();
+    respond({ ok: false, json: async () => ({ error: 'All quantities are zero' }) });
+    await waitFor(() => expect(within(screen.getByRole('dialog')).getByText(`${listing.listingName} (${listing.etsyCategory}): All quantities are zero`)).toBeTruthy());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByRole('button', { name: 'Close' }).length).toBeGreaterThan(0);
+  });
+
+  it.each(['local', 'etsy'])('allows a published listing with template changes to resync in %s view', async (view) => {
+    const updatedListing = {
+      ...listing, hasEtsyListing: true, isPublished: true, hasActiveEtsyListing: true,
+      canSync: true, pendingChanges: ['Template'],
+    };
+    const updatedData = {
+      ...data,
+      localSections: [{ ...data.localSections[0], listings: [updatedListing] }],
+      sections: [{ ...data.sections[0], listings: [updatedListing] }],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: updatedData }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SyncToEtsyClient initialData={updatedData} shops={shops} />);
+    if (view === 'etsy') fireEvent.click(screen.getByRole('tab', { name: 'Etsy View' }));
+    fireEvent.click(screen.getByRole('button', { name: view === 'local' ? /Dinosaur Wall Art/ : /Kids & Nursery Prints/ }));
+    const button = screen.getByRole('button', { name: 'Sync Print' });
+    expect(button.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(button);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/etsy/upload', expect.objectContaining({
+      body: JSON.stringify({ listingId: listing.id, variants: ['print'] }),
+    })));
+    await waitFor(() => expect(button.hasAttribute('disabled')).toBe(false));
+  });
+
   it('orders listings by listing name and then Etsy section', () => {
     const unorderedData: SyncToEtsyData = {
       ...data,

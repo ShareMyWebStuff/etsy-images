@@ -12,6 +12,7 @@ import { getEtsyKeystring, getValidEtsyAccessToken } from '@/lib/etsy-oauth';
 import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
 import { digitalPriceExcludingUkVat } from '@/lib/etsy-digital-vat';
 import { getEtsyListingDetails } from '@/lib/etsy-listing-details';
+import { normalizeEtsyListingTitle } from '@/lib/etsy-listing-title';
 import { planEtsyImageCleanup, selectEtsySyncImages, type EtsySyncVariant } from '@/lib/etsy-sync-images';
 import { getTemplateEtsySyncVariants } from '@/lib/etsy-sync-targets';
 import { derivePhysicalAttributeLabels, syncEtsyPhysicalListingAttributes } from '@/lib/etsy-physical-attributes';
@@ -781,7 +782,11 @@ function buildPushListingBody(
   if (!forcedListingType) throw new Error('Choose print or digital before building an Etsy listing.');
   const listingType = forcedListingType;
   const details = getEtsyListingDetails(listingType, listing);
-  const { title: etsyTitle, description: etsyDescription, quantity: etsyQuantity } = details;
+  const { description: etsyDescription, quantity: etsyQuantity } = details;
+  const etsyTitle = normalizeEtsyListingTitle(details.title ?? '');
+  if (Array.from(etsyTitle).length > 140) {
+    throw new Error(`The ${details.label} title cannot be longer than 140 characters after formatting for Etsy.`);
+  }
   const missingFields = [
     etsyTitle?.trim() ? null : `${details.label} title`,
     etsyDescription?.trim() ? null : `${details.label} description`,
@@ -2262,11 +2267,48 @@ export async function syncListingToEtsy(
         existingId, digitalProduct!, listingSku, basePriceAmount, listing.digitalQuantity ?? 999,
       );
     }
-    const payload = await fetchEtsyListingMutation<unknown>(mutationPath, {
+    let inventorySynced = false;
+    const syncInventory = async (remoteId: string) => {
+      if (!isDownload) {
+        if (!deliverySettings) throw new Error('Etsy delivery settings were not resolved for this print listing.');
+        await syncPhysicalProductInventory(
+          { ...listing, etsyId: remoteId },
+          deliverySettings,
+          enabledTemplateFrameKeys,
+          variant,
+        );
+      } else {
+        const product = digitalProduct!;
+        const mapping = await putSingleDigitalInventory(
+          remoteId,
+          product,
+          listingSku,
+          digitalPriceExcludingUkVat(productPricePence(product, prices)),
+          listing.digitalQuantity ?? 999,
+          null,
+        );
+        await persistDigitalProductMapping(listing.id, remoteId, product, mapping);
+      }
+      inventorySynced = true;
+    };
+    const updateMetadata = () => fetchEtsyListingMutation<unknown>(mutationPath, {
       method: existingId ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
     });
+    let payload: unknown;
+    try {
+      payload = await updateMetadata();
+    } catch (error) {
+      // Etsy rejects metadata updates for some existing listings whose variation
+      // stock is entirely zero. Apply the configured inventory first, then retry
+      // the rejected metadata update once without recreating the listing.
+      if (!existingId || !(error instanceof Error)
+        || !/^Etsy API returned 400\b/.test(error.message)
+        || !/\bAll quantities are zero\b/i.test(error.message)) throw error;
+      await syncInventory(existingId);
+      payload = await updateMetadata();
+    }
     const remoteId = parseEtsyListingId(payload) ?? existingId;
     if (!remoteId) throw new Error(`Etsy did not return a ${variant} listing id.`);
 
@@ -2340,26 +2382,7 @@ export async function syncListingToEtsy(
     });
     await syncChangedImages(etsyShopId, remoteId, listingDirectory, chosenImages, variant);
 
-    if (!isDownload) {
-      if (!deliverySettings) throw new Error('Etsy delivery settings were not resolved for this print listing.');
-      await syncPhysicalProductInventory(
-        { ...listing, etsyId: remoteId },
-        deliverySettings,
-        enabledTemplateFrameKeys,
-        variant,
-      );
-    } else {
-      const product = digitalProduct!;
-      const mapping = await putSingleDigitalInventory(
-        remoteId,
-        product,
-        listingSku,
-        digitalPriceExcludingUkVat(productPricePence(product, prices)),
-        listing.digitalQuantity ?? 999,
-        null,
-      );
-      await persistDigitalProductMapping(listing.id, remoteId, product, mapping);
-    }
+    if (!inventorySynced) await syncInventory(remoteId);
     await syncListingPersonalization(
       etsyShopId,
       remoteId,

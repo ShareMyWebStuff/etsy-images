@@ -1,3 +1,5 @@
+import { ETSY_TITLE_RULES } from '@/lib/etsy-listing-title';
+
 const DOWNLOAD_DETAILS_PROMPT = `ETSY DIGITAL DOWNLOAD LISTING COPY
 
 AUTHORITATIVE INPUTS
@@ -26,6 +28,8 @@ Write in warm, natural British English. Avoid repetitive adjectives, exaggerated
 TITLE
 
 Write a human-readable Etsy title of fewer than 15 words and no more than 140 characters.
+
+${ETSY_TITLE_RULES}
 
 * Front-load ANIMAL_NAME and a supported colour, style or nursery-placement phrase where natural.
 * Make clear that this is printable nursery wall art.

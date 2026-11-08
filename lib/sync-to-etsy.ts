@@ -98,6 +98,7 @@ export async function getSyncToEtsyData(
               productConfig: { select: { listOnEtsy: true, digitalDownload: true, printsFrames: true, printsFramesOverride: true, digitalDownloadOverride: true, customisePrints: true, customTop: true, customBottom: true, sku: true } },
               ourCategory: {
                 select: {
+                  updatedAt: true,
                   templateType: true,
                   itemCount: true,
                   printsFrames: true,
@@ -108,7 +109,15 @@ export async function getSyncToEtsyData(
                   printFrameSection: { select: { id: true, etsyShopSectionId: true, title: true } },
                   customisedSection: { select: { id: true, etsyShopSectionId: true, title: true } },
                   downloadSection: { select: { id: true, etsyShopSectionId: true, title: true } },
-                  imageTemplates: { select: { id: true } },
+                  imageTemplates: { select: {
+                    id: true,
+                    updatedAt: true,
+                    linkedSourceImageTemplate: { select: { updatedAt: true } },
+                  } },
+                  followedTemplate: { select: {
+                    updatedAt: true,
+                    imageTemplates: { select: { updatedAt: true } },
+                  } },
                 },
               },
               groupItems: { select: { id: true } },
@@ -151,6 +160,19 @@ export async function getSyncToEtsyData(
           const templateSettings = effectiveListingTemplateSettings(listing.ourCategory, listing.productConfig);
           const effectiveTemplate = { ...listing.ourCategory, ...templateSettings };
           const customisation = templateSettings;
+          const templateUpdatedAt = Math.max(
+            listing.ourCategory.updatedAt?.getTime() ?? 0,
+            listing.ourCategory.followedTemplate?.updatedAt?.getTime() ?? 0,
+            ...listing.ourCategory.imageTemplates.flatMap((image) => [
+              image.updatedAt?.getTime() ?? 0,
+              image.linkedSourceImageTemplate?.updatedAt?.getTime() ?? 0,
+            ]),
+            ...(listing.ourCategory.followedTemplate?.imageTemplates ?? [])
+              .map((image) => image.updatedAt?.getTime() ?? 0),
+          );
+          const templateChangedAfter = (syncedAt: Date | null) => (
+            templateUpdatedAt > (syncedAt?.getTime() ?? 0)
+          );
           const missingTemplateCategories = [
             templateSettings.printsFrames && !listing.ourCategory.printFrameSection ? 'Print / Frame' : null,
             customisation.customisePrints && !listing.ourCategory.customisedSection ? 'Customised' : null,
@@ -273,6 +295,9 @@ export async function getSyncToEtsyData(
             listing.imagesChanged ? 'Images' : null,
             listing.downloadsChanged ? 'Downloads' : null,
             listing.productsChanged ? 'Products' : null,
+            ((templateSettings.printsFrames && templateChangedAfter(listing.lastSyncedAt))
+              || (customisation.customisePrints && templateChangedAfter(listing.etsyCustomisedLastSyncedAt))
+              || (templateSettings.digitalDownload && templateChangedAfter(listing.etsyDownloadLastSyncedAt))) ? 'Template' : null,
           ].filter((area): area is string => area !== null);
           const missingPrintListing = printEnabled && listing.etsyId === null;
           const missingDownloadListing = requiresEtsyDownloads && listing.etsyDownloadId === null;
@@ -319,9 +344,11 @@ export async function getSyncToEtsyData(
             const requiredCategoriesExistOnEtsy = templateCategories
               .filter((category) => category.variants.includes(variant))
               .every((category) => category.existsOnEtsy);
-            const changed = changedAfter(variant === 'print'
+            const lastSyncedAt = variant === 'print'
               ? listing.lastSyncedAt
-              : variant === 'customised' ? listing.etsyCustomisedLastSyncedAt : listing.etsyDownloadLastSyncedAt);
+              : variant === 'customised' ? listing.etsyCustomisedLastSyncedAt : listing.etsyDownloadLastSyncedAt;
+            const changed = changedAfter(lastSyncedAt);
+            const templateChanged = templateChangedAfter(lastSyncedAt);
             const priceChanged = variant === 'download' && digitalPriceChanged;
             const changedAreas = changed ? [
               listing.detailsChanged ? 'Details' : null,
@@ -332,7 +359,8 @@ export async function getSyncToEtsyData(
             ].filter((area): area is string => area !== null) : [];
             if (priceChanged) changedAreas.push('Price');
             if (changed && changedAreas.length === 0) changedAreas.push('Local changes');
-            const needsSync = enabled && (remoteId === null || !sectionIsCurrent || changed || priceChanged);
+            if (templateChanged) changedAreas.push('Template');
+            const needsSync = enabled && (remoteId === null || !sectionIsCurrent || changed || priceChanged || templateChanged);
             const pending = [
               remoteId === null ? `New ${variant === 'download' ? 'digital' : variant} listing` : null,
               ...changedAreas,

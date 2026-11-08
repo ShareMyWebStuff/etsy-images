@@ -1793,6 +1793,12 @@ export async function deleteOurCategoryImageTemplate(templateId: string) {
 
   await removeImageGroups(removalGroups, 0, async () => {
     await prisma.$transaction(async (transaction) => {
+      // Preserve the change time after the deleted images can no longer be
+      // compared with a listing's last Etsy sync, including linked templates.
+      await transaction.ourCategory.updateMany({
+        where: { imageTemplates: { some: { id: { in: plan.affectedTemplateIds } } } },
+        data: { updatedAt: new Date() },
+      });
       if (plan.listingImages.length > 0) {
         await transaction.etsyListingImage.deleteMany({
           where: { id: { in: plan.listingImages.map(({ id: imageId }) => imageId) } },
@@ -1832,11 +1838,12 @@ export async function reorderOurCategoryImageTemplates(categoryId: string, order
     order,
     category.imageTemplates.map((template) => template.id),
   );
+  const reorderedAt = new Date();
   await prisma.$transaction(async (transaction) => {
     for (const [position, templateId] of requestedIds.entries()) {
       await transaction.$executeRaw`
         UPDATE our_category_image_templates
-        SET position = ${position}
+        SET position = ${position}, updatedAt = ${reorderedAt}
         WHERE id = ${templateId} AND categoryId = ${id}
       `;
     }

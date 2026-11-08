@@ -14,6 +14,7 @@ import { inspectListingZipStorage, isDropboxInstructionPdfFile } from '@/lib/dro
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';
 import { getListingTodoItems, type ListingTodoItem } from '@/lib/listing-completeness';
 import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
+import { normalizeEtsyListingTitle } from '@/lib/etsy-listing-title';
 import { detectDominantEtsyColours } from '@/lib/etsy-image-colours';
 import type { GeneratedListingDetails } from '@/lib/combined-listing-details-prompt';
 import {
@@ -1056,9 +1057,14 @@ async function refresh(context: ListingEditorContext, areas: ListingChangeArea[]
 export async function saveListingDetails(input: SaveListingDetailsInput) {
   const data = await getListingForContext(input);
   const supplied = (key: keyof SaveListingDetailsInput) => Object.prototype.hasOwnProperty.call(input, key);
+  const printTitle = normalizeEtsyListingTitle(normalize(input.title));
+  const digitalTitle = normalizeEtsyListingTitle(normalize(input.digitalTitle));
 
-  if (supplied('digitalTitle') && Array.from(normalize(input.digitalTitle)).length > 255) {
-    throw new Error('The Digital Download title cannot be longer than 255 characters.');
+  if (supplied('title') && Array.from(printTitle).length > 140) {
+    throw new Error('The Print title cannot be longer than 140 characters.');
+  }
+  if (supplied('digitalTitle') && Array.from(digitalTitle).length > 140) {
+    throw new Error('The Digital Download title cannot be longer than 140 characters.');
   }
   if (supplied('quantity') && input.quantity !== null && input.quantity !== undefined
     && (!Number.isInteger(input.quantity) || input.quantity < 0)) {
@@ -1078,9 +1084,9 @@ export async function saveListingDetails(input: SaveListingDetailsInput) {
       id: data.listing.id,
     },
     data: {
-      ...(supplied('title') ? { title: normalize(input.title) } : {}),
+      ...(supplied('title') ? { title: printTitle } : {}),
       ...(supplied('description') ? { description: normalize(input.description) || null } : {}),
-      ...(supplied('digitalTitle') ? { digitalTitle: normalize(input.digitalTitle) || null } : {}),
+      ...(supplied('digitalTitle') ? { digitalTitle: digitalTitle || null } : {}),
       ...(supplied('digitalDescription') ? { digitalDescription: normalize(input.digitalDescription) || null } : {}),
       ...(supplied('digitalQuantity') ? { digitalQuantity: input.digitalQuantity } : {}),
       ...(supplied('status') ? { state: normalize(input.status) || null } : {}),
@@ -1829,16 +1835,17 @@ export async function saveGeneratedListingDetails(
   generated: GeneratedListingDetails,
 ) {
   const data = await getListingForContext(context);
+  const printTitle = normalizeEtsyListingTitle(normalize(generated.printTitle));
+  const digitalTitle = normalizeEtsyListingTitle(normalize(generated.digitalTitle));
   const tags = generated.tags
     .map((tag) => normalize(tag))
     .filter(Boolean)
     .filter((tag, index, values) => values.findIndex((value) => value.toLocaleLowerCase() === tag.toLocaleLowerCase()) === index);
-  if (!normalize(generated.printTitle) || !normalize(generated.printDescription)
-    || !normalize(generated.digitalTitle) || !normalize(generated.digitalDescription)) {
+  if (!printTitle || !normalize(generated.printDescription)
+    || !digitalTitle || !normalize(generated.digitalDescription)) {
     throw new Error('ChatGPT must return both titles and both descriptions.');
   }
-  if (Array.from(normalize(generated.printTitle)).length > 140
-    || Array.from(normalize(generated.digitalTitle)).length > 140) {
+  if (Array.from(printTitle).length > 140 || Array.from(digitalTitle).length > 140) {
     throw new Error('ChatGPT returned an Etsy title longer than 140 characters.');
   }
   if (tags.length === 0 || tags.length > 13) {
@@ -1851,9 +1858,9 @@ export async function saveGeneratedListingDetails(
     await transaction.etsyListing.update({
       where: { id: data.listing.id },
       data: {
-        title: normalize(generated.printTitle),
+        title: printTitle,
         description: normalize(generated.printDescription),
-        digitalTitle: normalize(generated.digitalTitle),
+        digitalTitle,
         digitalDescription: normalize(generated.digitalDescription),
         detailsChanged: true,
         tagsChanged: true,
@@ -1869,9 +1876,9 @@ export async function saveGeneratedListingDetails(
   const refreshed = await getListingEditorData(context);
   if (!refreshed) throw new Error('The generated listing details were saved, but the listing could not be reloaded.');
   const savedTags = refreshed.tags.map(({ value }) => value.toLocaleLowerCase());
-  if (refreshed.listing.title !== normalize(generated.printTitle)
+  if (refreshed.listing.title !== printTitle
     || refreshed.listing.description !== normalize(generated.printDescription)
-    || refreshed.listing.digitalTitle !== normalize(generated.digitalTitle)
+    || refreshed.listing.digitalTitle !== digitalTitle
     || refreshed.listing.digitalDescription !== normalize(generated.digitalDescription)
     || tags.some((tag) => !savedTags.includes(tag.toLocaleLowerCase()))) {
     throw new Error('The generated listing details could not be verified after saving.');

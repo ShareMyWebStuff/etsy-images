@@ -1,3 +1,5 @@
+import { ETSY_TITLE_RULES } from '@/lib/etsy-listing-title';
+
 export type DetailsGeneratePromptValues = {
   sectionName: string;
   listingName: string;
@@ -276,6 +278,8 @@ Keep the physical listing's digital promotion concise:
 TITLE
 
 Create one Etsy title:
+
+${ETSY_TITLE_RULES}
 
 * Fewer than 15 words.
 * No more than 140 characters.
