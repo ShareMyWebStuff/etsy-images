@@ -1,0 +1,90 @@
+ALTER TABLE etsy_shops ADD COLUMN currencyCode VARCHAR(3) NULL;
+
+CREATE TABLE IF NOT EXISTS delivery_profiles (
+  id INT NOT NULL AUTO_INCREMENT,
+  shopId INT NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  currencyCode VARCHAR(3) NOT NULL,
+  originCountryIso VARCHAR(2) NOT NULL,
+  originPostalCode VARCHAR(32) NOT NULL,
+  readinessStateId VARCHAR(32) NULL,
+  includeDeliveryInformation BOOLEAN NOT NULL DEFAULT FALSE,
+  deliveryInformation TEXT NOT NULL,
+  etsyShippingProfileId VARCHAR(32) NULL,
+  isCalculated BOOLEAN NOT NULL DEFAULT FALSE,
+  revision INT NOT NULL DEFAULT 1,
+  syncedRevision INT NULL,
+  syncStatus VARCHAR(20) NOT NULL DEFAULT 'LOCAL_ONLY',
+  lastSyncedAt DATETIME(3) NULL,
+  remoteFingerprint VARCHAR(64) NULL,
+  remoteSnapshot JSON NULL,
+  pendingCreateToken TEXT NULL,
+  syncStartedAt DATETIME(3) NULL,
+  error TEXT NULL,
+  archivedAt DATETIME(3) NULL,
+  createdAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updatedAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY delivery_profiles_shopId_etsyShippingProfileId_key (shopId, etsyShippingProfileId),
+  KEY delivery_profiles_shopId_archivedAt_idx (shopId, archivedAt),
+  CONSTRAINT delivery_profiles_shopId_fkey FOREIGN KEY (shopId) REFERENCES etsy_shops(id) ON DELETE RESTRICT
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS delivery_destinations (
+  id INT NOT NULL AUTO_INCREMENT,
+  profileId INT NOT NULL,
+  countryCode VARCHAR(32) NOT NULL,
+  primaryCostMinor INT NOT NULL,
+  secondaryCostMinor INT NOT NULL,
+  minDeliveryDays INT NULL,
+  maxDeliveryDays INT NULL,
+  carrierId VARCHAR(32) NULL,
+  mailClass VARCHAR(100) NULL,
+  etsyDestinationId VARCHAR(32) NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY delivery_destinations_profileId_countryCode_key (profileId, countryCode),
+  CONSTRAINT delivery_destinations_profileId_fkey FOREIGN KEY (profileId) REFERENCES delivery_profiles(id) ON DELETE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS market_delivery_settings (
+  id INT NOT NULL AUTO_INCREMENT,
+  shopId INT NOT NULL,
+  listingId INT NULL,
+  templateId INT NULL,
+  printProfileId INT NULL,
+  customisedProfileId INT NULL,
+  includeDeliveryInformation BOOLEAN NULL,
+  deliveryInformation TEXT NULL,
+  createdAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updatedAt DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY market_delivery_settings_listingId_key (listingId),
+  UNIQUE KEY market_delivery_settings_templateId_key (templateId),
+  KEY market_delivery_settings_shopId_idx (shopId),
+  CONSTRAINT market_delivery_settings_shopId_fkey FOREIGN KEY (shopId) REFERENCES etsy_shops(id) ON DELETE RESTRICT,
+  CONSTRAINT market_delivery_settings_listingId_fkey FOREIGN KEY (listingId) REFERENCES etsy_listings(id) ON DELETE CASCADE,
+  CONSTRAINT market_delivery_settings_templateId_fkey FOREIGN KEY (templateId) REFERENCES our_categories(id) ON DELETE CASCADE,
+  CONSTRAINT market_delivery_settings_printProfileId_fkey FOREIGN KEY (printProfileId) REFERENCES delivery_profiles(id) ON DELETE RESTRICT,
+  CONSTRAINT market_delivery_settings_customisedProfileId_fkey FOREIGN KEY (customisedProfileId) REFERENCES delivery_profiles(id) ON DELETE RESTRICT
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS delivery_assignment_syncs (
+  id INT NOT NULL AUTO_INCREMENT,
+  listingId INT NOT NULL,
+  variant VARCHAR(16) NOT NULL,
+  profileId INT NULL,
+  etsyListingId VARCHAR(32) NULL,
+  etsyShippingProfileId VARCHAR(32) NULL,
+  profileRevision INT NULL,
+  settingsFingerprint VARCHAR(64) NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+  lastSyncedAt DATETIME(3) NULL,
+  error TEXT NULL,
+  managedDescription MEDIUMTEXT NULL,
+  baseDescription MEDIUMTEXT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY delivery_assignment_syncs_listingId_variant_key (listingId, variant),
+  KEY delivery_assignment_syncs_profileId_idx (profileId),
+  CONSTRAINT delivery_assignment_syncs_listingId_fkey FOREIGN KEY (listingId) REFERENCES etsy_listings(id) ON DELETE CASCADE,
+  CONSTRAINT delivery_assignment_syncs_profileId_fkey FOREIGN KEY (profileId) REFERENCES delivery_profiles(id) ON DELETE RESTRICT
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

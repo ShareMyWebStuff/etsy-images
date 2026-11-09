@@ -1,6 +1,7 @@
 'use client';
 
 import { ListingTemplateProductSettings } from './ListingTemplateProductSettings';
+import { MarketsDeliverySettings } from '@/components/MarketsDeliverySettings';
 
 import { ChangeEvent, FormEvent, MouseEvent, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -2358,6 +2359,14 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               </label> : null}
             </div>
           </div> : null}
+          <MarketsDeliverySettings
+            target={{ type: 'listing', context: data.context }}
+            printsEnabled={Boolean(data.template?.printsFrames && data.etsyProducts.config.printsFramesOverride !== false)}
+            customisedEnabled={Boolean(data.template?.customisePrints && data.etsyProducts.config.customisePrints)}
+            sharedPhysicalListing={Boolean(data.template?.sharedPhysicalDelivery && data.template.printsFrames && data.etsyProducts.config.printsFramesOverride !== false && data.etsyProducts.config.customisePrints)}
+            baseDescription={data.listing.description}
+            disabled={busyKey !== null}
+          />
         </section>
 
         <section className="grid gap-4 rounded-lg border bg-card p-5">

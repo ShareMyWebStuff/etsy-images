@@ -15,6 +15,7 @@ import { getListingDirectoryPath } from '@/lib/local-shop-directory';
 import { getListingTodoItems, type ListingTodoItem } from '@/lib/listing-completeness';
 import { ETSY_PRIMARY_COLOURS } from '@/lib/etsy-colours';
 import { normalizeEtsyListingTitle } from '@/lib/etsy-listing-title';
+import { validateEtsyDescription } from '@/lib/delivery-description';
 import { detectDominantEtsyColours } from '@/lib/etsy-image-colours';
 import type { GeneratedListingDetails } from '@/lib/combined-listing-details-prompt';
 import {
@@ -143,6 +144,7 @@ export type ListingEditorData = {
     customTop: boolean;
     customBottom: boolean;
     digitalDownload: boolean;
+    sharedPhysicalDelivery?: boolean;
     backgroundColour: ArtworkBackgroundColour;
     downloadSection: { title: string; etsyShopSectionId: number } | null;
     imageTemplates: Array<{ id: string; name: string; position: number; generated: boolean }>;
@@ -778,6 +780,8 @@ async function mapEditorData(
       customTop: data.listing.ourCategory.customTop,
       customBottom: data.listing.ourCategory.customBottom,
       digitalDownload: data.listing.ourCategory.digitalDownload,
+      sharedPhysicalDelivery: data.listing.ourCategory.printFrameSectionId !== null
+        && data.listing.ourCategory.printFrameSectionId === data.listing.ourCategory.customisedSectionId,
       backgroundColour: templateBackgroundColour,
       downloadSection: data.listing.ourCategory.downloadSection,
       imageTemplates: data.listing.ourCategory.imageTemplates.map((template) => ({
@@ -1059,6 +1063,8 @@ export async function saveListingDetails(input: SaveListingDetailsInput) {
   const supplied = (key: keyof SaveListingDetailsInput) => Object.prototype.hasOwnProperty.call(input, key);
   const printTitle = normalizeEtsyListingTitle(normalize(input.title));
   const digitalTitle = normalizeEtsyListingTitle(normalize(input.digitalTitle));
+  if (supplied('description')) validateEtsyDescription(input.description ?? '');
+  if (supplied('digitalDescription')) validateEtsyDescription(input.digitalDescription ?? '');
 
   if (supplied('title') && Array.from(printTitle).length > 140) {
     throw new Error('The Print title cannot be longer than 140 characters.');
@@ -1845,6 +1851,8 @@ export async function saveGeneratedListingDetails(
     || !digitalTitle || !normalize(generated.digitalDescription)) {
     throw new Error('ChatGPT must return both titles and both descriptions.');
   }
+  validateEtsyDescription(generated.printDescription);
+  validateEtsyDescription(generated.digitalDescription);
   if (Array.from(printTitle).length > 140 || Array.from(digitalTitle).length > 140) {
     throw new Error('ChatGPT returned an Etsy title longer than 140 characters.');
   }

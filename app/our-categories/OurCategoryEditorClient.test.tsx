@@ -7,6 +7,9 @@ import { defaultTemplateGridLayout } from '@/lib/template-grid-layout';
 import { OurCategoryEditorClient } from './OurCategoryEditorClient';
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// Delivery settings have their own request and interaction tests. Keep these
+// template/image workflow tests scoped to the requests they exercise.
+vi.mock('@/components/MarketsDeliverySettings', () => ({ MarketsDeliverySettings: () => null }));
 
 const sizes = ['a5', 'a4', 'a3'].map((key) => ({ key, label: key.toUpperCase() }));
 const frames = [

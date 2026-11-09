@@ -42,6 +42,8 @@ import {
 import { prisma } from '@/lib/prisma';
 import { ensureRegisteredEtsySectionExists } from '@/lib/local-shop-sections';
 import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
+import { composeDeliveryDescription, validateEtsyDescription } from '@/lib/delivery-description';
+import { getEffectiveListingDelivery, markDeliveryAssignmentSynced, recordDeliveryAssignmentMetadata } from '@/lib/markets-delivery';
 
 export type NewListingConfiguration = {
   numberOfItems: number | null;
@@ -783,6 +785,7 @@ function buildPushListingBody(
   const listingType = forcedListingType;
   const details = getEtsyListingDetails(listingType, listing);
   const { description: etsyDescription, quantity: etsyQuantity } = details;
+  validateEtsyDescription(etsyDescription ?? '');
   const etsyTitle = normalizeEtsyListingTitle(details.title ?? '');
   if (Array.from(etsyTitle).length > 140) {
     throw new Error(`The ${details.label} title cannot be longer than 140 characters after formatting for Etsy.`);
@@ -1275,11 +1278,12 @@ export async function getEtsyReturnPolicies(shopId: string): Promise<EtsyReturnP
 
 async function resolvePhysicalDeliverySettings(
   shopId: string,
-  listing: Pick<PushableListing, 'etsyId' | 'priceMappings' | 'productConfig'> & { rawJson: Prisma.JsonValue | null }
+  listing: Pick<PushableListing, 'etsyId' | 'priceMappings' | 'productConfig'> & { rawJson: Prisma.JsonValue | null },
+  selected?: { shippingProfileId: string | null; readinessStateId: string | null },
 ): Promise<PhysicalDeliverySettings> {
   const raw = jsonObject(listing.rawJson);
   const rawShippingProfile = jsonObject(raw?.shipping_profile);
-  const recordedShippingProfileId = oneConfiguredId([
+  const recordedShippingProfileId = selected?.shippingProfileId ?? oneConfiguredId([
     positiveEtsyId(raw?.shipping_profile_id),
     positiveEtsyId(rawShippingProfile?.shipping_profile_id),
   ], 'Etsy returned conflicting shipping profile ids for this listing. Refresh the listing before syncing.');
@@ -1307,7 +1311,7 @@ async function resolvePhysicalDeliverySettings(
     }
   }
 
-  let readinessStateId = positiveEtsyId(raw?.readiness_state_id);
+  let readinessStateId = selected?.readinessStateId ?? positiveEtsyId(raw?.readiness_state_id);
   const recordedListingType = typeof raw?.listing_type === 'string' ? raw.listing_type : null;
   if (!readinessStateId && listing.etsyId && recordedListingType !== 'download') {
     const inventory = await fetchEtsyListingMutation<EtsyInventory>(
@@ -1352,6 +1356,17 @@ async function resolvePhysicalDeliverySettings(
   }
 
   return { shippingProfileId, readinessStateId, returnPolicyId };
+}
+
+function verifyPhysicalShippingProfile(payload: unknown, expectedId: string) {
+  const raw = payload && typeof payload === 'object' ? payload as Record<string, unknown> : null;
+  const nested = raw?.shipping_profile && typeof raw.shipping_profile === 'object'
+    ? raw.shipping_profile as Record<string, unknown> : null;
+  const returnedId = oneConfiguredId([positiveEtsyId(raw?.shipping_profile_id), positiveEtsyId(nested?.shipping_profile_id)],
+    'Etsy returned conflicting delivery profile IDs. The listing remains pending; review and retry.');
+  if (returnedId && returnedId !== expectedId) {
+    throw new Error('Etsy returned a different delivery profile than requested. The listing remains pending; review and retry.');
+  }
 }
 
 export async function pushListing(shopId: string, sectionId: string, subSectionId: string, listingId: string) {
@@ -2116,6 +2131,23 @@ export async function syncListingToEtsy(
     throw new Error('The selected Etsy product type is not enabled on the assigned template.');
   }
   const enabled = configuredVariants.filter((variant) => requested.includes(variant));
+  const deliveryContext = { shopId, sectionId, subSectionId, listingId };
+  const managedDelivery = new Map(await Promise.all(enabled.filter((variant) => variant !== 'download').map(async (variant) => [
+    variant, await getEffectiveListingDelivery(deliveryContext, variant),
+  ] as const)));
+  for (const [variant, delivery] of managedDelivery) {
+    if (delivery.descriptionConflict) throw new Error(delivery.descriptionConflict);
+    if (delivery.usesManagedProfile && (!delivery.shippingProfileId || delivery.profileSyncStatus !== 'SYNCED')) {
+      throw new Error(`Sync the selected ${variant === 'print' ? 'Print / Frames' : 'Customised Prints'} delivery profile to Etsy on Markets & Delivery before syncing this listing.`);
+    }
+  }
+  if (customisedSharesPrintSection && enabled.includes('print')) {
+    const printDelivery = managedDelivery.get('print')!;
+    const customisedDelivery = await getEffectiveListingDelivery(deliveryContext, 'customised');
+    if (printDelivery.profileId !== customisedDelivery.profileId) {
+      throw new Error('Print / Frames and Customised Prints share one Etsy listing in this template. Choose the same delivery profile for both; Etsy does not support delivery profiles per variation.');
+    }
+  }
 
   if (enabled.includes('download') && listing.etsyDownloadId) {
     const physicalOwner = await prisma.etsyListing.findFirst({
@@ -2205,9 +2237,6 @@ export async function syncListingToEtsy(
   const printSectionId = enabled.includes('print') ? ensuredSectionIds.get(printSection!.id) ?? null : null;
   const customisedSectionId = enabled.includes('customised') ? ensuredSectionIds.get(customisedSection!.id) ?? null : null;
   const downloadSectionId = enabled.includes('download') ? ensuredSectionIds.get(configuredDownloadSection!.id) ?? null : null;
-  const deliverySettings = enabled.some((variant) => variant !== 'download')
-    ? await resolvePhysicalDeliverySettings(etsyShopId, listing)
-    : null;
   const listingDirectory = getListingDirectoryPath(
     context.shop.displayName,
     context.section.title,
@@ -2229,6 +2258,29 @@ export async function syncListingToEtsy(
     const existingId = isPrint
       ? listing.etsyId
       : variant === 'customised' ? listing.etsyCustomisedId : listing.etsyDownloadId;
+    let selectedDelivery = isDownload ? null : await getEffectiveListingDelivery(deliveryContext, variant);
+    if (selectedDelivery?.descriptionConflict) throw new Error(selectedDelivery.descriptionConflict);
+    if (selectedDelivery?.usesManagedProfile && (!selectedDelivery.shippingProfileId || selectedDelivery.profileSyncStatus !== 'SYNCED')) {
+      throw new Error('The selected delivery profile has unsynced changes. Sync it on Markets & Delivery before syncing this listing.');
+    }
+    const deliverySettings = isDownload ? null : await resolvePhysicalDeliverySettings(etsyShopId, {
+      ...listing,
+      etsyId: existingId,
+      rawJson: isPrint ? listing.rawJson : listing.etsyCustomisedRawJson,
+    }, selectedDelivery?.usesManagedProfile ? selectedDelivery : undefined);
+    if (deliverySettings && selectedDelivery && !selectedDelivery.usesManagedProfile) {
+      // New listings can acquire their profile from the existing shop fallback.
+      // Resolve its local wording before composing/sending the first description.
+      selectedDelivery = await getEffectiveListingDelivery(deliveryContext, variant, { shippingProfileId: deliverySettings.shippingProfileId });
+      if (selectedDelivery.descriptionConflict) throw new Error(selectedDelivery.descriptionConflict);
+      if (selectedDelivery.usesManagedProfile) {
+        if (!selectedDelivery.shippingProfileId || selectedDelivery.profileSyncStatus !== 'SYNCED') {
+          throw new Error('The selected delivery profile has unsynced changes. Sync it on Markets & Delivery before syncing this listing.');
+        }
+        deliverySettings.shippingProfileId = selectedDelivery.shippingProfileId;
+        deliverySettings.readinessStateId = selectedDelivery.readinessStateId ?? deliverySettings.readinessStateId;
+      }
+    }
     const listingType = isDownload ? 'download' as const : 'physical' as const;
     const products = isDownload ? [digitalProduct!] : physicalProducts;
     const taxonomyId = isDownload ? ETSY_DIGITAL_PRINTS_TAXONOMY_ID : ETSY_GICLEE_PRINTS_TAXONOMY_ID;
@@ -2242,6 +2294,9 @@ export async function syncListingToEtsy(
     const body = buildPushListingBody(
       {
         ...listing,
+        description: isDownload ? listing.description : composeDeliveryDescription(
+          listing.description ?? '', selectedDelivery?.deliveryInformation ?? '', selectedDelivery?.includeDeliveryInformation ?? false,
+        ),
         priceAmount: basePriceAmount,
         priceDivisor: 100,
         taxonomyId,
@@ -2291,11 +2346,26 @@ export async function syncListingToEtsy(
       }
       inventorySynced = true;
     };
-    const updateMetadata = () => fetchEtsyListingMutation<unknown>(mutationPath, {
-      method: existingId ? 'PATCH' : 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-    });
+    const updateMetadata = async () => {
+      if (!isDownload && selectedDelivery) {
+        const current = await getEffectiveListingDelivery(deliveryContext, variant, { shippingProfileId: deliverySettings?.shippingProfileId });
+        if (current.descriptionConflict) throw new Error(current.descriptionConflict);
+        if (current.profileId !== selectedDelivery.profileId
+          || current.profileRevision !== selectedDelivery.profileRevision
+          || current.shippingProfileId !== selectedDelivery.shippingProfileId
+          || current.readinessStateId !== selectedDelivery.readinessStateId
+          || current.includeDeliveryInformation !== selectedDelivery.includeDeliveryInformation
+          || current.deliveryInformation !== selectedDelivery.deliveryInformation
+          || (current.usesManagedProfile && current.profileSyncStatus !== 'SYNCED')) {
+          throw new Error('Delivery settings changed while this listing was syncing. Review them and sync the listing again.');
+        }
+      }
+      return fetchEtsyListingMutation<unknown>(mutationPath, {
+        method: existingId ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+      });
+    };
     let payload: unknown;
     try {
       payload = await updateMetadata();
@@ -2311,7 +2381,6 @@ export async function syncListingToEtsy(
     }
     const remoteId = parseEtsyListingId(payload) ?? existingId;
     if (!remoteId) throw new Error(`Etsy did not return a ${variant} listing id.`);
-
     // Save the ID immediately. If a later image, inventory or file request
     // fails, the next sync updates this draft instead of creating a duplicate.
     await prisma.etsyListing.update({
@@ -2349,6 +2418,12 @@ export async function syncListingToEtsy(
             etsyDownloadRawJson: toRawJson(payload),
           },
     });
+    if (!isDownload) {
+      verifyPhysicalShippingProfile(payload, deliverySettings!.shippingProfileId);
+      await recordDeliveryAssignmentMetadata(deliveryContext, variant, remoteId, {
+        baseDescription: listing.description ?? '', managedDescription: body.get('description') ?? '', expected: selectedDelivery!,
+      });
+    }
 
     if (!isDownload && existingId) {
       await removeRemoteEtsyDownloads(etsyShopId, remoteId, listing.id, false);
@@ -2436,6 +2511,14 @@ export async function syncListingToEtsy(
             etsyDownloadLastSyncedAt: new Date(),
           },
     });
+    if (!isDownload) {
+      verifyPhysicalShippingProfile(verified, deliverySettings!.shippingProfileId);
+      await markDeliveryAssignmentSynced(deliveryContext, variant, remoteId, {
+        baseDescription: listing.description ?? '',
+        managedDescription: body.get('description') ?? '',
+        expected: selectedDelivery!,
+      });
+    }
   }
 
   const syncedAt = new Date();

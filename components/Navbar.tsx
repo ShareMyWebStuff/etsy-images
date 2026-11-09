@@ -36,6 +36,7 @@ export const NAV_GROUPS = [
     items: [
       { label: 'Orders', href: '/etsy/orders' },
       { label: 'Etsy Categories', href: '/etsy/categories' },
+      { label: 'Markets & Delivery', href: '/etsy/markets-delivery' },
       { label: 'Sync to Etsy', href: '/sync-to-etsy' },
       { label: 'Publish to Etsy', href: '/publish-to-etsy' },
       { label: 'Compare', href: '/compare' },
@@ -80,13 +81,13 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border bg-card/90 backdrop-blur">
-      <AppContainer className="flex min-h-14 items-center justify-between gap-4 py-2">
+      <AppContainer className="flex min-h-14 flex-wrap items-center justify-between gap-4 py-2 sm:flex-nowrap">
         <Link href="/" className="text-lg font-semibold text-card-foreground no-underline">
           Etsy
         </Link>
 
-        <NavigationMenu viewport={false}>
-          <NavigationMenuList>
+        <NavigationMenu viewport={false} className="min-w-0 max-w-full sm:max-w-max">
+          <NavigationMenuList className="flex-wrap sm:flex-nowrap">
             {NAV_GROUPS.map((group, index) => (
               <NavigationMenuItem key={group.title}>
                 <NavigationMenuTrigger className={group.items.some((item) => pathname === item.href || pathname.startsWith(`${item.href}/`)) ? 'bg-accent text-accent-foreground' : undefined}>

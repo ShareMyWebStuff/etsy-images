@@ -302,7 +302,37 @@ async function getAuthenticatedUserId(accessToken: string) {
   return tokenUserId;
 }
 
-async function syncEtsyListingDownload(
+/** Preserve the separately stored base and surface remote edits for review. */
+export async function resolveImportedPhysicalDescription(
+  tx: Pick<Prisma.TransactionClient, 'deliveryAssignmentSync'>,
+  local: { id: number; description: string | null; detailsChanged: boolean },
+  variant: 'print' | 'customised',
+  remoteId: string,
+  remoteDescription: string | null,
+) {
+  const assignment = await tx.deliveryAssignmentSync.findUnique({
+    where: { listingId_variant: { listingId: local.id, variant } },
+  });
+  if (!assignment) return remoteDescription;
+  const base = local.detailsChanged ? local.description
+    : local.description === assignment.managedDescription
+      ? assignment.baseDescription ?? local.description
+      : local.description ?? assignment.baseDescription;
+  const differentListing = assignment.etsyListingId !== null && assignment.etsyListingId !== remoteId;
+  if (differentListing || (assignment.managedDescription !== null && assignment.managedDescription !== remoteDescription)) {
+    await tx.deliveryAssignmentSync.update({
+      where: { listingId_variant: { listingId: local.id, variant } },
+      data: { status: 'CONFLICT', error: differentListing
+        ? 'The Etsy listing ID differs from the saved delivery description snapshot. Review the listing and its final description before replacing Etsy text.'
+        : 'The Etsy description changed outside this application. Your saved base description has been preserved. Review both descriptions before replacing Etsy text.' },
+    });
+  }
+  // Even a pending assignment with no successful snapshot must not adopt a
+  // rendered physical description as the artwork's reusable base.
+  return base;
+}
+
+export async function syncEtsyListingDownload(
   shopId: string,
   userId: string,
   listing: EtsyListingResponse,
@@ -314,6 +344,9 @@ async function syncEtsyListingDownload(
   }
 
   const etsyId = String(listing.listing_id);
+  if (listing.shop_id !== null && listing.shop_id !== undefined && String(listing.shop_id) !== shopId) {
+    throw new Error('The imported Etsy listing does not belong to this shop.');
+  }
   const price = parsePriceParts(listing.price);
   const rawJson = toRawJson(listing);
   const importedProductType = listing.listing_type === 'download' ? 'digital' : 'physical';
@@ -335,9 +368,10 @@ async function syncEtsyListingDownload(
       },
     });
 
-    const existingListing = await tx.etsyListing.findUnique({
-      where: { etsyId },
+    const existingListing = await tx.etsyListing.findFirst({
+      where: { OR: [{ etsyId }, { etsyCustomisedId: etsyId }, { etsyDownloadId: etsyId }] },
       select: {
+        id: true, shopId: true, description: true, etsyId: true, etsyCustomisedId: true, etsyDownloadId: true,
         productConfig: { select: { id: true } },
         detailsChanged: true,
         tagsChanged: true,
@@ -346,6 +380,35 @@ async function syncEtsyListingDownload(
         productsChanged: true,
       },
     });
+    if (existingListing?.shopId && existingListing.shopId !== shopId) throw new Error('This Etsy listing is already linked to a different shop.');
+    // A generated physical/digital product belongs to its existing artwork.
+    // Import its remote snapshot without creating another parent artwork or
+    // copying customised/physical wording into the shared base description.
+    if (existingListing && existingListing.etsyId !== etsyId) {
+      const customised = existingListing.etsyCustomisedId === etsyId;
+      const physicalBase = customised
+        ? await resolveImportedPhysicalDescription(tx, existingListing, 'customised', etsyId, listing.description ?? null) : null;
+      await tx.etsyListing.update({
+        where: { id: existingListing.id },
+        data: customised ? {
+          etsyCustomisedRawJson: rawJson, etsyCustomisedState: listing.state ?? null,
+          etsyCustomisedUrl: listing.url ?? null, etsyCustomisedShopSectionId: toNullableNumber(listing.shop_section_id),
+          ...(!existingListing.detailsChanged && physicalBase !== existingListing.description ? { description: physicalBase } : {}),
+          downloadedAt: new Date(),
+        } : {
+          etsyDownloadRawJson: rawJson, etsyDownloadState: listing.state ?? null,
+          etsyDownloadUrl: listing.url ?? null, etsyDownloadShopSectionId: toNullableNumber(listing.shop_section_id),
+          ...(existingListing.detailsChanged ? {} : {
+            digitalTitle: listing.title ?? null, digitalDescription: listing.description ?? null, digitalQuantity: listing.quantity ?? null,
+          }),
+          downloadedAt: new Date(),
+        },
+      });
+      return { id: existingListing.id, etsyId: existingListing.etsyId };
+    }
+    const importedDescription = existingListing && importedProductType === 'physical'
+      ? await resolveImportedPhysicalDescription(tx, existingListing, 'print', etsyId, listing.description ?? null)
+      : listing.description ?? null;
     const shouldInitializeProducts = !existingListing?.productConfig;
     const preserveLocalDetails = existingListing?.detailsChanged === true;
     const preserveLocalProducts = existingListing?.productsChanged === true;
@@ -358,7 +421,7 @@ async function syncEtsyListingDownload(
         userId: toNullableString(listing.user_id) ?? userId,
         ...(preserveLocalDetails ? {} : {
           title: listing.title ?? `Listing ${etsyId}`,
-          description: listing.description ?? null,
+          description: importedDescription,
           quantity: listing.quantity ?? null,
           whoMade: listing.who_made ?? null,
           isSupply: listing.is_supply ?? null,

@@ -30,6 +30,7 @@ import {
   type PrintShrimpCustomFontId,
 } from '@/lib/printshrimp/custom-fonts';
 import { TemplateCornerPicker } from './TemplateCornerPicker';
+import { MarketsDeliverySettings } from '@/components/MarketsDeliverySettings';
 
 export type OurCategoryEditorTab = 'details' | 'print-details' | 'image-templates';
 type PendingNavigation = { type: 'href'; href: string } | { type: 'back' };
@@ -911,6 +912,16 @@ export function OurCategoryEditorClient({
             ) : null}
           </div> : null}
           {(!isMultiple || followedTemplate?.values.digitalDownload) ? <CheckboxField checked={values.digitalDownload} label="Digital Downloads" onChange={(checked) => updateValue('digitalDownload', checked)} /> : null}
+          {data.categoryId ? <>
+            {dirty ? <p className="text-xs text-muted-foreground">Save template details before changing delivery defaults.</p> : null}
+            <MarketsDeliverySettings
+              target={{ type: 'template', templateId: data.categoryId, shopId: data.shopId }}
+              printsEnabled={values.printsFrames}
+              customisedEnabled={values.customisePrints}
+              sharedPhysicalListing={values.printsFrames && values.customisePrints && values.printFrameSectionId !== null && values.printFrameSectionId === values.customisedSectionId}
+              disabled={saving || dirty}
+            />
+          </> : <p className="text-xs text-muted-foreground">Create this template to set its Markets &amp; Delivery defaults.</p>}
           <div className="grid gap-4 rounded-md border p-4">
             <div className="flex items-start justify-between gap-4">
               <div>

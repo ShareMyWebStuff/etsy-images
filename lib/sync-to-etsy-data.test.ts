@@ -16,6 +16,28 @@ const syncedDate = new Date('2026-11-02T12:00:00Z');
 const changedDate = new Date('2026-11-03T12:00:00Z');
 const resyncedDate = new Date('2026-11-04T12:00:00Z');
 
+type DeliveryAssignmentFixture = {
+  variant: string;
+  status: string;
+  profileRevision: number | null;
+  profile: {
+    name: string;
+    revision: number;
+    syncedRevision: number | null;
+    syncStatus: string;
+    etsyShippingProfileId: string | null;
+    archivedAt: Date | null;
+  } | null;
+};
+
+function deliveryAssignment(overrides: Partial<DeliveryAssignmentFixture> = {}): DeliveryAssignmentFixture {
+  return {
+    variant: 'print', status: 'PENDING', profileRevision: 1,
+    profile: { name: 'UK delivery', revision: 2, syncedRevision: 2, syncStatus: 'SYNCED', etsyShippingProfileId: '12345', archivedAt: null },
+    ...overrides,
+  };
+}
+
 function syncedListing(id = 518) {
   const source = { fileName: 'thumbnail.jpg', updatedAt: originalDate.toISOString(), width: 600, height: 900 };
   return {
@@ -49,6 +71,7 @@ function syncedListing(id = 518) {
     dropboxBundle: { sharedUrl: 'https://example.com/download' }, dropboxFiles: [],
     dropboxSyncedAt: syncedDate, dropboxRevision: 1, downloadsRevision: 1,
     groupItems: [] as Array<{ id: number }>,
+    deliveryAssignmentSyncs: [] as DeliveryAssignmentFixture[],
     ourCategory: {
       updatedAt: originalDate, templateType: 'single', itemCount: 1,
       printsFrames: true, customisePrints: false, customTop: true, customBottom: true, digitalDownload: true,
@@ -177,5 +200,115 @@ describe('remote Etsy section checks', () => {
     mocks.remoteSections.mockRejectedValue(new Error('Etsy unavailable'));
     await expect(getSyncToEtsyData({ checkRemoteSections: false })).resolves.toEqual({ localSections: [], sections: [] });
     expect(mocks.remoteSections).not.toHaveBeenCalled();
+  });
+});
+
+describe('physical Markets & Delivery sync eligibility', () => {
+  it.each(['PENDING', 'FAILED'])('allows retry of a %s physical assignment without making digital downloads pending', async (status) => {
+    const listing = syncedListing();
+    listing.deliveryAssignmentSyncs = [deliveryAssignment({ status })];
+    loadListings(listing);
+    const data = await getSyncToEtsyData();
+    for (const section of [...data.sections, ...data.localSections]) {
+      for (const row of section.listings) {
+        if (row.syncVariants.includes('print')) expect(row).toMatchObject({ canSync: true, isSynced: false, pendingChanges: ['Markets & Delivery'], syncDisabledReason: null });
+        else expect(row).toMatchObject({ canSync: false, isSynced: true, pendingChanges: [] });
+      }
+    }
+  });
+
+  it('detects a newer synced profile revision even when the assignment status is already synced', async () => {
+    const listing = syncedListing();
+    listing.deliveryAssignmentSyncs = [deliveryAssignment({ status: 'SYNCED', profileRevision: 1 })];
+    loadListings(listing);
+    const data = await getSyncToEtsyData();
+    const print = data.sections.flatMap(section => section.listings).find(row => row.syncVariants.includes('print'));
+    expect(print).toMatchObject({ canSync: true, isSynced: false, pendingChanges: ['Markets & Delivery'] });
+  });
+
+  it.each(['LOCAL_ONLY', 'PENDING', 'CONFLICT', 'FAILED'])('requires the %s physical profile to sync first while keeping digital eligibility independent', async (syncStatus) => {
+    const listing = syncedListing();
+    const assignment = deliveryAssignment({ status: 'SYNCED', profileRevision: 2 });
+    assignment.profile!.syncStatus = syncStatus;
+    listing.deliveryAssignmentSyncs = [assignment];
+    listing.etsyDownloadLastSyncedAt = originalDate;
+    listing.lastLocalChangeAt = changedDate;
+    listing.lastSyncedAt = resyncedDate;
+    listing.detailsChanged = true;
+    loadListings(listing);
+    const data = await getSyncToEtsyData();
+    const rows = data.sections.flatMap(section => section.listings);
+    const print = rows.find(row => row.syncVariants.includes('print'));
+    const download = rows.find(row => row.syncVariants.includes('download'));
+    expect(print).toMatchObject({ canSync: false, isSynced: false, pendingChanges: ['Markets & Delivery'] });
+    expect(print?.syncDisabledReason).toContain('Sync delivery profile "UK delivery"');
+    expect(download?.canSync).toBe(true);
+    expect(download?.pendingChanges).toEqual(['Details']);
+  });
+
+  it('blocks profile sync states whose confirmed remote revision does not match the current revision', async () => {
+    const listing = syncedListing();
+    const assignment = deliveryAssignment({ status: 'SYNCED', profileRevision: 2 });
+    assignment.profile!.syncedRevision = 1;
+    listing.deliveryAssignmentSyncs = [assignment];
+    loadListings(listing);
+    const data = await getSyncToEtsyData();
+    const print = data.localSections[0].listings.find(row => row.syncVariants.includes('print'));
+    expect(print?.canSync).toBe(false);
+    expect(print?.syncDisabledReason).toContain('Markets & Delivery first');
+  });
+
+  it('requires explicit review of a physical description conflict', async () => {
+    const listing = syncedListing();
+    listing.deliveryAssignmentSyncs = [deliveryAssignment({ status: 'CONFLICT', profileRevision: 2 })];
+    loadListings(listing);
+    const data = await getSyncToEtsyData();
+    const print = data.localSections[0].listings.find(row => row.syncVariants.includes('print'));
+    expect(print).toMatchObject({ canSync: false, pendingChanges: ['Markets & Delivery'] });
+    expect(print?.syncDisabledReason).toContain('Review the customer description conflict');
+    expect(data.localSections[0].listings.find(row => row.syncVariants.includes('download'))?.pendingChanges).toEqual([]);
+  });
+
+  it('tracks customised physical assignments independently from print and digital IDs', async () => {
+    const listing = syncedListing();
+    listing.ourCategory.customisePrints = true;
+    listing.productConfig.customisePrints = true;
+    listing.etsyCustomisedId = 'customised-518';
+    listing.deliveryAssignmentSyncs = [
+      deliveryAssignment({ variant: 'print', status: 'SYNCED', profileRevision: 2 }),
+      deliveryAssignment({ variant: 'customised', status: 'PENDING', profileRevision: null }),
+    ];
+    loadListings(listing);
+    const data = await getSyncToEtsyData();
+    const rows = data.localSections[0].listings;
+    expect(rows.find(row => row.syncVariants.includes('print'))).toMatchObject({ canSync: false, isSynced: true, pendingChanges: [] });
+    expect(rows.find(row => row.syncVariants.includes('customised'))).toMatchObject({ canSync: true, isSynced: false, pendingChanges: ['Markets & Delivery'] });
+    expect(rows.find(row => row.syncVariants.includes('download'))).toMatchObject({ canSync: false, isSynced: true, pendingChanges: [] });
+  });
+
+  it('allows wording-only pending work without requiring a physical profile', async () => {
+    const listing = syncedListing();
+    listing.deliveryAssignmentSyncs = [deliveryAssignment({ profile: null, profileRevision: null })];
+    loadListings(listing);
+    const data = await getSyncToEtsyData();
+    expect(data.localSections[0].listings.find(row => row.syncVariants.includes('print'))).toMatchObject({ canSync: true, pendingChanges: ['Markets & Delivery'] });
+  });
+
+  it('blocks a combined category row from sending a blocked physical product alongside a digital product', async () => {
+    const listing = syncedListing();
+    listing.ourCategory.downloadSection = { ...listing.ourCategory.printFrameSection };
+    listing.etsyDownloadShopSectionId = 123;
+    const assignment = deliveryAssignment();
+    assignment.profile!.syncStatus = 'PENDING';
+    listing.deliveryAssignmentSyncs = [assignment];
+    listing.etsyDownloadLastSyncedAt = originalDate;
+    listing.lastLocalChangeAt = changedDate;
+    listing.lastSyncedAt = resyncedDate;
+    listing.detailsChanged = true;
+    loadListings(listing);
+    const data = await getSyncToEtsyData();
+    expect(data.sections).toHaveLength(1);
+    expect(data.sections[0].listings[0]).toMatchObject({ canSync: false, syncVariants: ['print', 'download'] });
+    expect(data.sections[0].listings[0].syncDisabledReason).toContain('Sync delivery profile');
   });
 });

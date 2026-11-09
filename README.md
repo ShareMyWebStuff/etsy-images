@@ -1,5 +1,9 @@
 I want to change the structure of the data me hold. Currently we have the following
 
+## Markets & Delivery
+
+Reusable shop delivery profiles, explicit Etsy sync, and inherited listing delivery settings are available under **Etsy → Markets & Delivery**. See [setup, usage and integration limits](docs/markets-delivery.md). Run `npm run db:markets-delivery` after updating the application.
+
 ## Pinterest marketing module
 
 Pinterest is available from the main navigation at `/pinterest`. It uses the existing Etsy listings, categories, images, and real Etsy URLs; the migration is additive and does not alter existing Etsy records.

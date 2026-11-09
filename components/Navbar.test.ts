@@ -19,6 +19,10 @@ describe('main navigation', () => {
       label: 'Etsy Categories',
       href: '/etsy/categories',
     });
+    expect(NAV_GROUPS.find((group) => group.title === 'Etsy')?.items).toContainEqual({
+      label: 'Markets & Delivery',
+      href: '/etsy/markets-delivery',
+    });
     expect(NAV_GROUPS.find((group) => group.title === 'Local')?.items).toContainEqual({
       label: 'Our Templates',
       href: '/our-templates',

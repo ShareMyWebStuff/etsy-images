@@ -132,6 +132,8 @@ model EtsyListing {
   orderItems                    EtsyOrderItem[]
   groupItems                    EtsyListingGroupItem[]       @relation("GroupListingItems")
   groupedInto                   EtsyListingGroupItem[]       @relation("GroupSourceListings")
+  marketDeliverySettings        MarketDeliverySettings?
+  deliveryAssignmentSyncs       DeliveryAssignmentSync[]
   subSection                    EtsyShopSubSection?          @relation(fields: [subSectionId], references: [id], onDelete: SetNull)
   sourceSection                 EtsyShopSection?             @relation("ListingSourceSection", fields: [sourceSectionId], references: [id], onDelete: SetNull)
   ourCategory                   OurCategory?                 @relation(fields: [ourCategoryId], references: [id], onDelete: SetNull)
@@ -339,6 +341,7 @@ model EtsyShop {
   userId                  BigInt
   shopName                String?
   title                   String?
+  currencyCode            String?                  @db.VarChar(3)
   announcement            String?                  @db.Text
   url                     String?                  @db.Text
   downloadedAt            DateTime                 @default(now())
@@ -352,6 +355,8 @@ model EtsyShop {
   orders                  EtsyOrder[]
   orderSyncState          EtsyOrderSyncState?
   ourCategories           OurCategory[]
+  deliveryProfiles        DeliveryProfile[]
+  marketDeliverySettings  MarketDeliverySettings[]
 
   @@index([userId])
   @@map("etsy_shops")
@@ -387,6 +392,7 @@ model OurCategory {
   listings             EtsyListing[]
   imageTemplates       OurCategoryImageTemplate[]
   linkedImageTemplates OurCategoryImageTemplate[] @relation("LinkedImageTemplateSourceCategory")
+  marketDeliverySettings MarketDeliverySettings?
 
   @@unique([shopId, name])
   @@index([followedTemplateId])
@@ -394,6 +400,101 @@ model OurCategory {
   @@index([customisedSectionId])
   @@index([downloadSectionId])
   @@map("our_categories")
+}
+
+model DeliveryProfile {
+  id                         Int                   @id @default(autoincrement())
+  shopId                     Int
+  name                       String                @db.VarChar(100)
+  currencyCode               String                @db.VarChar(3)
+  originCountryIso           String                @db.VarChar(2)
+  originPostalCode           String                @db.VarChar(32)
+  readinessStateId           String?               @db.VarChar(32)
+  includeDeliveryInformation Boolean               @default(false)
+  deliveryInformation        String                @db.Text
+  etsyShippingProfileId      String?               @db.VarChar(32)
+  isCalculated               Boolean               @default(false)
+  revision                   Int                   @default(1)
+  syncedRevision             Int?
+  syncStatus                 String                @default("LOCAL_ONLY") @db.VarChar(20)
+  lastSyncedAt               DateTime?
+  remoteFingerprint          String?               @db.VarChar(64)
+  remoteSnapshot             Json?
+  pendingCreateToken         String?               @db.Text
+  syncStartedAt              DateTime?
+  error                      String?               @db.Text
+  archivedAt                 DateTime?
+  createdAt                  DateTime              @default(now())
+  updatedAt                  DateTime              @updatedAt
+  shop                       EtsyShop              @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  destinations               DeliveryDestination[]
+  printSettings              MarketDeliverySettings[] @relation("PrintDeliveryProfile")
+  customisedSettings         MarketDeliverySettings[] @relation("CustomisedDeliveryProfile")
+  assignmentSyncs            DeliveryAssignmentSync[]
+
+  @@unique([shopId, etsyShippingProfileId])
+  @@index([shopId, archivedAt])
+  @@map("delivery_profiles")
+}
+
+model DeliveryDestination {
+  id                 Int             @id @default(autoincrement())
+  profileId          Int
+  countryCode        String          @db.VarChar(32)
+  primaryCostMinor   Int
+  secondaryCostMinor Int
+  minDeliveryDays    Int?
+  maxDeliveryDays    Int?
+  carrierId          String?         @db.VarChar(32)
+  mailClass          String?         @db.VarChar(100)
+  etsyDestinationId  String?         @db.VarChar(32)
+  profile            DeliveryProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, countryCode])
+  @@map("delivery_destinations")
+}
+
+model MarketDeliverySettings {
+  id                         Int              @id @default(autoincrement())
+  shopId                     Int
+  listingId                  Int?             @unique
+  templateId                 Int?             @unique
+  printProfileId             Int?
+  customisedProfileId        Int?
+  includeDeliveryInformation Boolean?
+  deliveryInformation        String?          @db.Text
+  createdAt                  DateTime         @default(now())
+  updatedAt                  DateTime         @updatedAt
+  shop                       EtsyShop         @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  listing                    EtsyListing?     @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  template                   OurCategory?     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  printProfile               DeliveryProfile? @relation("PrintDeliveryProfile", fields: [printProfileId], references: [id], onDelete: Restrict)
+  customisedProfile          DeliveryProfile? @relation("CustomisedDeliveryProfile", fields: [customisedProfileId], references: [id], onDelete: Restrict)
+
+  @@index([shopId])
+  @@map("market_delivery_settings")
+}
+
+model DeliveryAssignmentSync {
+  id                    Int             @id @default(autoincrement())
+  listingId             Int
+  variant               String          @db.VarChar(16)
+  profileId             Int?
+  etsyListingId         String?         @db.VarChar(32)
+  etsyShippingProfileId String?         @db.VarChar(32)
+  profileRevision       Int?
+  settingsFingerprint   String?         @db.VarChar(64)
+  status                String          @default("PENDING") @db.VarChar(20)
+  lastSyncedAt          DateTime?
+  error                 String?         @db.Text
+  managedDescription    String?         @db.MediumText
+  baseDescription       String?         @db.MediumText
+  listing               EtsyListing     @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  profile               DeliveryProfile? @relation(fields: [profileId], references: [id], onDelete: Restrict)
+
+  @@unique([listingId, variant])
+  @@index([profileId])
+  @@map("delivery_assignment_syncs")
 }
 
 model OurCategoryImageTemplate {

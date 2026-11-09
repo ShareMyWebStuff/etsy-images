@@ -86,6 +86,15 @@ export async function getSyncToEtsyData(
               tags: { select: { id: true } },
               products: { select: { id: true, productType: true, priceKey: true } },
               dropboxBundle: { select: { sharedUrl: true } },
+              deliveryAssignmentSyncs: { select: {
+                variant: true,
+                status: true,
+                profileRevision: true,
+                profile: { select: {
+                  name: true, revision: true, syncedRevision: true, syncStatus: true,
+                  etsyShippingProfileId: true, archivedAt: true,
+                } },
+              } },
               dropboxFiles: {
                 select: {
                   groupNumber: true,
@@ -350,6 +359,28 @@ export async function getSyncToEtsyData(
             const changed = changedAfter(lastSyncedAt);
             const templateChanged = templateChangedAfter(lastSyncedAt);
             const priceChanged = variant === 'download' && digitalPriceChanged;
+            const deliveryAssignment = variant === 'download' ? null
+              : (listing.deliveryAssignmentSyncs ?? []).find((assignment) => assignment.variant === variant);
+            const deliveryProfile = deliveryAssignment?.profile;
+            const deliveryProfilePending = Boolean(deliveryProfile && (
+              deliveryProfile.syncStatus !== 'SYNCED'
+              || deliveryProfile.syncedRevision !== deliveryProfile.revision
+              || !deliveryProfile.etsyShippingProfileId
+              || deliveryProfile.archivedAt
+            ));
+            const deliveryChanged = Boolean(deliveryAssignment && (
+              deliveryAssignment.status !== 'SYNCED'
+              || (deliveryProfile && deliveryAssignment.profileRevision !== deliveryProfile.revision)
+              || deliveryProfilePending
+            ));
+            const deliverySyncDisabledReason = !listOnEtsy ? null
+              : deliveryAssignment?.status === 'CONFLICT'
+              ? 'Review the customer description conflict in Markets & Delivery before syncing this physical listing.'
+              : deliveryProfile?.archivedAt
+              ? 'Choose an active delivery profile in Markets & Delivery before syncing this physical listing.'
+              : deliveryProfilePending
+              ? `Sync delivery profile "${deliveryProfile!.name}" in Etsy → Markets & Delivery first, then sync this physical listing.`
+              : null;
             const changedAreas = changed ? [
               listing.detailsChanged ? 'Details' : null,
               listing.tagsChanged ? 'Tags' : null,
@@ -360,7 +391,8 @@ export async function getSyncToEtsyData(
             if (priceChanged) changedAreas.push('Price');
             if (changed && changedAreas.length === 0) changedAreas.push('Local changes');
             if (templateChanged) changedAreas.push('Template');
-            const needsSync = enabled && (remoteId === null || !sectionIsCurrent || changed || priceChanged || templateChanged);
+            if (deliveryChanged) changedAreas.push('Markets & Delivery');
+            const needsSync = enabled && (remoteId === null || !sectionIsCurrent || changed || priceChanged || templateChanged || deliveryChanged);
             const pending = [
               remoteId === null ? `New ${variant === 'download' ? 'digital' : variant} listing` : null,
               ...changedAreas,
@@ -368,10 +400,12 @@ export async function getSyncToEtsyData(
             ].filter((area): area is string => area !== null);
             const canSync = listOnEtsy
               ? enabled && isComplete && requiredCategoriesExistOnEtsy && !sectionIsMissing
-                && (variant !== 'download' || hasDropboxPdf) && needsSync
+                && (variant !== 'download' || hasDropboxPdf) && needsSync && !deliverySyncDisabledReason
               : remoteId !== null && listing.productsChanged;
             const syncDisabledReason = !enabled
               ? `The assigned template does not enable ${variant === 'download' ? 'Digital Downloads' : variant === 'customised' ? 'Customised Prints' : 'Prints / Frames'}.`
+              : deliverySyncDisabledReason
+              ? deliverySyncDisabledReason
               : !isComplete
               ? 'Complete this listing before syncing it to Etsy.'
               : !listOnEtsy && remoteId === null
@@ -395,6 +429,7 @@ export async function getSyncToEtsyData(
               canSync,
               pendingChanges: pending,
               syncDisabledReason,
+              deliverySyncDisabledReason,
             };
           };
           const variantStatuses = {
@@ -462,6 +497,7 @@ export async function getSyncToEtsyData(
   ): SyncToEtsyListing => {
     const { templateCategories: _templateCategories, variantStatuses, ...baseListing } = listing;
     const statuses = category.variants.map((variant) => variantStatuses[variant]);
+    const deliveryBlock = statuses.find((status) => status.deliverySyncDisabledReason)?.deliverySyncDisabledReason;
     const pendingChanges = [...new Set(statuses.flatMap((status) => status.pendingChanges))];
     return {
       ...baseListing,
@@ -478,11 +514,11 @@ export async function getSyncToEtsyData(
       isSynced: statuses.every((status) => status.isSynced),
       isPublished: statuses.every((status) => status.isPublished),
       isInactive: statuses.every((status) => status.isInactive),
-      canSync: statuses.some((status) => status.canSync),
+      canSync: !deliveryBlock && statuses.some((status) => status.canSync),
       pendingChanges,
-      syncDisabledReason: statuses.some((status) => status.canSync)
+      syncDisabledReason: deliveryBlock ?? (statuses.some((status) => status.canSync)
         ? null
-        : statuses.find((status) => status.syncDisabledReason)?.syncDisabledReason ?? null,
+        : statuses.find((status) => status.syncDisabledReason)?.syncDisabledReason ?? null),
     };
   };
 
