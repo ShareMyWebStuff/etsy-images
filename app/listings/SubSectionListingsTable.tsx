@@ -393,6 +393,7 @@ export function SubSectionListingsTable({
               <TableRow>
                 {!isSingleListings ? <TableHead>Category</TableHead> : null}
                 <TableHead>Listing Name</TableHead>
+                <TableHead>Orientation</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Quantity</TableHead>
                 <TableHead className="text-right">Price</TableHead>
@@ -413,7 +414,7 @@ export function SubSectionListingsTable({
                   return (
                     <Fragment key={listing.id}>
                     {!isSingleListings && sourceSectionName !== previousSourceSectionName ? <TableRow className="bg-muted/50 hover:bg-muted/50">
-                      <TableCell colSpan={isSingleListings ? 5 : 6} className="font-semibold">
+                      <TableCell colSpan={isSingleListings ? 6 : 7} className="font-semibold">
                         {hasCollapsibleGroups ? <button
                           type="button"
                           className="flex w-full items-center gap-2 text-left"
@@ -432,6 +433,7 @@ export function SubSectionListingsTable({
                     {!hasCollapsibleGroups || isSectionExpanded ? <TableRow data-listing-id={listing.id} className={listing.isComplete ? 'bg-green-50 hover:bg-green-100' : undefined}>
                       {!isSingleListings ? <TableCell className="text-muted-foreground">{sourceSectionName}</TableCell> : null}
                       <TableCell className="font-medium">{listing.listingName}</TableCell>
+                      <TableCell className="whitespace-nowrap">{listing.artworkOrientation === 'landscape' ? 'Landscape' : listing.artworkOrientation === 'portrait' ? 'Portrait' : '-'}</TableCell>
                       <TableCell>{listing.status}</TableCell>
                       <TableCell className="text-right tabular-nums">{listing.quantity ?? 'None'}</TableCell>
                       <TableCell className="text-right tabular-nums">{listing.price}</TableCell>
@@ -471,7 +473,7 @@ export function SubSectionListingsTable({
                 })
               ) : (
                 <TableRow>
-                  <TableCell colSpan={isSingleListings ? 5 : 6} className="text-center text-muted-foreground">
+                  <TableCell colSpan={isSingleListings ? 6 : 7} className="text-center text-muted-foreground">
                     No listings found.
                   </TableCell>
                 </TableRow>

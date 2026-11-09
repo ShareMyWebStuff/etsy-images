@@ -2,7 +2,7 @@ import { inspectListingZipStorage, isDropboxInstructionPdfFile } from '@/lib/dro
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';
 import { hasRequiredPrintableDownloads } from '@/lib/printable-download-specs';
 import { isListingComplete } from '@/lib/listing-completeness';
-import { parseCurrentListingPrintCropSettings } from '@/lib/listing-print-crops';
+import { normalizeListingArtworkOrientation, parseCurrentListingPrintCropSettings, type ListingArtworkOrientation } from '@/lib/listing-print-crops';
 import { resolveListingCategory, type ListingTemplateProducts } from '@/lib/listing-category';
 import { prisma } from '@/lib/prisma';
 import { hasRequiredTemplateDownloadSection } from '@/lib/template-download-section';
@@ -32,6 +32,7 @@ export type SubSectionListingsPageData = {
   listings: Array<{
     id: string;
     listingName: string;
+    artworkOrientation: ListingArtworkOrientation | null;
     numberOfItems?: number | null;
     ourCategoryId?: number | null;
     sourceSectionName: string | null;
@@ -160,6 +161,7 @@ export async function getSubSectionListingsPageData(
       priceCurrencyCode: true,
       quantity: true,
       thumbnailFileName: true,
+      artworkOrientation: true,
       thumbnailUpdatedAt: true,
       printCropSettings: true,
       tags: { select: { id: true } },
@@ -293,6 +295,7 @@ export async function getSubSectionListingsPageData(
       return {
         id: String(listing.id),
         listingName: listing.localDirectoryName ?? listing.title,
+        artworkOrientation: hasThumbnail ? normalizeListingArtworkOrientation(listing.artworkOrientation) : null,
         numberOfItems: listing.numberOfItems,
         ourCategoryId: listing.ourCategoryId,
         sourceSectionName: category.name,

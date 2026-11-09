@@ -17,6 +17,7 @@ const data: SubSectionListingsPageData = {
   listings: [{
     id: '500',
     listingName: 'Sea Creatures Set',
+    artworkOrientation: null,
     sourceSectionName: 'Kids & Nursery Prints',
     templateProducts: {
       printsFrames: true,
