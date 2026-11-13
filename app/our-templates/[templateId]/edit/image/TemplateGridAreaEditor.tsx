@@ -5,7 +5,10 @@ import { Pencil, Plus, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import type { TemplateOpeningCorners, TemplateOpeningRegion } from '@/lib/our-category-template-composite';
+import type { ListingArtworkOrientation } from '@/lib/listing-print-crops';
+import { templateOpeningCornersForOrientation, updateTemplateOpeningCorners } from '@/lib/template-opening-orientations';
 import { defaultTemplateGridLayout, templateGridCellRects } from '@/lib/template-grid-layout';
+import { initialiseTemplateGridAreaOrientations, templateGridAreaPreviewLayout } from './template-grid-area-orientations';
 
 type Point = { x: number; y: number };
 type ImageSize = { width: number; height: number };
@@ -13,8 +16,8 @@ type Rect = { x: number; y: number; width: number; height: number };
 type ResizeHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 type DragState =
   | { kind: 'create'; start: Point }
-  | { kind: 'move'; start: Point; regionId: string; original: Rect }
-  | { kind: 'resize'; start: Point; regionId: string; original: Rect; handle: ResizeHandle };
+  | { kind: 'move'; start: Point; regionId: string; original: Rect; orientation: ListingArtworkOrientation }
+  | { kind: 'resize'; start: Point; regionId: string; original: Rect; handle: ResizeHandle; orientation: ListingArtworkOrientation };
 
 const AREA_COLOURS = ['#db2777', '#2563eb', '#16a34a', '#9333ea'] as const;
 const HANDLE_POSITIONS: Array<{ handle: ResizeHandle; left: string; top: string; cursor: string }> = [
@@ -50,8 +53,9 @@ function cornersFromRect(rect: Rect): TemplateOpeningCorners {
 
 function nextAreaName(regions: TemplateOpeningRegion[]) {
   const names = new Set(regions.map(({ name }) => name));
-  for (let number = 1; number <= 99; number += 1) if (!names.has(`Area ${number}`)) return `Area ${number}`;
-  return `Area ${regions.length + 1}`;
+  let number = 1;
+  while (names.has(`Area ${number}`)) number += 1;
+  return `Area ${number}`;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -76,8 +80,8 @@ export function TemplateGridAreaEditor({
   disabled?: boolean;
   onImageSize(size: ImageSize): void;
   onRegionsChange(regions: TemplateOpeningRegion[]): void;
-  onEditRegion(region: TemplateOpeningRegion): void;
-  onEditCell(region: TemplateOpeningRegion, cellIndex: number): void;
+  onEditRegion(region: TemplateOpeningRegion, orientation: ListingArtworkOrientation): void;
+  onEditCell(region: TemplateOpeningRegion, cellIndex: number, orientation: ListingArtworkOrientation): void;
   onRequestDeleteRegion(region: TemplateOpeningRegion): void;
   onRemoveImage(): void;
 }) {
@@ -85,13 +89,21 @@ export function TemplateGridAreaEditor({
   const imageRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const [imageSize, setImageSize] = useState<ImageSize | null>(initialImageSize ?? null);
+  const [imageLoadError, setImageLoadError] = useState(false);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<Rect | null>(null);
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(regions[0]?.id ?? null);
+  const [areaOrientations, setAreaOrientations] = useState<Record<string, ListingArtworkOrientation>>({});
+  const selectedRegion = regions.find((region) => region.id === selectedRegionId) ?? regions[0];
+  const selectedOrientation = selectedRegion ? areaOrientations[selectedRegion.id] ?? 'portrait' : 'portrait';
 
   useEffect(() => {
     setImageSize(initialImageSize ?? null);
   }, [imageUrl, initialImageSize?.height, initialImageSize?.width]);
+
+  useEffect(() => {
+    setImageLoadError(false);
+  }, [imageUrl]);
 
   function pointFromEvent(event: ReactPointerEvent<HTMLElement>) {
     const image = imageRef.current;
@@ -103,8 +115,12 @@ export function TemplateGridAreaEditor({
     };
   }
 
-  function updateRegionRect(regionId: string, rect: Rect) {
-    onRegionsChange(regions.map((region) => region.id === regionId ? { ...region, corners: cornersFromRect(rect) } : region));
+  function updateRegionRect(regionId: string, rect: Rect, orientation: ListingArtworkOrientation) {
+    onRegionsChange(regions.map((region) => {
+      if (region.id !== regionId) return region;
+      const ready = imageSize ? initialiseTemplateGridAreaOrientations(region, imageSize) : region;
+      return updateTemplateOpeningCorners(ready, orientation, cornersFromRect(rect));
+    }));
   }
 
   function startCapturedDrag(event: ReactPointerEvent<HTMLElement>, drag: DragState) {
@@ -114,7 +130,7 @@ export function TemplateGridAreaEditor({
   }
 
   function startCreate(event: ReactPointerEvent<HTMLDivElement>) {
-    if (disabled || !creating || regions.length >= 4 || dragRef.current || event.button !== 0) return;
+    if (disabled || !creating || dragRef.current || event.button !== 0) return;
     const point = pointFromEvent(event);
     if (!point) return;
     startCapturedDrag(event, { kind: 'create', start: point });
@@ -135,7 +151,7 @@ export function TemplateGridAreaEditor({
     if (drag.kind === 'move') {
       const x = clamp(drag.original.x + point.x - drag.start.x, 0, imageSize.width - drag.original.width);
       const y = clamp(drag.original.y + point.y - drag.start.y, 0, imageSize.height - drag.original.height);
-      updateRegionRect(drag.regionId, { ...drag.original, x, y });
+      updateRegionRect(drag.regionId, { ...drag.original, x, y }, drag.orientation);
       return;
     }
     const minimum = Math.max(12, Math.round(Math.min(imageSize.width, imageSize.height) * 0.02));
@@ -147,7 +163,7 @@ export function TemplateGridAreaEditor({
     if (drag.handle.includes('e')) right = clamp(point.x, left + minimum - 1, imageSize.width - 1);
     if (drag.handle.includes('n')) top = clamp(point.y, 0, bottom - minimum + 1);
     if (drag.handle.includes('s')) bottom = clamp(point.y, top + minimum - 1, imageSize.height - 1);
-    updateRegionRect(drag.regionId, { x: left, y: top, width: right - left + 1, height: bottom - top + 1 });
+    updateRegionRect(drag.regionId, { x: left, y: top, width: right - left + 1, height: bottom - top + 1 }, drag.orientation);
   }
 
   function finishPointer(event: ReactPointerEvent<HTMLDivElement>) {
@@ -161,7 +177,7 @@ export function TemplateGridAreaEditor({
         corners: cornersFromRect(draft),
         grid: defaultTemplateGridLayout(1, 1),
       };
-      onRegionsChange([...regions, region]);
+      onRegionsChange([...regions, imageSize ? initialiseTemplateGridAreaOrientations(region, imageSize) : region]);
       setSelectedRegionId(region.id);
       setCreating(false);
     }
@@ -173,15 +189,31 @@ export function TemplateGridAreaEditor({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-semibold">Artwork Areas</h2>
-          <p className="text-sm text-muted-foreground">Add up to four rectangular areas. Drag inside an area to move it or use its edge and corner handles to resize it.</p>
+          <p className="text-sm text-muted-foreground">Add rectangular artwork areas. Drag inside an area to move it or use its edge and corner handles to resize it.</p>
         </div>
-        <div className="flex gap-2">
-          <Button type="button" size="sm" variant={creating ? 'default' : 'outline'} disabled={disabled || regions.length >= 4} onClick={() => setCreating((current) => !current)}>
-            <Plus className="h-4 w-4" aria-hidden="true" />{creating ? 'Draw area' : 'Add Area'}
-          </Button>
-          <Button type="button" size="icon" variant="destructive" disabled={disabled} onClick={onRemoveImage} aria-label="Remove template image" title="Remove template image">
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
-          </Button>
+        <div className="grid justify-items-end gap-2">
+          <div className="flex gap-2">
+            <Button type="button" size="sm" variant={creating ? 'default' : 'outline'} disabled={disabled} onClick={() => setCreating((current) => !current)}>
+              <Plus className="h-4 w-4" aria-hidden="true" />{creating ? 'Draw area' : 'Add Area'}
+            </Button>
+            <Button type="button" size="icon" variant="destructive" disabled={disabled} onClick={onRemoveImage} aria-label="Remove template image" title="Remove template image">
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+            </Button>
+          </div>
+          {selectedRegion?.grid?.imageCount === 1 ? <div className="grid justify-items-end gap-1">
+            <div role="group" aria-label={`${selectedRegion.name} area orientation`} className="inline-flex rounded-md border bg-background p-1">
+              {(['portrait', 'landscape'] as const).map((orientation) => <Button
+                key={orientation}
+                type="button"
+                size="sm"
+                variant={selectedOrientation === orientation ? 'default' : 'ghost'}
+                aria-pressed={selectedOrientation === orientation}
+                disabled={disabled || creating}
+                onClick={() => setAreaOrientations((current) => ({ ...current, [selectedRegion.id]: orientation }))}
+              >{orientation === 'portrait' ? 'Portrait' : 'Landscape'}</Button>)}
+            </div>
+            <p className="text-xs text-muted-foreground">Set both sizes for {selectedRegion.name}.</p>
+          </div> : null}
         </div>
       </div>
 
@@ -190,7 +222,7 @@ export function TemplateGridAreaEditor({
           {regions.map((region, index) => (
             <div key={region.id} className={`flex items-center rounded-md border ${selectedRegionId === region.id ? 'border-primary bg-primary/5' : ''}`}>
               <button type="button" className="px-3 py-1.5 text-sm" onClick={() => setSelectedRegionId(region.id)}>{region.name}</button>
-              <Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={() => onEditRegion(region)} disabled={disabled} aria-label={`Edit ${region.name}`}>
+              <Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={() => onEditRegion(region, areaOrientations[region.id] ?? 'portrait')} disabled={disabled} aria-label={`Edit ${region.name}`}>
                 <Pencil className="h-4 w-4" aria-hidden="true" />
               </Button>
               <Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={() => onRequestDeleteRegion(region)} disabled={disabled} aria-label={`Delete ${region.name}`}>
@@ -204,6 +236,9 @@ export function TemplateGridAreaEditor({
 
       {creating ? <p className="rounded-md border border-pink-300 bg-pink-50 p-2 text-sm text-pink-900">Hold the left mouse button and drag over the template image to create the area.</p> : null}
 
+      {imageLoadError ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+        Unable to load the template image. Reload the page or choose the image again. Your artwork area settings have been kept.
+      </p> : null}
       <div className="flex justify-center overflow-auto rounded-md border bg-muted/30 p-2">
         <div
           ref={rootRef}
@@ -221,19 +256,25 @@ export function TemplateGridAreaEditor({
             draggable={false}
             className="pointer-events-none block max-h-[68vh] max-w-full select-none"
             onLoad={(event) => {
+              setImageLoadError(false);
               const size = { width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight };
               setImageSize(size);
               onImageSize(size);
             }}
+            onError={() => setImageLoadError(true)}
           />
           {imageSize ? regions.map((region, index) => {
-            const rect = rectFromCorners(region.corners);
+            const orientation = areaOrientations[region.id] ?? 'portrait';
+            const preparedRegion = initialiseTemplateGridAreaOrientations(region, imageSize);
+            const rect = rectFromCorners(templateOpeningCornersForOrientation(preparedRegion, orientation));
             const colour = AREA_COLOURS[index % AREA_COLOURS.length];
-            const selected = selectedRegionId === region.id;
-            const cellRects = region.grid ? templateGridCellRects(rect.width, rect.height, region.grid) : [];
+            const selected = selectedRegion?.id === region.id;
+            const cellRects = region.grid ? templateGridCellRects(rect.width, rect.height, templateGridAreaPreviewLayout(region.grid, orientation)) : [];
             return (
               <div
                 key={region.id}
+                data-testid={`artwork-area-${region.id}`}
+                data-orientation={region.grid?.imageCount === 1 ? orientation : undefined}
                 className="absolute cursor-move border-2"
                 style={{
                   left: `${rect.x / imageSize.width * 100}%`,
@@ -250,7 +291,7 @@ export function TemplateGridAreaEditor({
                   const point = pointFromEvent(event);
                   if (!point) return;
                   setSelectedRegionId(region.id);
-                  startCapturedDrag(event, { kind: 'move', start: point, regionId: region.id, original: rect });
+                  startCapturedDrag(event, { kind: 'move', start: point, regionId: region.id, original: rect, orientation });
                 }}
               >
                 <span className="pointer-events-none absolute left-1 top-1 z-20 rounded bg-background/90 px-1.5 py-0.5 text-xs font-semibold shadow">{region.name}</span>
@@ -275,7 +316,7 @@ export function TemplateGridAreaEditor({
                       onClick={(event) => {
                         event.stopPropagation();
                         setSelectedRegionId(region.id);
-                        onEditCell(region, cellRect.index);
+                        onEditCell(region, cellRect.index, orientation);
                       }}
                     >Image {cellRect.index + 1}{cell.configured ? '' : ' · Set'}</button>
                   );
@@ -291,7 +332,7 @@ export function TemplateGridAreaEditor({
                       event.stopPropagation();
                       const point = pointFromEvent(event);
                       if (!point) return;
-                      startCapturedDrag(event, { kind: 'resize', start: point, regionId: region.id, original: rect, handle });
+                      startCapturedDrag(event, { kind: 'resize', start: point, regionId: region.id, original: rect, handle, orientation });
                     }}
                   />
                 )) : null}

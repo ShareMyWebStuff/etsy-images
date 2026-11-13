@@ -4,6 +4,26 @@ import { describe, expect, it, vi } from 'vitest';
 import { TemplateCornerPicker } from './TemplateCornerPicker';
 
 describe('Template corner picker', () => {
+  it('edits landscape corners independently and restores portrait handles when toggled back', () => {
+    const onRegionsChange = vi.fn();
+    const portrait = { topLeft: { x: 10, y: 10 }, topRight: { x: 40, y: 10 }, bottomRight: { x: 40, y: 70 }, bottomLeft: { x: 10, y: 70 } };
+    const landscape = { topLeft: { x: 5, y: 20 }, topRight: { x: 65, y: 20 }, bottomRight: { x: 65, y: 50 }, bottomLeft: { x: 5, y: 50 } };
+    render(<TemplateCornerPicker imageUrl="blob:template" initialRegions={[{ id: 'first', name: 'Area 1', corners: portrait, orientationCorners: { portrait, landscape } }]}
+      onRegionsChange={onRegionsChange} onImageSize={() => undefined} />);
+    const image = screen.getByRole('img', { name: 'Template corner selection' });
+    Object.defineProperty(image, 'naturalWidth', { configurable: true, value: 100 });
+    Object.defineProperty(image, 'naturalHeight', { configurable: true, value: 100 });
+    fireEvent.load(image);
+    fireEvent.click(screen.getByRole('button', { name: 'Landscape' }));
+    expect(screen.getByRole('button', { name: 'Area 1 top left opening corner' }).title).toBe('Top left: 5, 20');
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Area 1 top left opening corner' }), { key: 'ArrowRight' });
+    expect(onRegionsChange).toHaveBeenLastCalledWith([expect.objectContaining({ corners: portrait, orientationCorners: {
+      portrait, landscape: { ...landscape, topLeft: { x: 6, y: 20 } },
+    } })]);
+    fireEvent.click(screen.getByRole('button', { name: 'Portrait' }));
+    expect(screen.getByRole('button', { name: 'Area 1 top left opening corner' }).title).toBe('Top left: 10, 10');
+  });
+
   it('captures four points in original-image pixels and allows keyboard adjustment', () => {
     const onRegionsChange = vi.fn();
     const onImageSize = vi.fn();

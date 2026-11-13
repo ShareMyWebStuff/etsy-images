@@ -10,6 +10,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import type { OurCategoryEditorData } from '@/lib/our-categories';
 import type { TemplateOpeningRegion } from '@/lib/our-category-template-composite';
+import type { ListingArtworkOrientation } from '@/lib/listing-print-crops';
+import { templateOpeningCornersForOrientation } from '@/lib/template-opening-orientations';
 import {
   DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID,
   PRINTSHRIMP_CUSTOM_FONTS,
@@ -26,6 +28,7 @@ import {
   type TemplateGridLayout,
 } from '@/lib/template-grid-layout';
 import { TemplateGridAreaEditor } from './TemplateGridAreaEditor';
+import { initialiseTemplateGridAreaOrientations, templateGridAreaPreviewLayout } from './template-grid-area-orientations';
 
 const selectClassName = 'h-10 w-full rounded-md border border-input bg-background px-3 text-sm';
 const checkboxClassName = 'h-4 w-4 rounded border-input accent-primary';
@@ -64,11 +67,13 @@ function GridPreview({ region, layout }: { region: TemplateOpeningRegion; layout
 
 function AreaGridDialog({
   region,
+  orientation,
   itemCount,
   onCancel,
   onComplete,
 }: {
   region: TemplateOpeningRegion;
+  orientation: ListingArtworkOrientation;
   itemCount: number;
   onCancel(): void;
   onComplete(layout: TemplateGridLayout): void;
@@ -93,7 +98,7 @@ function AreaGridDialog({
           <DialogDescription>Choose the number of images, grid size and spacing. Complete saves this area layout.</DialogDescription>
         </DialogHeader>
 
-        <GridPreview region={region} layout={layout} />
+        <GridPreview region={region} layout={templateGridAreaPreviewLayout(layout, orientation)} />
 
         <div className="grid gap-4 md:grid-cols-3">
             <label className="grid gap-2 text-sm font-medium">
@@ -158,6 +163,8 @@ function ImageCellDialog({
   cellIndex,
   cell,
   itemCount,
+  areaOrientation,
+  sharedPaperRatio,
   onCancel,
   onComplete,
 }: {
@@ -165,10 +172,12 @@ function ImageCellDialog({
   cellIndex: number;
   cell: TemplateGridCell;
   itemCount: number;
+  areaOrientation?: ListingArtworkOrientation;
+  sharedPaperRatio?: boolean;
   onCancel(): void;
   onComplete(cell: TemplateGridCell): void;
 }) {
-  const [draft, setDraft] = useState<TemplateGridCell>(() => structuredClone(cell));
+  const [draft, setDraft] = useState<TemplateGridCell>(() => ({ ...structuredClone(cell), ...(areaOrientation ? { orientation: areaOrientation } : {}) }));
   const imageNumber = cellIndex + 1;
   const update = (changes: Partial<TemplateGridCell>) => setDraft((current) => ({ ...current, ...changes }));
   const validBorderSize = !draft.borderEnabled || (draft.borderSizePercent >= 2.5 && draft.borderSizePercent <= 10);
@@ -192,13 +201,15 @@ function ImageCellDialog({
             <select aria-label="Print Ratio" className={selectClassName} value={draft.ratio} onChange={(event) => update({ ratio: event.target.value as TemplateGridCell['ratio'] })}>
               {TEMPLATE_GRID_RATIO_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
+            {sharedPaperRatio ? <span className="text-xs font-normal text-muted-foreground">Applies to every image in this area so all sheets use the same paper size.</span> : null}
           </label>
           <label className="grid gap-2 text-sm font-medium">
             Orientation
-            <select aria-label="Orientation" className={selectClassName} value={draft.orientation} onChange={(event) => update({ orientation: event.target.value as TemplateGridCell['orientation'] })}>
+            <select aria-label="Orientation" className={selectClassName} value={draft.orientation} disabled={Boolean(areaOrientation)} onChange={(event) => update({ orientation: event.target.value as TemplateGridCell['orientation'] })}>
               <option value="portrait">Portrait</option>
               <option value="landscape">Landscape</option>
             </select>
+            {areaOrientation ? <span className="text-xs font-normal text-muted-foreground">Use the Portrait / Landscape buttons above the template to edit each area size.</span> : null}
           </label>
           <label className="flex items-center gap-2 text-sm font-medium md:col-span-2">
             <input aria-label="Border" type="checkbox" className={checkboxClassName} checked={draft.borderEnabled} onChange={(event) => update({ borderEnabled: event.target.checked })} />
@@ -283,14 +294,22 @@ export function NewImageTemplateEditorClient({
       ? { width: initialTemplate.imageWidth, height: initialTemplate.imageHeight }
       : null
   ));
-  const [regions, setRegions] = useState<TemplateOpeningRegion[]>(() => structuredClone(initialTemplate?.openingRegions ?? []));
+  const [regions, setRegions] = useState<TemplateOpeningRegion[]>(() => structuredClone(initialTemplate?.openingRegions ?? []).map((region) => {
+    const grid = region.grid;
+    const normalized = grid && grid.imageCount > 1
+      ? { ...region, grid: { ...grid, cells: grid.cells.map((cell) => ({ ...cell, ratio: grid.cells[0].ratio })) } }
+      : region;
+    return initialTemplate?.imageWidth && initialTemplate.imageHeight
+      ? initialiseTemplateGridAreaOrientations(normalized, { width: initialTemplate.imageWidth, height: initialTemplate.imageHeight })
+      : normalized;
+  }));
   const [imageRemoved, setImageRemoved] = useState(false);
-  const [editingRegionId, setEditingRegionId] = useState<string | null>(null);
-  const [editingCell, setEditingCell] = useState<{ regionId: string; cellIndex: number } | null>(null);
+  const [editingArea, setEditingArea] = useState<{ regionId: string; orientation: ListingArtworkOrientation } | null>(null);
+  const [editingCell, setEditingCell] = useState<{ regionId: string; cellIndex: number; orientation: ListingArtworkOrientation } | null>(null);
   const [deleteRegionId, setDeleteRegionId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [fileInputKey, setFileInputKey] = useState(0);
-  const editingRegion = regions.find((region) => region.id === editingRegionId) ?? null;
+  const editingRegion = regions.find((region) => region.id === editingArea?.regionId) ?? null;
   const editingCellRegion = editingCell ? regions.find((region) => region.id === editingCell.regionId) ?? null : null;
   const editingCellValue = editingCellRegion?.grid?.cells[editingCell?.cellIndex ?? -1] ?? null;
   const deleteRegion = regions.find((region) => region.id === deleteRegionId) ?? null;
@@ -417,10 +436,13 @@ export function NewImageTemplateEditorClient({
               initialImageSize={imageSize}
               regions={regions}
               disabled={saving}
-              onImageSize={setImageSize}
+              onImageSize={(size) => {
+                setImageSize(size);
+                setRegions((current) => current.map((region) => initialiseTemplateGridAreaOrientations(region, size)));
+              }}
               onRegionsChange={setRegions}
-              onEditRegion={(region) => setEditingRegionId(region.id)}
-              onEditCell={(region, cellIndex) => setEditingCell({ regionId: region.id, cellIndex })}
+              onEditRegion={(region, orientation) => setEditingArea({ regionId: region.id, orientation })}
+              onEditCell={(region, cellIndex, orientation) => setEditingCell({ regionId: region.id, cellIndex, orientation })}
               onRequestDeleteRegion={(region) => setDeleteRegionId(region.id)}
               onRemoveImage={removeImage}
             /> : (
@@ -440,12 +462,21 @@ export function NewImageTemplateEditorClient({
 
       {editingRegion ? <AreaGridDialog
         key={editingRegion.id}
-        region={editingRegion}
+        region={{ ...editingRegion, corners: templateOpeningCornersForOrientation(editingRegion, editingArea?.orientation ?? 'portrait') }}
+        orientation={editingArea?.orientation ?? 'portrait'}
         itemCount={data.values.itemCount}
-        onCancel={() => setEditingRegionId(null)}
+        onCancel={() => setEditingArea(null)}
         onComplete={(layout) => {
-          setRegions((current) => current.map((region) => region.id === editingRegion.id ? { ...region, grid: layout } : region));
-          setEditingRegionId(null);
+          setRegions((current) => current.map((region) => {
+            if (region.id !== editingRegion.id) return region;
+            const updated = { ...region, grid: layout };
+            if (layout.imageCount > 1) {
+              const { orientationCorners: _orientationCorners, ...multiple } = updated;
+              return { ...multiple, corners: templateOpeningCornersForOrientation(region, editingArea?.orientation ?? 'portrait') };
+            }
+            return imageSize ? initialiseTemplateGridAreaOrientations(updated, imageSize) : updated;
+          }));
+          setEditingArea(null);
         }}
       /> : null}
 
@@ -455,13 +486,17 @@ export function NewImageTemplateEditorClient({
         cellIndex={editingCell.cellIndex}
         cell={editingCellValue}
         itemCount={data.values.itemCount}
+        areaOrientation={editingCellRegion.grid?.imageCount === 1 ? editingCell.orientation : undefined}
+        sharedPaperRatio={(editingCellRegion.grid?.imageCount ?? 0) > 1}
         onCancel={() => setEditingCell(null)}
         onComplete={(cell) => {
           setRegions((current) => current.map((region) => region.id !== editingCell.regionId || !region.grid ? region : {
             ...region,
             grid: {
               ...region.grid,
-              cells: region.grid.cells.map((currentCell, index) => index === editingCell.cellIndex ? cell : currentCell),
+              cells: region.grid.cells.map((currentCell, index) => index === editingCell.cellIndex
+                ? cell
+                : region.grid!.imageCount > 1 ? { ...currentCell, ratio: cell.ratio } : currentCell),
             },
           }));
           setEditingCell(null);

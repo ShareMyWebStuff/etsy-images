@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SyncToEtsyClient } from '@/app/sync-to-etsy/SyncToEtsyClient';
 import type { SyncToEtsyData, SyncToEtsyListing } from '@/lib/sync-to-etsy';
 
+const refresh = vi.hoisted(() => vi.fn());
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }));
+
 const listing: SyncToEtsyListing = {
   id: '503',
   listingName: 'Set of 3 Test',
@@ -55,7 +58,7 @@ const data: SyncToEtsyData = {
 };
 
 describe('SyncToEtsyClient views', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => { vi.unstubAllGlobals(); refresh.mockClear(); });
 
   const shops = [
     { id: '66615491', name: 'First Shop' },
@@ -75,6 +78,33 @@ describe('SyncToEtsyClient views', () => {
       ...data.sections[0], id: '777:3', shopId: '777', sectionName: 'Butterfly Prints', listings: [secondListing],
     }],
   };
+
+  it('updates section sync availability when refreshed server data arrives', () => {
+    const pendingData: SyncToEtsyData = {
+      ...data,
+      localSections: [{ ...data.localSections[0], listings: [{ ...listing, canSync: false, isComplete: false }] }],
+    };
+    const view = render(<SyncToEtsyClient initialData={pendingData} shops={shops} />);
+    expect((screen.getByRole('button', { name: 'Sync All' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /Dinosaur Wall Art/ }));
+    view.rerender(<SyncToEtsyClient initialData={data} shops={shops} />);
+    expect((screen.getByRole('button', { name: 'Sync All' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Sync Print' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByRole('button', { name: /Dinosaur Wall Art/ }).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('refreshes readiness without sending an Etsy mutation or resetting the selected shop', () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const view = render(<SyncToEtsyClient initialData={multiShopData} shops={shops} />);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Shop' }), { target: { value: '777' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh listings' }));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    view.rerender(<SyncToEtsyClient initialData={{ ...multiShopData }} shops={shops} />);
+    expect((screen.getByRole('combobox', { name: 'Shop' }) as HTMLSelectElement).value).toBe('777');
+    expect(screen.getByText('Bugs Wall Art')).toBeTruthy();
+  });
 
   it.each(['sync', 'publish'] as const)('filters %s sections by shop in both local and Etsy views', (mode) => {
     render(<SyncToEtsyClient initialData={multiShopData} mode={mode} shops={shops} />);

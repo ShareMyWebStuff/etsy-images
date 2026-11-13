@@ -3,19 +3,25 @@ import { readFile } from 'node:fs/promises';
 
 import sharp from 'sharp';
 
+import type { ListingArtworkOrientation } from '@/lib/listing-print-crops';
 import { mockupFrameGeometry, type MockupFrameFinish } from '@/lib/listing-mockup-tester';
+import { templateOpeningCornersForOrientation } from '@/lib/template-opening-orientations';
 import {
   templateGridCellRects,
   validateTemplateGridLayout,
   type TemplateGridLayout,
 } from '@/lib/template-grid-layout';
 
+export { templateOpeningCornersForOrientation } from '@/lib/template-opening-orientations';
+
 export type Point = { x: number; y: number };
 export type TemplateOpeningCorners = { topLeft: Point; topRight: Point; bottomRight: Point; bottomLeft: Point };
+export type TemplateOpeningOrientationCorners = Record<ListingArtworkOrientation, TemplateOpeningCorners>;
 export type TemplateOpeningRegion = {
   id: string;
   name: string;
   corners: TemplateOpeningCorners;
+  orientationCorners?: TemplateOpeningOrientationCorners;
   imageItemNumber?: number;
   topText?: string;
   bottomText?: string;
@@ -50,6 +56,7 @@ export type TemplateArtworkPresentation = {
 
 export type TemplateRegionArtwork = {
   region: TemplateOpeningRegion;
+  artworkOrientation?: ListingArtworkOrientation;
   artwork?: Buffer;
   cellArtworks?: Buffer[];
 };
@@ -123,7 +130,6 @@ export function validateTemplateOpeningCorners(value: unknown, width: number, he
 
 export function validateTemplateOpeningRegions(value: unknown, width: number, height: number): TemplateOpeningRegion[] {
   if (!Array.isArray(value)) openingError('does not have a valid list of artwork regions.');
-  if (value.length > 50) openingError('has more than 50 artwork regions.');
   const identifiers = new Set<string>();
   return value.map((item, index) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) openingError(`has an invalid artwork region at position ${index + 1}.`);
@@ -150,11 +156,23 @@ export function validateTemplateOpeningRegions(value: unknown, width: number, he
         openingError(`has invalid grid settings for artwork region ${index + 1}: ${error instanceof Error ? error.message : 'Invalid grid.'}`);
       }
     }
+    let orientationCorners: TemplateOpeningOrientationCorners | undefined;
+    if (record.orientationCorners !== undefined) {
+      if (!record.orientationCorners || typeof record.orientationCorners !== 'object' || Array.isArray(record.orientationCorners)) {
+        openingError(`has invalid orientation areas for artwork region ${index + 1}.`);
+      }
+      const orientations = record.orientationCorners as Record<string, unknown>;
+      orientationCorners = {
+        portrait: validateTemplateOpeningCorners(orientations.portrait, width, height),
+        landscape: validateTemplateOpeningCorners(orientations.landscape, width, height),
+      };
+    }
     identifiers.add(id);
     return {
       id,
       name,
       corners: validateTemplateOpeningCorners(record.corners, width, height),
+      ...(orientationCorners === undefined ? {} : { orientationCorners }),
       ...(imageItemNumber === undefined ? {} : { imageItemNumber }),
       ...(topText === undefined ? {} : { topText }),
       ...(bottomText === undefined ? {} : { bottomText }),
@@ -453,27 +471,11 @@ async function framedGridCell(
   width: number,
   height: number,
   legacyPresentation: TemplateArtworkPresentation,
+  paperDimensions: { width: number; height: number },
 ) {
   const finish = cell.frameFinish as MockupFrameFinish;
-  let paperWidth = width;
-  let paperHeight = height;
-  // The saved ratio describes the paper, not the frame. Scale the paper down
-  // uniformly until the frame, depth and directional shadow all fit within the
-  // grid cell without being clipped by its neighbouring cells.
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const geometry = mockupFrameGeometry(
-      { x: 0, y: 0, width: paperWidth, height: paperHeight },
-      finish,
-      cell.frameThicknessPercent,
-      cell.shadowStrength,
-      cell.frameDepthPercent,
-    );
-    const safety = finish === 'unframed' && cell.shadowStrength === 0 ? 0 : geometry.safety;
-    const scale = Math.min(1, width / (paperWidth + safety * 2), height / (paperHeight + safety * 2));
-    if (scale >= 0.999) break;
-    paperWidth = Math.max(1, Math.floor(paperWidth * scale));
-    paperHeight = Math.max(1, Math.floor(paperHeight * scale));
-  }
+  const paperWidth = paperDimensions.width;
+  const paperHeight = paperDimensions.height;
   const paperLeft = Math.round((width - paperWidth) / 2);
   const paperTop = Math.round((height - paperHeight) / 2);
   const geometry = mockupFrameGeometry(
@@ -549,19 +551,58 @@ async function createTemplateGridPlane(
 ) {
   if (artworks.length !== layout.imageCount) throw new Error(`The area requires ${layout.imageCount} prepared images.`);
   const rects = templateGridCellRects(width, height, layout);
-  const composites: Array<{ input: Buffer; left: number; top: number }> = [];
-  for (const rect of rects) {
-    const cell = layout.cells[rect.index];
+  const placements = rects.map((rect) => {
     const outerLeft = Math.max(0, Math.round(rect.x));
     const outerTop = Math.max(0, Math.round(rect.y));
     const outerRight = Math.min(width, Math.max(outerLeft + 1, Math.round(rect.x + rect.width)));
     const outerBottom = Math.min(height, Math.max(outerTop + 1, Math.round(rect.y + rect.height)));
-    const outerWidth = outerRight - outerLeft;
-    const outerHeight = outerBottom - outerTop;
+    return { index: rect.index, left: outerLeft, top: outerTop, width: outerRight - outerLeft, height: outerBottom - outerTop };
+  });
+  const longEdgeRatio = Math.max(rects[0].width, rects[0].height) / Math.min(rects[0].width, rects[0].height);
+  const paperDimensions = (index: number, shortEdge: number) => {
+    const longEdge = Math.max(1, Math.floor(shortEdge * longEdgeRatio));
+    return layout.cells[index].orientation === 'landscape'
+      ? { width: longEdge, height: shortEdge }
+      : { width: shortEdge, height: longEdge };
+  };
+  // Reserve enough space for the most demanding frame and shadow, then use
+  // that same paper size everywhere. Independent frame fitting would otherwise
+  // shrink only the framed artwork and make the papers appear different sizes.
+  let minimum = 1;
+  let maximum = Math.max(1, Math.floor(Math.min(...rects.map((rect) => Math.min(rect.width, rect.height)))));
+  let commonShortEdge = 0;
+  while (minimum <= maximum) {
+    const candidate = Math.floor((minimum + maximum) / 2);
+    const fits = placements.every((placement) => {
+      const cell = layout.cells[placement.index];
+      const paper = paperDimensions(placement.index, candidate);
+      const geometry = mockupFrameGeometry(
+        { x: 0, y: 0, ...paper },
+        cell.frameFinish,
+        cell.frameThicknessPercent,
+        cell.shadowStrength,
+        cell.frameDepthPercent,
+      );
+      const safety = cell.frameFinish === 'unframed' && cell.shadowStrength === 0 ? 0 : geometry.safety;
+      return paper.width + safety * 2 <= placement.width && paper.height + safety * 2 <= placement.height;
+    });
+    if (fits) {
+      commonShortEdge = candidate;
+      minimum = candidate + 1;
+    } else {
+      maximum = candidate - 1;
+    }
+  }
+  if (commonShortEdge === 0) {
+    openingError('has an artwork area too small for every image and its frame or shadow. Enlarge the area or reduce the image count, frame thickness or shadow strength.');
+  }
+  const composites: Array<{ input: Buffer; left: number; top: number }> = [];
+  for (const placement of placements) {
+    const cell = layout.cells[placement.index];
     composites.push({
-      input: await framedGridCell(artworks[rect.index], cell, outerWidth, outerHeight, presentation),
-      left: outerLeft,
-      top: outerTop,
+      input: await framedGridCell(artworks[placement.index], cell, placement.width, placement.height, presentation, paperDimensions(placement.index, commonShortEdge)),
+      left: placement.left,
+      top: placement.top,
     });
   }
   return sharp({ create: { width, height, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
@@ -610,7 +651,20 @@ export async function composeOurCategoryTemplateWithArtworks(
 
   for (const [regionIndex, region] of regions.entries()) {
     const supplied = regionArtworks[regionIndex];
-    const opening = configuredOpening(region.corners, width, height);
+    const singleImageArea = !region.grid || region.grid.imageCount === 1;
+    let artworkOrientation = supplied.artworkOrientation;
+    const singleArtwork = region.grid ? supplied.cellArtworks?.[0] : supplied.artwork;
+    if (singleImageArea && region.orientationCorners && !artworkOrientation && singleArtwork) {
+      const metadata = await sharp(singleArtwork, { failOn: 'error' }).metadata();
+      const swapsDimensions = metadata.orientation !== undefined && metadata.orientation >= 5 && metadata.orientation <= 8;
+      const artworkWidth = swapsDimensions ? metadata.height : metadata.width;
+      const artworkHeight = swapsDimensions ? metadata.width : metadata.height;
+      artworkOrientation = artworkWidth && artworkHeight && artworkWidth > artworkHeight ? 'landscape' : 'portrait';
+    }
+    const corners = singleImageArea
+      ? templateOpeningCornersForOrientation(region, artworkOrientation ?? 'portrait')
+      : region.corners;
+    const opening = configuredOpening(corners, width, height);
     const planeWidth = opening.axisAligned
       ? opening.bounds.width
       : Math.max(2, Math.round((distance(opening.corners.topLeft, opening.corners.topRight) + distance(opening.corners.bottomLeft, opening.corners.bottomRight)) / 2) + 1);

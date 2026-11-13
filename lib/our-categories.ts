@@ -25,6 +25,7 @@ import {
 import {
   composeOurCategoryTemplateWithArtworks,
   remapTemplateOpeningRegionImageItem,
+  templateOpeningCornersForOrientation,
   validateTemplateOpeningCorners,
   validateTemplateOpeningRegions,
   type TemplateOpeningCorners,
@@ -477,9 +478,6 @@ function calibrationFromForm(
     throw new Error('The artwork regions are invalid.');
   }
   const openingRegions = validateTemplateOpeningRegions(rawRegions, imageWidth, imageHeight);
-  if (openingRegions.filter((region) => region.grid).length > 4) {
-    throw new Error('New image templates can contain no more than four grid areas.');
-  }
   for (const region of openingRegions) {
     for (const [cellIndex, cell] of (region.grid?.cells ?? []).entries()) {
       if (cell.imageItemNumber > itemCount) {
@@ -1913,6 +1911,7 @@ export async function renderOurCategoryImageTemplate(
   listingTextRatioByItemNumber?: Map<number, PrintableDownloadRatio>,
   listingPrintCropsByItemNumber?: Map<number, ListingPrintCropSettings | null>,
   listingBackgroundColour?: ArtworkBackgroundColour,
+  listingOrientationsByItemNumber?: Map<number, ListingArtworkOrientation>,
 ) {
   const template = await prisma.ourCategoryImageTemplate.findUnique({ where: { id: templateId } });
   if (!template) throw new Error('Image template not found.');
@@ -1930,6 +1929,22 @@ export async function renderOurCategoryImageTemplate(
     throw new Error('Edit and save this image template before generating it.');
   }
   const openingRegions = resolvedView.openingRegions;
+  const sourceOrientations = new Map<number, Promise<ListingArtworkOrientation>>();
+  const sourceOrientation = (itemNumber: number, sourceImage: Buffer) => {
+    let pending = sourceOrientations.get(itemNumber);
+    if (!pending) {
+      pending = (async (): Promise<ListingArtworkOrientation> => {
+        const configured = listingOrientationsByItemNumber?.get(itemNumber)
+          ?? listingPrintCropsByItemNumber?.get(itemNumber)?.orientation;
+        if (configured) return configured;
+        const metadata = await sharp(sourceImage, { failOn: 'error' }).metadata();
+        const dimensions = metadata.autoOrient ?? metadata;
+        return dimensions.width && dimensions.height && dimensions.width > dimensions.height ? 'landscape' : 'portrait';
+      })();
+      sourceOrientations.set(itemNumber, pending);
+    }
+    return pending;
+  };
   const effectiveTextPlacement = (itemNumber: number, ratio?: PrintableDownloadRatio) => {
     if (!listingTextAreasByItemNumber) return undefined;
     return effectiveListingPersonalisationTextAreas(
@@ -1953,7 +1968,6 @@ export async function renderOurCategoryImageTemplate(
     personalisation: ReturnType<typeof validateOurCategoryTemplatePersonalisation>,
     itemNumber: number,
     ratio: PrintableDownloadRatio = 'iso-a1',
-    orientation?: ListingArtworkOrientation,
   ) => {
     const cropSettings = listingPrintCropsByItemNumber?.get(itemNumber) ?? null;
     if (listingPrintCropsByItemNumber && !cropSettings) {
@@ -1982,9 +1996,7 @@ export async function renderOurCategoryImageTemplate(
         orientation: cropSettings.orientation,
         backgroundColour,
       });
-      return orientation && orientation !== cropSettings.orientation
-        ? sharp(preview.buffer, { failOn: 'error' }).rotate(90).webp({ quality: 88, effort: 4 }).toBuffer()
-        : preview.buffer;
+      return preview.buffer;
     }
     const prepared = await prepareOurCategoryTemplateArtwork(
       sourceImage,
@@ -2013,20 +2025,33 @@ export async function renderOurCategoryImageTemplate(
         )
         : singlePersonalisation;
       if (region.grid) {
-        const cellArtworks = await Promise.all(region.grid.cells.map(async (cell, cellIndex) => {
+        const cells = await Promise.all(region.grid.cells.map(async (cell, cellIndex) => {
           if (cell.imageItemNumber > categoryValues.itemCount) {
             throw new Error(`Edit this image template and choose an image item number from 1 to ${categoryValues.itemCount} for ${region.name}, Image ${cellIndex + 1}.`);
           }
           const sourceImage = sourceImagesByItemNumber.get(cell.imageItemNumber);
           if (!sourceImage) throw new Error(`Image ${cell.imageItemNumber} is required to generate ${template.name}.`);
+          return { ...cell, orientation: await sourceOrientation(cell.imageItemNumber, sourceImage) };
+        }));
+        const cellArtworks = await Promise.all(cells.map(async (cell) => {
+          const sourceImage = sourceImagesByItemNumber.get(cell.imageItemNumber)!;
           const cellPersonalisation = validateOurCategoryTemplatePersonalisation(
             cell.topText,
             cell.bottomText,
             cell.fontId,
           );
-          return prepareTemplateArtwork(sourceImage, cellPersonalisation, cell.imageItemNumber, cell.ratio, cell.orientation);
+          return prepareTemplateArtwork(sourceImage, cellPersonalisation, cell.imageItemNumber, cell.ratio);
         }));
-        return { region, cellArtworks };
+        const artworkOrientation = cells.length === 1 ? cells[0].orientation : undefined;
+        return {
+          region: {
+            ...region,
+            corners: artworkOrientation ? templateOpeningCornersForOrientation(region, artworkOrientation) : region.corners,
+            grid: { ...region.grid, cells },
+          },
+          cellArtworks,
+          artworkOrientation,
+        };
       }
       const imageItemNumber = categoryValues.templateType === 'multiple' ? region.imageItemNumber : 1;
       if (!imageItemNumber || imageItemNumber > categoryValues.itemCount) {
@@ -2034,8 +2059,10 @@ export async function renderOurCategoryImageTemplate(
       }
       const sourceImage = sourceImagesByItemNumber.get(imageItemNumber);
       if (!sourceImage) throw new Error(`Image ${imageItemNumber} is required to generate ${template.name}.`);
+      const artworkOrientation = await sourceOrientation(imageItemNumber, sourceImage);
       return {
-        region,
+        region: { ...region, corners: templateOpeningCornersForOrientation(region, artworkOrientation) },
+        artworkOrientation,
         artwork: await prepareTemplateArtwork(sourceImage, personalisation, imageItemNumber),
       };
     }));

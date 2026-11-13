@@ -87,6 +87,9 @@ export function SubSectionListingsTable({
   const [ourCategoryId, setOurCategoryId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [createLoading, setCreateLoading] = useState(false);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+  const [templateLoadAttempt, setTemplateLoadAttempt] = useState(0);
   const [generateOpen, setGenerateOpen] = useState(false);
   const [generateLoading, setGenerateLoading] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
@@ -101,6 +104,38 @@ export function SubSectionListingsTable({
     && data?.subSection.numberOfDownloads !== undefined
     && COLLAPSIBLE_SET_SIZES.has(data.subSection.numberOfDownloads)
     && !data.subSection.includeAllDownloads;
+
+  useEffect(() => {
+    setData(initialData);
+  }, [initialData]);
+
+  useEffect(() => {
+    if (!createOpen || !shopId || !sectionId || !subSectionId) return;
+    const controller = new AbortController();
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    void (async () => {
+      try {
+        const query = new URLSearchParams({ shopId, sectionId, subSectionId });
+        const response = await fetch(`/api/shops/listings?${query.toString()}`, {
+          cache: 'no-store', signal: controller.signal,
+        });
+        const payload = await response.json() as ListingActionResponse;
+        if (!response.ok || !payload.data) throw new Error(payload.error ?? 'Unable to load the latest templates.');
+        if (!controller.signal.aborted) {
+          const templates = payload.data.templates;
+          setData((current) => current ? { ...current, templates } : payload.data ?? null);
+        }
+      } catch (caughtError) {
+        if (!controller.signal.aborted) {
+          setTemplatesError(caughtError instanceof Error ? caughtError.message : 'Unable to load the latest templates.');
+        }
+      } finally {
+        if (!controller.signal.aborted) setTemplatesLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [createOpen, shopId, sectionId, subSectionId, templateLoadAttempt]);
 
   useEffect(() => {
     setExpandedSections(new Set());
@@ -578,6 +613,7 @@ export function SubSectionListingsTable({
                   className="h-10 rounded-md border border-input bg-background px-3 text-sm"
                   value={ourCategoryId}
                   onChange={(event) => setOurCategoryId(event.target.value)}
+                  disabled={templatesLoading || createLoading}
                 >
                   <option value="">Choose a template</option>
                   {(data?.templates ?? [])
@@ -585,18 +621,23 @@ export function SubSectionListingsTable({
                       && template.templateType === (numberOfItems === '1' ? 'single' : 'multiple'))
                     .map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
                 </select>
-                {(data?.templates ?? []).filter((template) => template.itemCount === Number(numberOfItems)
+                {templatesLoading ? <span role="status" className="text-xs font-normal text-muted-foreground">Loading templates...</span> : null}
+                {!templatesLoading && !templatesError && (data?.templates ?? []).filter((template) => template.itemCount === Number(numberOfItems)
                   && template.templateType === (numberOfItems === '1' ? 'single' : 'multiple')).length === 0 ? (
                     <span className="text-xs font-normal text-amber-700">No matching templates exist for {numberOfItems} {numberOfItems === '1' ? 'item' : 'items'}.</span>
                   ) : null}
               </label>
+              {templatesError ? <div className="grid gap-2">
+                <p role="alert" className="text-sm font-medium text-destructive">{templatesError}</p>
+                <Button type="button" variant="outline" onClick={() => setTemplateLoadAttempt((attempt) => attempt + 1)}>Retry loading templates</Button>
+              </div> : null}
               {error ? <p className="text-sm font-medium text-destructive">{error}</p> : null}
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={createLoading}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={createLoading || !ourCategoryId}>
+              <Button type="submit" disabled={createLoading || templatesLoading || Boolean(templatesError) || !ourCategoryId}>
                 {createLoading ? (editingListingId ? 'Saving...' : 'Creating...') : (editingListingId ? 'Save' : 'Create')}
               </Button>
             </DialogFooter>

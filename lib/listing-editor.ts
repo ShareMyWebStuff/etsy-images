@@ -1306,15 +1306,19 @@ async function readSourceListingThumbnail(shopId: string, listingId: number, pre
       // Legacy thumbnails predate strict 2:3 / 4:5 validation.
     }
   }
+  const artworkOrientation: ListingArtworkOrientation = textAreaRows[0]?.artworkOrientation === 'portrait' || textAreaRows[0]?.artworkOrientation === 'landscape'
+    ? textAreaRows[0].artworkOrientation
+    : metadata.width && metadata.height && metadata.width > metadata.height ? 'landscape' : 'portrait';
   return {
     fileName: source.thumbnailFileName,
+    artworkOrientation,
     personalisationTextAreas: parseListingPersonalisationTextAreas(textAreaRows[0]?.personalisationTextAreas ?? null),
     printCropSettings: parseCurrentListingPrintCropSettings(textAreaRows[0]?.printCropSettings ?? null, {
       fileName: source.thumbnailFileName,
       updatedAt: textAreaRows[0]?.thumbnailUpdatedAt instanceof Date
         ? textAreaRows[0].thumbnailUpdatedAt.toISOString()
         : textAreaRows[0]?.thumbnailUpdatedAt ?? null,
-      orientation: normalizeListingArtworkOrientation(textAreaRows[0]?.artworkOrientation),
+      orientation: artworkOrientation,
     }),
     customisation: effectiveListingCustomisation(source.ourCategory, source.productConfig),
     sourceRatio,
@@ -1363,6 +1367,7 @@ export async function generateListingTemplateImages(
   const sourceTextAreas = new Map<number, ListingPersonalisationTextAreaSettings | null>();
   const sourceTextRatios = new Map<number, PrintableDownloadRatio>();
   const sourcePrintCrops = new Map<number, ListingPrintCropSettings | null>();
+  const sourceOrientations = new Map<number, ListingArtworkOrientation>();
   const sourceCustomisation = new Map<number, ReturnType<typeof effectiveListingCustomisation>>();
   if (template.templateType === 'multiple') {
     if (data.listing.groupItems.length !== template.itemCount) {
@@ -1374,6 +1379,7 @@ export async function generateListingTemplateImages(
       sourceTextAreas.set(item.position, source.personalisationTextAreas);
       sourceTextRatios.set(item.position, source.sourceRatio);
       sourcePrintCrops.set(item.position, source.printCropSettings);
+      sourceOrientations.set(item.position, source.artworkOrientation);
       sourceCustomisation.set(item.position, source.customisation);
     }
   } else {
@@ -1387,6 +1393,7 @@ export async function generateListingTemplateImages(
     });
     sourceTextRatios.set(1, currentCrops?.sourceRatio ?? '2x3');
     sourcePrintCrops.set(1, currentCrops);
+    sourceOrientations.set(1, normalizeListingArtworkOrientation(data.listing.artworkOrientation));
     sourceCustomisation.set(1, effectiveListingCustomisation(template, data.listing.productConfig));
   }
 
@@ -1406,6 +1413,7 @@ export async function generateListingTemplateImages(
       sourceTextRatios,
       sourcePrintCrops,
       backgroundColour,
+      sourceOrientations,
     );
     const fileName = `template-${imageTemplate.id}.png`;
     const targetPath = path.join(listingPath, fileName);

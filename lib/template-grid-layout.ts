@@ -215,14 +215,14 @@ export function validateTemplateGridLayout(value: unknown, maximumImageItemNumbe
     columns,
     horizontalGapPercent,
     verticalGapPercent,
-    cells,
+    cells: cells.map((cell) => ({ ...cell, ratio: cells[0].ratio })),
   };
 }
 
-function cellAspect(ratio: PrintableDownloadRatio, orientation: ListingArtworkOrientation) {
+function cellPaperDimensions(ratio: PrintableDownloadRatio, orientation: ListingArtworkOrientation) {
   const option = TEMPLATE_GRID_RATIO_OPTIONS.find((candidate) => candidate.value === ratio)!;
-  const portrait = option.width / option.height;
-  return orientation === 'landscape' ? 1 / portrait : portrait;
+  const longEdge = option.height / option.width;
+  return orientation === 'landscape' ? { width: longEdge, height: 1 } : { width: 1, height: longEdge };
 }
 
 export function templateGridCellRects(width: number, height: number, layout: TemplateGridLayout): TemplateGridCellRect[] {
@@ -233,7 +233,12 @@ export function templateGridCellRects(width: number, height: number, layout: Tem
   const verticalGap = rowSlotHeight * layout.verticalGapPercent / 100;
   const cellSlotWidth = (width - horizontalGap * (layout.columns - 1)) / layout.columns;
   const cellSlotHeight = (height - verticalGap * (layout.rows - 1)) / layout.rows;
-  return layout.cells.map((cell, index) => {
+  const commonRatio = layout.cells[0]?.ratio ?? 'iso-a1';
+  const paperDimensions = layout.cells.map((cell) => cellPaperDimensions(commonRatio, cell.orientation));
+  // Every print shares one physical short edge. Fitting each image separately
+  // would make a portrait print larger than a landscape print in a tall slot.
+  const paperScale = Math.min(...paperDimensions.map((paper) => Math.min(cellSlotWidth / paper.width, cellSlotHeight / paper.height)));
+  return layout.cells.map((_, index) => {
     const row = Math.floor(index / layout.columns);
     const itemsInRow = Math.min(layout.columns, layout.imageCount - row * layout.columns);
     const rowWidth = itemsInRow * cellSlotWidth + Math.max(0, itemsInRow - 1) * horizontalGap;
@@ -241,10 +246,8 @@ export function templateGridCellRects(width: number, height: number, layout: Tem
     const column = index % layout.columns;
     const slotX = rowLeft + column * (cellSlotWidth + horizontalGap);
     const slotY = row * (cellSlotHeight + verticalGap);
-    const aspect = cellAspect(cell.ratio, cell.orientation);
-    const slotAspect = cellSlotWidth / cellSlotHeight;
-    const cellWidth = aspect >= slotAspect ? cellSlotWidth : cellSlotHeight * aspect;
-    const cellHeight = aspect >= slotAspect ? cellSlotWidth / aspect : cellSlotHeight;
+    const cellWidth = paperDimensions[index].width * paperScale;
+    const cellHeight = paperDimensions[index].height * paperScale;
     return {
       index,
       x: slotX + (cellSlotWidth - cellWidth) / 2,

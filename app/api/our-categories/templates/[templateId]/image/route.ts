@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 
+import { fileContentDisposition } from '@/lib/file-content-disposition';
 import { getOurCategoryTemplateImage } from '@/lib/our-categories';
 
 export async function GET(request: Request, { params }: { params: Promise<{ templateId: string }> }) {
@@ -9,7 +10,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ temp
     return new Response(new Uint8Array(image.contents), {
       headers: {
         'Content-Type': image.contentType,
-        'Content-Disposition': `inline; filename="${image.fileName.replaceAll('"', '')}"`,
+        'Content-Disposition': fileContentDisposition('inline', image.fileName),
         'Cache-Control': 'private, max-age=60',
       },
     });

@@ -8,7 +8,7 @@ import Link from 'next/link';
 import { closestCenter, DndContext, DragEndEvent, DragOverlay, DragStartEvent, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, rectSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Download, Eye, FileText, GripVertical, ImageIcon, PackageCheck, Plus, RefreshCw, RotateCcw, RotateCw, Sparkles, Trash2, Upload, X, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Download, Eye, FileText, GripVertical, ImageIcon, PackageCheck, Plus, RefreshCw, Sparkles, Trash2, Upload, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -20,7 +20,6 @@ import { getNextPrintSize } from '@/lib/print-sizes';
 import { ETSY_MAX_DOWNLOAD_FILES, ETSY_MAX_FILE_SIZE_BYTES } from '@/lib/etsy-download-limits';
 import { LISTING_EDITOR_MAX_IMAGES, LISTING_IMAGE_GUIDE } from '@/lib/listing-image-limits';
 import { listingPrintCropDraftForSave, type ListingPrintCropDraft } from '@/lib/listing-print-crops';
-import { analyseListingThumbnailDimensions, type ListingThumbnailRatio } from '@/lib/listing-thumbnail-ratio';
 import { smallestPaperSizePerAspectRatio } from '@/lib/listing-paper-size-groups';
 import { buildAspectRatiosImagePrompt, buildBedroomDoorImagePrompt, buildBedroomImagePrompt, buildBesideBedImagePrompt, buildCustomisedPlayroomImagePrompt, buildCustomisedShelveImagePrompt, buildDigitalDownloadIncludedImagePrompt, buildFramesImagePrompt, buildHowToPrintIncludedImagePrompt, buildListingImagePrompt, buildNoFrameIncludedImagePrompt, buildPerfectGiftImagePrompt, buildPersonalUseIncludedImagePrompt, buildPlayroomImagePrompt, buildSizesImagePrompt, buildThreeFramesImagePrompt } from '@/lib/listing-prompts';
 import { buildDigitalDownloadGeneratePrompt } from '@/lib/digital-download-generate-prompt';
@@ -40,6 +39,7 @@ import { ListingPersonalisationPreviewDialog } from './ListingPersonalisationPre
 import { ListingMockupTesterDialog, type ListingMockupArtworkOption } from './ListingMockupTesterDialog';
 import { ListingPrintCropDialog } from './ListingPrintCropDialog';
 import { ListingTextAreasDialog } from './ListingTextAreasDialog';
+import { ListingThumbnailChooser } from './ListingThumbnailChooser';
 
 type ListingEditorClientProps = {
   initialData: ListingEditorData | null;
@@ -246,14 +246,6 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   const [printCropsOpen, setPrintCropsOpen] = useState(false);
   const [personalisationPreviewOpen, setPersonalisationPreviewOpen] = useState(false);
   const [mockupTesterOpen, setMockupTesterOpen] = useState(false);
-  const [pendingThumbnail, setPendingThumbnail] = useState<{
-    file: File;
-    url: string;
-    rotation: 0 | 90 | 180 | 270;
-    ratio: ListingThumbnailRatio;
-    width: number;
-    height: number;
-  } | null>(null);
   const [deleteAllDownloadsOpen, setDeleteAllDownloadsOpen] = useState(false);
   const [downloadToDelete, setDownloadToDelete] = useState<{ id: string; name: string } | null>(null);
   const [promptsOpen, setPromptsOpen] = useState(false);
@@ -1506,38 +1498,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     }
   }
 
-  async function chooseThumbnail(file: File) {
-    const url = URL.createObjectURL(file);
-    try {
-      const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-        const image = new Image();
-        image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
-        image.onerror = () => reject(new Error('The selected thumbnail could not be read.'));
-        image.src = url;
-      });
-      const analysis = analyseListingThumbnailDimensions(dimensions.width, dimensions.height);
-      setError(null);
-      setPendingThumbnail({
-        file,
-        url,
-        rotation: 0,
-        ratio: analysis.ratio,
-        width: dimensions.width,
-        height: dimensions.height,
-      });
-    } catch (caughtError) {
-      URL.revokeObjectURL(url);
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to use that thumbnail.');
-    }
-  }
-
-  function closePendingThumbnail() {
-    if (pendingThumbnail) URL.revokeObjectURL(pendingThumbnail.url);
-    setPendingThumbnail(null);
-  }
-
-  async function savePendingThumbnail() {
-    if (!pendingThumbnail) return;
+  async function saveThumbnail(file: File, rotation: 0 | 90 | 180 | 270) {
     setError(null);
     setBusyKey('upload-thumbnail');
     try {
@@ -1547,13 +1508,13 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       formData.set('subSectionId', context.subSectionId);
       formData.set('listingId', context.listingId);
       formData.set('kind', 'thumbnail');
-      formData.set('file', pendingThumbnail.file);
-      formData.set('thumbnailRotation', String(pendingThumbnail.rotation));
+      formData.set('file', file);
+      formData.set('thumbnailRotation', String(rotation));
       const response = await fetch('/api/shops/listings/editor/assets', { method: 'POST', body: formData });
       await parseResponse(response, 'Unable to upload the thumbnail.');
-      closePendingThumbnail();
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to upload the thumbnail.');
+      throw caughtError;
     } finally {
       setBusyKey(null);
     }
@@ -2481,15 +2442,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                   <dd>{data.thumbnail.ratio === '2x3' ? '2:3' : data.thumbnail.ratio === '4x5' ? '4:5' : 'Other'}</dd>
                 </div>
               </dl>
-            </div> : <label className="flex min-h-32 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-              <Upload className="h-5 w-5" aria-hidden="true" />
-              Choose thumbnail image
-              <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = '';
-                if (file) void chooseThumbnail(file);
-              }} />
-            </label>}
+            </div> : <ListingThumbnailChooser disabled={busyKey !== null} onSave={saveThumbnail} />}
           </div> : <div className="grid gap-4 border-t pt-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -4133,52 +4086,6 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               ) : null}
             </div>
           ) : null}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={pendingThumbnail !== null} onOpenChange={(open) => { if (!open && busyKey !== 'upload-thumbnail') closePendingThumbnail(); }}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Confirm thumbnail</DialogTitle>
-            <DialogDescription>
-              The image is approximately {pendingThumbnail?.ratio === '2x3' ? '2:3' : '4:5'}. Rotate it if needed, then save it. A small rounding difference will be resized to the exact ratio.
-            </DialogDescription>
-          </DialogHeader>
-          {pendingThumbnail ? <div className="grid gap-4">
-            <div className="flex min-h-96 items-center justify-center overflow-hidden rounded-lg border bg-muted p-4">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={pendingThumbnail.url}
-                alt="Selected thumbnail"
-                className="max-h-[55vh] max-w-full object-contain transition-transform"
-                style={{ transform: `rotate(${pendingThumbnail.rotation}deg)` }}
-              />
-            </div>
-            <p className="text-center text-sm text-muted-foreground">
-              {pendingThumbnail.rotation % 180 === 0
-                ? `${pendingThumbnail.width} × ${pendingThumbnail.height}`
-                : `${pendingThumbnail.height} × ${pendingThumbnail.width}`}
-              {' · '}{pendingThumbnail.rotation % 180 === 0
-                ? pendingThumbnail.width > pendingThumbnail.height ? 'Landscape' : 'Portrait'
-                : pendingThumbnail.height > pendingThumbnail.width ? 'Landscape' : 'Portrait'}
-            </p>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex gap-2">
-                <Button type="button" variant="outline" onClick={() => setPendingThumbnail((current) => current ? ({ ...current, rotation: ((current.rotation + 270) % 360) as 0 | 90 | 180 | 270 }) : null)} disabled={busyKey !== null}>
-                  <RotateCcw className="h-4 w-4" aria-hidden="true" /> Rotate left
-                </Button>
-                <Button type="button" variant="outline" onClick={() => setPendingThumbnail((current) => current ? ({ ...current, rotation: ((current.rotation + 90) % 360) as 0 | 90 | 180 | 270 }) : null)} disabled={busyKey !== null}>
-                  <RotateCw className="h-4 w-4" aria-hidden="true" /> Rotate right
-                </Button>
-              </div>
-              <div className="flex gap-2">
-                <Button type="button" variant="outline" onClick={closePendingThumbnail} disabled={busyKey !== null}>Cancel</Button>
-                <Button type="button" onClick={() => void savePendingThumbnail()} disabled={busyKey !== null}>
-                  {busyKey === 'upload-thumbnail' ? 'Saving...' : 'Save thumbnail'}
-                </Button>
-              </div>
-            </div>
-          </div> : null}
         </DialogContent>
       </Dialog>
 

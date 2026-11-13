@@ -6,6 +6,7 @@ import {
   composeOurCategoryTemplateWithArtworks,
   detectTemplateOpening,
   remapTemplateOpeningRegionImageItem,
+  validateTemplateOpeningRegions,
 } from '@/lib/our-category-template-composite';
 import { defaultTemplateGridLayout } from '@/lib/template-grid-layout';
 
@@ -49,7 +50,7 @@ function colourAt(pixels: Buffer, width: number, x: number, y: number) {
   return [...pixels.subarray((y * width + x) * 4, (y * width + x) * 4 + 4)];
 }
 
-function blueBounds(pixels: Buffer, width: number, height: number) {
+function colourBounds(pixels: Buffer, width: number, height: number, colour: readonly number[]) {
   let minX = width;
   let maxX = -1;
   let minY = height;
@@ -57,7 +58,7 @@ function blueBounds(pixels: Buffer, width: number, height: number) {
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const offset = (y * width + x) * 4;
-      if (pixels[offset] === 0 && pixels[offset + 1] === 0 && pixels[offset + 2] === 255 && pixels[offset + 3] === 255) {
+      if (pixels[offset] === colour[0] && pixels[offset + 1] === colour[1] && pixels[offset + 2] === colour[2] && pixels[offset + 3] === 255) {
         minX = Math.min(minX, x);
         maxX = Math.max(maxX, x);
         minY = Math.min(minY, y);
@@ -66,6 +67,10 @@ function blueBounds(pixels: Buffer, width: number, height: number) {
     }
   }
   return { left: minX, right: maxX, top: minY, bottom: maxY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
+function blueBounds(pixels: Buffer, width: number, height: number) {
+  return colourBounds(pixels, width, height, [0, 0, 255]);
 }
 
 function rectangleCorners(left: number, top: number, width: number, height: number) {
@@ -78,6 +83,75 @@ function rectangleCorners(left: number, top: number, width: number, height: numb
 }
 
 describe('Our Category template compositing', () => {
+  it('preserves both orientation areas and validates the area that is not currently selected', () => {
+    const region = {
+      id: 'area-1', name: 'Area 1', corners: rectangleCorners(10, 10, 50, 80),
+      orientationCorners: {
+        portrait: rectangleCorners(10, 10, 50, 80),
+        landscape: rectangleCorners(80, 30, 80, 50),
+      },
+    };
+
+    expect(validateTemplateOpeningRegions([region], 200, 120)).toEqual([region]);
+    expect(() => validateTemplateOpeningRegions([{
+      ...region,
+      orientationCorners: { ...region.orientationCorners, landscape: rectangleCorners(180, 30, 80, 50) },
+    }], 200, 120)).toThrow(/outside its original dimensions/);
+  });
+
+  it('accepts more than fifty independently named artwork areas', () => {
+    const regions = Array.from({ length: 51 }, (_, index) => ({
+      id: `area-${index + 1}`, name: `Area ${index + 1}`, corners: rectangleCorners(10, 10, 50, 80),
+    }));
+
+    expect(validateTemplateOpeningRegions(regions, 200, 120)).toHaveLength(51);
+  });
+
+  it.each([
+    { label: 'portrait', artworkWidth: 40, artworkHeight: 60, expectedLeft: 10, expectedTop: 10 },
+    { label: 'landscape', artworkWidth: 60, artworkHeight: 40, expectedLeft: 100, expectedTop: 40 },
+    { label: 'square', artworkWidth: 40, artworkHeight: 40, expectedLeft: 10, expectedTop: 10 },
+  ])('uses the saved $label artwork area based on the supplied image', async ({ artworkWidth, artworkHeight, expectedLeft, expectedTop }) => {
+    const width = 220;
+    const height = 140;
+    const template = await pngFromPixels(templatePixels(width, height), width, height);
+    const artwork = await sharp({ create: { width: artworkWidth, height: artworkHeight, channels: 4, background: '#0000ff' } }).png().toBuffer();
+    const region = {
+      id: 'area-1', name: 'Area 1', corners: rectangleCorners(10, 10, 50, 80),
+      orientationCorners: {
+        portrait: rectangleCorners(10, 10, 50, 80),
+        landscape: rectangleCorners(100, 40, 80, 50),
+      },
+    };
+
+    const result = await composeOurCategoryTemplate(template, artwork, [region]);
+    const decoded = await sharp(result).ensureAlpha().raw().toBuffer();
+
+    expect(blueBounds(decoded, width, height)).toMatchObject({ left: expectedLeft, top: expectedTop });
+  });
+
+  it('uses the source orientation even when a prepared image has different dimensions', async () => {
+    const width = 220;
+    const height = 140;
+    const template = await pngFromPixels(templatePixels(width, height), width, height);
+    const artwork = await sharp({ create: { width: 40, height: 60, channels: 4, background: '#0000ff' } }).png().toBuffer();
+
+    const result = await composeOurCategoryTemplateWithArtworks(template, [{
+      artwork,
+      artworkOrientation: 'landscape',
+      region: {
+        id: 'area-1', name: 'Area 1', corners: rectangleCorners(10, 10, 50, 80),
+        orientationCorners: {
+          portrait: rectangleCorners(10, 10, 50, 80),
+          landscape: rectangleCorners(100, 40, 80, 50),
+        },
+      },
+    }]);
+    const decoded = await sharp(result).ensureAlpha().raw().toBuffer();
+
+    expect(blueBounds(decoded, width, height)).toMatchObject({ left: 100, top: 40, width: 80, height: 50 });
+  });
+
   it('remaps every grid cell when a linked template selects a different listing image', () => {
     const grid = defaultTemplateGridLayout(2);
     grid.cells[1] = { ...grid.cells[1], imageItemNumber: 3 };
@@ -254,6 +328,69 @@ describe('Our Category template compositing', () => {
     expect(colourAt(decoded, width, 125, 60)).toEqual([0, 0, 255, 255]);
     expect(colourAt(decoded, width, 80, 60)).toEqual([...FOREGROUND]);
     expect(colourAt(decoded, width, 10, 60)).toEqual([...FOREGROUND]);
+  });
+
+  it('uses the landscape placement for a single-image grid area', async () => {
+    const width = 240;
+    const height = 180;
+    const template = await pngFromPixels(templatePixels(width, height), width, height);
+    const artwork = await sharp({ create: { width: 90, height: 60, channels: 4, background: '#0000ff' } }).png().toBuffer();
+    const grid = defaultTemplateGridLayout(1);
+    grid.cells[0] = { ...grid.cells[0], ratio: '2x3', orientation: 'landscape', shadowStrength: 0 };
+    const region = {
+      id: 'single-grid', name: 'Area 1', corners: rectangleCorners(20, 20, 60, 100), grid,
+      orientationCorners: {
+        portrait: rectangleCorners(20, 20, 60, 100),
+        landscape: rectangleCorners(100, 50, 100, 60),
+      },
+    };
+
+    const result = await composeOurCategoryTemplateWithArtworks(template, [{ region, cellArtworks: [artwork], artworkOrientation: 'landscape' }]);
+    const decoded = await sharp(result).ensureAlpha().raw().toBuffer();
+
+    expect(blueBounds(decoded, width, height)).toMatchObject({ left: 105, top: 50, width: 90, height: 60 });
+    expect(colourAt(decoded, width, 40, 50)).toEqual([...FOREGROUND]);
+  });
+
+  it.each([0, 25])('renders mixed orientations at one paper size with shadow strength %i', async (shadowStrength) => {
+    const width = 300;
+    const height = 220;
+    const template = await pngFromPixels(templatePixels(width, height), width, height);
+    const portrait = await sharp({ create: { width: 60, height: 90, channels: 4, background: '#0000ff' } }).png().toBuffer();
+    const landscape = await sharp({ create: { width: 90, height: 60, channels: 4, background: '#ff0000' } }).png().toBuffer();
+    const grid = defaultTemplateGridLayout(2);
+    grid.rows = 1;
+    grid.columns = 2;
+    grid.horizontalGapPercent = 10;
+    grid.cells[0] = { ...grid.cells[0], ratio: '2x3', shadowStrength: 0 };
+    grid.cells[1] = { ...grid.cells[1], ratio: '2x3', orientation: 'landscape', shadowStrength };
+    const region = { id: 'mixed', name: 'Area 1', corners: rectangleCorners(20, 20, 240, 160), grid };
+
+    const result = await composeOurCategoryTemplateWithArtworks(template, [{ region, cellArtworks: [portrait, landscape] }]);
+    const decoded = await sharp(result).ensureAlpha().raw().toBuffer();
+    const portraitBounds = blueBounds(decoded, width, height);
+    const landscapeBounds = colourBounds(decoded, width, height, [255, 0, 0]);
+
+    expect(portraitBounds.width).toBe(landscapeBounds.height);
+    expect(portraitBounds.height).toBe(landscapeBounds.width);
+    expect(portraitBounds.left + (portraitBounds.width - 1) / 2).toBeCloseTo(76.5, 0);
+    expect(landscapeBounds.left + (landscapeBounds.width - 1) / 2).toBeCloseTo(202.5, 0);
+    expect(Math.abs(portraitBounds.top + (portraitBounds.height - 1) / 2 - 99.5)).toBeLessThanOrEqual(1);
+    expect(Math.abs(landscapeBounds.top + (landscapeBounds.height - 1) / 2 - 99.5)).toBeLessThanOrEqual(1);
+    expect(portraitBounds.left).toBeGreaterThanOrEqual(20);
+    expect(landscapeBounds.right).toBeLessThan(260);
+    expect(colourAt(decoded, width, 140, 100)).toEqual([...FOREGROUND]);
+  });
+
+  it('reports how to fix an area too small to fit the images and their presentation', async () => {
+    const template = await pngFromPixels(templatePixels(100, 100), 100, 100);
+    const artwork = await sharp({ create: { width: 20, height: 30, channels: 4, background: '#0000ff' } }).png().toBuffer();
+    const grid = defaultTemplateGridLayout(12);
+
+    await expect(composeOurCategoryTemplateWithArtworks(template, [{
+      region: { id: 'small', name: 'Small area', corners: rectangleCorners(10, 10, 20, 20), grid },
+      cellArtworks: Array.from({ length: 12 }, () => artwork),
+    }])).rejects.toThrow(/artwork area too small.*Enlarge the area or reduce the image count/);
   });
 
   it('leaves the template unchanged when it has no configured regions', async () => {

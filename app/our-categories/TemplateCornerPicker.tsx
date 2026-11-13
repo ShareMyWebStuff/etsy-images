@@ -5,6 +5,8 @@ import { Plus, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import type { TemplateOpeningCorners, TemplateOpeningRegion } from '@/lib/our-category-template-composite';
+import type { ListingArtworkOrientation } from '@/lib/listing-print-crops';
+import { templateOpeningCornersForOrientation, updateTemplateOpeningCorners } from '@/lib/template-opening-orientations';
 import { DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID, PRINTSHRIMP_CUSTOM_FONTS } from '@/lib/printshrimp/custom-fonts';
 
 type Point = { x: number; y: number };
@@ -13,6 +15,8 @@ type RegionDraft = {
   id: string;
   name: string;
   points: Point[];
+  previousRegion?: TemplateOpeningRegion;
+  orientation: ListingArtworkOrientation;
   imageItemNumber?: number;
   topText?: string;
   bottomText?: string;
@@ -71,6 +75,7 @@ export function TemplateCornerPicker({
   const [activeRegionId, setActiveRegionId] = useState<string | null>(initialRegions[0]?.id ?? null);
   const [draft, setDraft] = useState<RegionDraft | null>(null);
   const [hoverPoint, setHoverPoint] = useState<Point | null>(null);
+  const [orientation, setOrientation] = useState<ListingArtworkOrientation>('portrait');
 
   useEffect(() => {
     setRegions(initialRegions);
@@ -78,6 +83,7 @@ export function TemplateCornerPicker({
     setDraft(null);
     setImageSize(null);
     setHoverPoint(null);
+    setOrientation('portrait');
     onDraftingChange?.(false);
   }, [imageUrl]);
 
@@ -85,7 +91,7 @@ export function TemplateCornerPicker({
   const activePoints = draft?.id === activeRegionId
     ? draft.points
     : activeRegion
-      ? cornersToPoints(activeRegion.corners)
+      ? cornersToPoints(templateOpeningCornersForOrientation(activeRegion, orientation))
       : [];
   const nextCornerName = draft && draft.points.length < 4 ? CORNER_NAMES[draft.points.length] : null;
 
@@ -113,6 +119,8 @@ export function TemplateCornerPicker({
       id,
       name,
       points: [],
+      previousRegion: region,
+      orientation,
       ...(multipleItemCount ? {
         imageItemNumber: region?.imageItemNumber ?? 1,
         topText: region?.topText ?? '',
@@ -132,17 +140,19 @@ export function TemplateCornerPicker({
       }
       const corners = pointsToCorners(nextPoints);
       if (!corners) return;
-      const nextRegions = [...regions, {
+      const completedRegion = {
+        ...draft.previousRegion,
         id: draft.id,
         name: draft.name,
-        corners,
+        corners: draft.previousRegion?.corners ?? corners,
         ...(multipleItemCount ? {
           imageItemNumber: draft.imageItemNumber ?? 1,
           topText: draft.topText ?? '',
           bottomText: draft.bottomText ?? '',
           fontId: draft.fontId ?? DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID,
         } : {}),
-      }];
+      };
+      const nextRegions = [...regions, updateTemplateOpeningCorners(completedRegion, draft.orientation, corners)];
       publishRegions(nextRegions);
       setDraft(null);
       onDraftingChange?.(false);
@@ -151,7 +161,7 @@ export function TemplateCornerPicker({
     if (!activeRegion) return;
     const corners = pointsToCorners(nextPoints);
     if (!corners) return;
-    publishRegions(regions.map((region) => region.id === activeRegion.id ? { ...region, corners } : region));
+    publishRegions(regions.map((region) => region.id === activeRegion.id ? updateTemplateOpeningCorners(region, orientation, corners) : region));
   }
 
   function deleteArea(id: string) {
@@ -207,6 +217,16 @@ export function TemplateCornerPicker({
           ) : null}
         </div>
       </div>
+
+      {activeRegion && (activeRegion.grid?.imageCount ?? 1) === 1 ? <div className="flex flex-wrap items-center gap-3">
+        <div className="inline-flex rounded-md border p-1" role="group" aria-label="Area orientation">
+          {(['portrait', 'landscape'] as const).map((value) => <Button key={value} type="button" size="sm" variant={orientation === value ? 'default' : 'ghost'}
+            aria-pressed={orientation === value} disabled={disabled || Boolean(draft)} onClick={() => setOrientation(value)}>
+            {value === 'portrait' ? 'Portrait' : 'Landscape'}
+          </Button>)}
+        </div>
+        <p className="text-xs text-muted-foreground">Set the {orientation} bounds for {activeRegion.name}. Each orientation is saved separately.</p>
+      </div> : null}
 
       {regions.length > 0 || draft ? (
         <div className="flex flex-wrap gap-2" aria-label="Artwork areas">
@@ -314,7 +334,8 @@ export function TemplateCornerPicker({
             <>
               <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${imageSize.width} ${imageSize.height}`} preserveAspectRatio="none" aria-hidden="true">
                 {displayedRegions.map((region, index) => {
-                  const points = region.corners ? cornersToPoints(region.corners) : draft?.id === region.id ? draft.points : [];
+                  const savedRegion = regions.find(candidate => candidate.id === region.id);
+                  const points = savedRegion ? cornersToPoints(templateOpeningCornersForOrientation(savedRegion, orientation)) : draft?.id === region.id ? draft.points : [];
                   if (points.length < 2) return null;
                   const coordinates = points.map((point) => `${point.x},${point.y}`).join(' ');
                   const colour = REGION_COLOURS[index % REGION_COLOURS.length];
