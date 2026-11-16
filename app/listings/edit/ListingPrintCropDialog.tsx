@@ -5,12 +5,12 @@ import { Move } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
-  centredArtworkPlacementForRatio,
+  cropRegionToArtworkPlacement,
   defaultNativeListingPrintCropDraft,
+  fourByFivePrintCropDraft,
+  moveNativePrintCrop,
   movePrintArtworkPlacement,
-  printArtworkPlacementScale,
   PRINT_CROP_RATIOS,
-  scalePrintArtworkPlacement,
   type ListingArtworkOrientation,
   type ListingPrintCropDraft,
   type ListingPrintCropSettings,
@@ -33,7 +33,7 @@ type Interaction = {
   ratio: PrintableDownloadRatio;
   startX: number;
   startY: number;
-  placement: PrintArtworkPlacement;
+  original: PrintArtworkPlacement;
 };
 
 function placementStyle(placement: PrintArtworkPlacement) {
@@ -83,10 +83,16 @@ export function ListingPrintCropDialog({
     setImageDimensions(initialSettings?.source ?? null);
     setPreviewLoaded(false);
     setLoadError(null);
-    setDraft(initialSettings ? {
-      regions: initialSettings.regions,
-      placements: initialSettings.placements,
-    } : null);
+    try {
+      setDraft(initialSettings
+        ? defaultNativeListingPrintCropDraft(initialSettings.source.width, initialSettings.source.height, orientation).sourceRatio === '4x5'
+          ? fourByFivePrintCropDraft(initialSettings.source.width, initialSettings.source.height, orientation, initialSettings.regions)
+          : { regions: initialSettings.regions, placements: initialSettings.placements }
+        : null);
+    } catch (error) {
+      setDraft(null);
+      setLoadError(error instanceof Error ? error.message : 'Unable to load the print-size crops.');
+    }
     setActiveRatio('2x3');
     setInteraction(null);
     if (!initialSettings) {
@@ -123,7 +129,7 @@ export function ListingPrintCropDialog({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    setInteraction({ ratio, startX: event.clientX, startY: event.clientY, placement });
+    setInteraction({ ratio, startX: event.clientX, startY: event.clientY, original: placement });
   }
 
   function updateInteraction(event: ReactPointerEvent<HTMLElement>) {
@@ -133,17 +139,23 @@ export function ListingPrintCropDialog({
     const deltaX = (event.clientX - interaction.startX) / bounds.width;
     const deltaY = (event.clientY - interaction.startY) / bounds.height;
 
-    const moved = movePrintArtworkPlacement(
-      interaction.placement,
-      deltaX,
-      deltaY,
-      orientation,
-      sourceRatio === '4x5',
-    );
+    if (sourceRatio === '4x5') {
+      updateCrop(interaction.ratio, moveNativePrintCrop(interaction.original, deltaX, 0));
+      return;
+    }
+    const moved = movePrintArtworkPlacement(interaction.original, deltaX, deltaY, orientation);
     setDraft({
       ...draft,
       placements: { ...draft.placements!, [interaction.ratio]: moved },
     });
+  }
+
+  function updateCrop(ratio: PrintableDownloadRatio, crop: PrintArtworkPlacement) {
+    setDraft((current) => current ? {
+      ...current,
+      regions: { ...current.regions, [ratio]: crop },
+      placements: { ...current.placements!, [ratio]: cropRegionToArtworkPlacement(crop) },
+    } : null);
   }
 
   function finishInteraction(event: ReactPointerEvent<HTMLElement>) {
@@ -152,6 +164,7 @@ export function ListingPrintCropDialog({
   }
 
   const activePlacement = draft?.placements?.[activeRatio] ?? null;
+  const activeCrop = draft?.regions[activeRatio] ?? null;
   const activeLabel = cropRatioLabel(activeRatio, orientation);
   const sourceRatio = imageDimensions
     ? (() => {
@@ -163,40 +176,13 @@ export function ListingPrintCropDialog({
   const paperAspect = orientation === 'landscape'
     ? activeRatioSpec.height / activeRatioSpec.width
     : activeRatioSpec.width / activeRatioSpec.height;
-  const fullSizePlacement = imageDimensions
-    ? centredArtworkPlacementForRatio(imageDimensions.width, imageDimensions.height, activeRatio, orientation)
-    : null;
-  const activeScale = activePlacement && fullSizePlacement
-    ? printArtworkPlacementScale(activePlacement, fullSizePlacement)
-    : 1;
-  const canMoveFreely = Boolean(activePlacement
-    && (activePlacement.width < 0.999999 || activePlacement.height < 0.999999));
-
-  function updateScale(scale: number) {
-    if (!draft?.placements || !activePlacement || !fullSizePlacement) return;
-    setDraft({
-      ...draft,
-      placements: {
-        ...draft.placements,
-        [activeRatio]: scalePrintArtworkPlacement(activePlacement, fullSizePlacement, scale),
-      },
-    });
-  }
-
-  function centreArtwork() {
-    if (!draft?.placements || !activePlacement) return;
-    setDraft({
-      ...draft,
-      placements: {
-        ...draft.placements,
-        [activeRatio]: {
-          ...activePlacement,
-          x: (1 - activePlacement.width) / 2,
-          y: (1 - activePlacement.height) / 2,
-        },
-      },
-    });
-  }
+  const cropSelection = sourceRatio === '4x5';
+  const sourceAspect = imageDimensions ? imageDimensions.width / imageDimensions.height : paperAspect;
+  const sourcePadding = cropSelection && activeCrop ? Math.max(0, activeCrop.width - 1) : 0;
+  const canvasSpan = 1 + (sourcePadding * 2);
+  const canvasAspect = cropSelection ? sourceAspect * canvasSpan : paperAspect;
+  const activeSelection = cropSelection ? activeCrop : activePlacement;
+  const canMoveCrop = Boolean(activeCrop && Math.abs(activeCrop.width - 1) > 0.000001);
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!saving) onOpenChange(nextOpen); }}>
@@ -205,7 +191,7 @@ export function ListingPrintCropDialog({
           <DialogTitle>Set Size</DialogTitle>
           <DialogDescription>
             {sourceRatio === '4x5'
-              ? 'Scale and position the thumbnail separately on each paper aspect ratio. The saved paper layout is used whenever that size is generated.'
+              ? 'Choose the area of the thumbnail used for each paper aspect ratio. Each crop uses the full thumbnail height; drag its border left or right.'
               : 'Position the complete thumbnail on each paper aspect ratio. Portrait artwork moves vertically and landscape artwork moves horizontally.'}
           </DialogDescription>
         </DialogHeader>
@@ -235,69 +221,71 @@ export function ListingPrintCropDialog({
             ))}
         </div>
 
-        {sourceRatio === '4x5' && activePlacement ? (
-          <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/30 px-4 py-3">
-            <label className="flex min-w-64 flex-1 items-center gap-3 text-sm">
-              <span className="whitespace-nowrap font-medium">Artwork scale</span>
-              <input
-                type="range"
-                min="10"
-                max="100"
-                step="1"
-                value={Math.round(activeScale * 100)}
-                disabled={saving}
-                className="min-w-32 flex-1 accent-primary"
-                onChange={(event) => updateScale(Number(event.target.value) / 100)}
-              />
-              <span className="w-12 text-right text-sm tabular-nums">{Math.round(activeScale * 100)}%</span>
-            </label>
-            <Button type="button" size="sm" variant="outline" onClick={centreArtwork} disabled={saving}>Centre</Button>
-          </div>
-        ) : null}
-
         <div className="min-h-0 flex-1 overflow-auto rounded-md border bg-neutral-900 p-3">
           <div
-            ref={imageFrameRef}
-            className="relative mx-auto touch-none select-none overflow-hidden border-2 border-white bg-white shadow-lg"
-            style={{ width: `min(100%, calc(62vh * ${paperAspect}))`, aspectRatio: String(paperAspect) }}
+            className="relative mx-auto touch-none select-none"
+            style={{ width: `min(100%, calc(62vh * ${canvasAspect}))`, aspectRatio: String(canvasAspect) }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={imageUrl}
-              alt={`Complete listing thumbnail positioned on ${activeLabel} paper`}
-              draggable={false}
-              className="pointer-events-none absolute max-w-none select-none"
-              style={activePlacement ? placementStyle(activePlacement) : { inset: 0, width: '100%', height: '100%' }}
-              onLoad={() => setPreviewLoaded(true)}
-            />
-            {loadError ? (
-              <div className="absolute inset-0 grid place-items-center bg-black/75 p-6 text-center text-sm text-white">{loadError}</div>
-            ) : !draft ? (
-              <div className="absolute inset-0 grid place-items-center bg-black/50 text-sm font-medium text-white">Loading crop editor...</div>
-            ) : null}
-            {activePlacement ? (
-              <div
-                className={`absolute border-2 border-primary shadow-[0_0_0_1px_rgba(255,255,255,0.85)] ${sourceRatio === '4x5' ? canMoveFreely ? 'cursor-move' : 'cursor-default' : orientation === 'landscape' ? 'cursor-ew-resize' : 'cursor-ns-resize'}`}
-                style={placementStyle(activePlacement)}
-                onPointerDown={(event) => startInteraction(event, activeRatio, activePlacement)}
-                onPointerMove={updateInteraction}
-                onPointerUp={finishInteraction}
-                onPointerCancel={finishInteraction}
-              >
-                <span className="pointer-events-none absolute left-2 top-2 flex items-center gap-1 rounded bg-black/70 px-2 py-1 text-xs font-semibold text-white">
-                  <Move className="h-3 w-3" aria-hidden="true" /> Artwork
-                </span>
-              </div>
-            ) : null}
+            <div
+              ref={imageFrameRef}
+              data-testid="print-crop-source-frame"
+              className={`absolute top-0 h-full border-2 border-white bg-white shadow-lg ${cropSelection ? '' : 'overflow-hidden'}`}
+              style={{ left: `${sourcePadding / canvasSpan * 100}%`, width: `${100 / canvasSpan}%` }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={imageUrl}
+                alt={cropSelection ? 'Complete listing thumbnail for crop selection' : `Complete listing thumbnail positioned on ${activeLabel} paper`}
+                draggable={false}
+                className="pointer-events-none absolute max-w-none select-none"
+                style={!cropSelection && activePlacement ? placementStyle(activePlacement) : { inset: 0, width: '100%', height: '100%' }}
+                onLoad={() => setPreviewLoaded(true)}
+              />
+              {loadError ? (
+                <div className="absolute inset-0 grid place-items-center bg-black/75 p-6 text-center text-sm text-white">{loadError}</div>
+              ) : !draft ? (
+                <div className="absolute inset-0 grid place-items-center bg-black/50 text-sm font-medium text-white">Loading crop editor...</div>
+              ) : null}
+              {activeSelection ? (
+                <div
+                  data-testid="print-crop-selection"
+                  aria-label={`${activeLabel} ${cropSelection ? 'crop area' : 'artwork placement'}`}
+                  role={cropSelection ? 'slider' : undefined}
+                  tabIndex={cropSelection && !saving && canMoveCrop ? 0 : undefined}
+                  aria-orientation={cropSelection ? 'horizontal' : undefined}
+                  aria-valuemin={cropSelection ? Math.min(0, 1 - activeSelection.width) : undefined}
+                  aria-valuemax={cropSelection ? Math.max(0, 1 - activeSelection.width) : undefined}
+                  aria-valuenow={cropSelection ? activeSelection.x : undefined}
+                  aria-disabled={cropSelection ? saving || !canMoveCrop : undefined}
+                  className={`absolute border-2 border-primary shadow-[0_0_0_1px_rgba(255,255,255,0.85)] ${cropSelection ? canMoveCrop ? 'cursor-ew-resize' : 'cursor-default' : orientation === 'landscape' ? 'cursor-ew-resize' : 'cursor-ns-resize'}`}
+                  style={placementStyle(activeSelection)}
+                  onPointerDown={(event) => startInteraction(event, activeRatio, activeSelection)}
+                  onPointerMove={updateInteraction}
+                  onPointerUp={finishInteraction}
+                  onPointerCancel={finishInteraction}
+                  onKeyDown={(event) => {
+                    if (!cropSelection || saving || !canMoveCrop || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+                    event.preventDefault();
+                    updateCrop(activeRatio, moveNativePrintCrop(activeSelection, event.key === 'ArrowLeft' ? -0.01 : 0.01, 0));
+                  }}
+                >
+                  <span className="pointer-events-none absolute left-2 top-2 flex items-center gap-1 rounded bg-black/70 px-2 py-1 text-xs font-semibold text-white">
+                    <Move className="h-3 w-3" aria-hidden="true" /> {cropSelection ? 'Crop' : 'Artwork'}
+                  </span>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">
             {sourceRatio === '4x5'
-              ? !canMoveFreely
-                ? 'Reduce the artwork scale to create space, then drag it anywhere within the paper.'
-                : 'Drag the artwork horizontally or vertically to position it within the paper.'
+              ? !canMoveCrop
+                ? `The thumbnail exactly fills the ${activeLabel} crop.`
+                : activeCrop && activeCrop.width > 1
+                  ? 'This paper ratio is wider than the thumbnail. Move the border left or right to adjust the side margins.'
+                  : `Drag the ${activeLabel} crop border left or right to select the area to generate.`
               : activePlacement && (orientation === 'landscape' ? Math.abs(activePlacement.width - 1) : Math.abs(activePlacement.height - 1)) <= 0.000001
               ? `The thumbnail exactly fills the ${activeLabel} paper.`
               : orientation === 'landscape'

@@ -25,7 +25,7 @@ vi.mock('@/lib/our-category-template-composite', async (importOriginal) => {
 
 import { renderOurCategoryImageTemplate, updateOurCategoryImageTemplate } from '@/lib/our-categories';
 import type { TemplateOpeningCorners, TemplateOpeningRegion } from '@/lib/our-category-template-composite';
-import { createListingPrintCropSettings, defaultNativeListingPrintCropDraft } from '@/lib/listing-print-crops';
+import { createListingPrintCropSettings, defaultNativeListingPrintCropDraft, fourByFivePrintCropDraft, PRINT_CROP_RATIOS } from '@/lib/listing-print-crops';
 import { defaultTemplateGridLayout } from '@/lib/template-grid-layout';
 
 function rectangle(left: number, top: number, width: number, height: number): TemplateOpeningCorners {
@@ -84,6 +84,55 @@ beforeEach(async () => {
 });
 
 describe('template source orientation during image generation', () => {
+  it('forwards the selected region for every grid paper ratio of a 4:5 source', async () => {
+    const draft = fourByFivePrintCropDraft(400, 500, 'portrait');
+    for (const ratio of PRINT_CROP_RATIOS) draft.regions[ratio.key].x = 1 - draft.regions[ratio.key].width;
+    const settings = createListingPrintCropSettings(draft, {
+      fileName: 'portrait.png', updatedAt: '2026-11-13T00:00:00.000Z', width: 400, height: 500,
+    });
+    image.openingRegions = PRINT_CROP_RATIOS.map((ratio) => {
+      const grid = defaultTemplateGridLayout();
+      grid.cells[0].ratio = ratio.key;
+      return { ...area(), id: ratio.key, name: ratio.label, grid };
+    });
+    await renderOurCategoryImageTemplate(94, new Map([[1, await sourceImage(400, 500)]]), undefined,
+      undefined, undefined, new Map([[1, settings]]));
+    const sizeKeys = ['12x18', 'a5', '5x7', '6x8', '8x10', '11x14'];
+    expect(mocks.preview).toHaveBeenCalledTimes(PRINT_CROP_RATIOS.length);
+    for (const [index, ratio] of PRINT_CROP_RATIOS.entries()) {
+      expect(mocks.preview.mock.calls[index][1]).toMatchObject({
+        sizeKey: sizeKeys[index], cropRegion: settings.regions[ratio.key],
+        artworkPlacement: settings.placements[ratio.key], orientation: 'portrait',
+      });
+    }
+  });
+
+  it('uses each grouped source selection independently for a shared grid paper ratio', async () => {
+    categorySettings.templateType = 'multiple';
+    categorySettings.itemCount = 3;
+    const first = fourByFivePrintCropDraft(400, 500, 'portrait');
+    const second = fourByFivePrintCropDraft(400, 500, 'portrait');
+    first.regions['2x3'].x = 0;
+    second.regions['2x3'].x = 1 - second.regions['2x3'].width;
+    const settings = [first, second, first].map((draft, index) => createListingPrintCropSettings(draft, {
+      fileName: `art-${index}.png`, updatedAt: '2026-11-13T00:00:00.000Z', width: 400, height: 500,
+    }));
+    const grid = defaultTemplateGridLayout(3);
+    grid.cells.forEach((cell, index) => { cell.ratio = '2x3'; cell.imageItemNumber = index + 1; });
+    image.openingRegions = [{ ...area(), corners: rectangle(10, 10, 220, 220), grid }];
+    const source = await sourceImage(400, 500);
+    await renderOurCategoryImageTemplate(94, new Map([[1, source], [2, source], [3, source]]), undefined,
+      undefined, undefined, new Map(settings.map((setting, index) => [index + 1, setting])));
+    expect(mocks.preview).toHaveBeenCalledTimes(3);
+    for (const [index, setting] of settings.entries()) {
+      expect(mocks.preview.mock.calls[index][1]).toMatchObject({
+        sizeKey: '12x18', cropRegion: setting.regions['2x3'], artworkPlacement: setting.placements['2x3'],
+      });
+    }
+    expect(mocks.preview.mock.calls[0][1].cropRegion.x).toBe(0);
+    expect(mocks.preview.mock.calls[1][1].cropRegion.x).toBeGreaterThan(0);
+  });
+
   it.each(['portrait', 'landscape'] as const)('uses the saved %s bounds for the actual source image', async (orientation) => {
     const source = await sourceImage(orientation === 'landscape' ? 90 : 60, orientation === 'landscape' ? 60 : 90);
     const output = await renderOurCategoryImageTemplate(94, new Map([[1, source]]));

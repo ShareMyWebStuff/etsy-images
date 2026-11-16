@@ -163,6 +163,7 @@ export type ListingEditorData = {
     sectionId: string;
     subSectionId: string;
     thumbnailFileName: string | null;
+    printCropSettings?: ListingPrintCropSettings | null;
   }>;
   sales: {
     itemsSold: number;
@@ -481,6 +482,9 @@ async function getListingForContext(context: ListingEditorContext) {
               title: true,
               localDirectoryName: true,
               thumbnailFileName: true,
+              thumbnailUpdatedAt: true,
+              printCropSettings: true,
+              artworkOrientation: true,
               subSectionId: true,
               subSection: { select: { shopSectionId: true } },
             },
@@ -805,6 +809,11 @@ async function mapEditorData(
       sectionId: String(item.sourceListing.subSection.shopSectionId),
       subSectionId: String(item.sourceListing.subSectionId),
       thumbnailFileName: item.sourceListing.thumbnailFileName,
+      printCropSettings: parseCurrentListingPrintCropSettings(item.sourceListing.printCropSettings, {
+        fileName: item.sourceListing.thumbnailFileName,
+        updatedAt: item.sourceListing.thumbnailUpdatedAt?.toISOString() ?? null,
+        orientation: normalizeListingArtworkOrientation(item.sourceListing.artworkOrientation),
+      }),
     }] : []),
     sales: {
       itemsSold,
@@ -1628,6 +1637,7 @@ export async function saveListingPrintCropSettings(
     SET thumbnailUpdatedAt = COALESCE(thumbnailUpdatedAt, ${sourceUpdatedAt}),
         printCropSettings = ${JSON.stringify(settings)},
         downloadsChanged = true,
+        imagesChanged = true,
         lastLocalChangeAt = ${new Date()}
     WHERE id = ${data.listing.id}
   `;

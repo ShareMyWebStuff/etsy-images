@@ -15,7 +15,7 @@ export type ListingPrintCropDraft = {
   placements?: PrintArtworkPlacements;
 };
 export type ListingPrintCropSettings = ListingPrintCropDraft & {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   placements: PrintArtworkPlacements;
   orientation: ListingArtworkOrientation;
   sourceRatio?: ListingThumbnailRatio;
@@ -250,6 +250,44 @@ export const DEFAULT_FOUR_BY_FIVE_ARTWORK_SCALE_BY_RATIO: Readonly<Record<Printa
   '2x3': 0.98,
 };
 
+/** A 4:5 selection always keeps the source height and moves horizontally. */
+export function fourByFivePrintCropDraft(
+  imageWidth: number,
+  imageHeight: number,
+  orientation: ListingArtworkOrientation = 'portrait',
+  savedRegions?: Partial<PrintCropRegions>,
+): ListingPrintCropDraft & { placements: PrintArtworkPlacements } {
+  validImageDimensions(imageWidth, imageHeight);
+  const regions = Object.fromEntries(PRINT_CROP_RATIOS.map(({ key }) => {
+    const paper = orientedRatio(key, orientation);
+    const calculatedWidth = imageHeight * paper.width / paper.height / imageWidth;
+    const width = Math.abs(calculatedWidth - 1) < 0.000001 ? 1 : calculatedWidth;
+    const previous = savedRegions?.[key];
+    const centre = previous && Number.isFinite(previous.x) && Number.isFinite(previous.width)
+      ? previous.x + previous.width / 2
+      : 0.5;
+    const x = clamp(centre - width / 2, Math.min(0, 1 - width), Math.max(0, 1 - width));
+    return [key, { x, y: 0, width, height: 1 }];
+  })) as PrintCropRegions;
+  return {
+    regions,
+    placements: Object.fromEntries(PRINT_CROP_RATIOS.map(({ key }) => [
+      key, cropRegionToArtworkPlacement(regions[key]),
+    ])) as PrintArtworkPlacements,
+  };
+}
+
+function legacyFourByFivePlacements(
+  imageWidth: number,
+  imageHeight: number,
+  orientation: ListingArtworkOrientation,
+) {
+  return Object.fromEntries(PRINT_CROP_RATIOS.map(({ key }) => {
+    const fullSize = centredArtworkPlacementForRatio(imageWidth, imageHeight, key, orientation);
+    return [key, scalePrintArtworkPlacement(fullSize, fullSize, DEFAULT_FOUR_BY_FIVE_ARTWORK_SCALE_BY_RATIO[key])];
+  })) as PrintArtworkPlacements;
+}
+
 /** Crops every paper ratio directly from the complete 2:3 or 4:5 thumbnail. */
 export function defaultNativeListingPrintCropDraft(
   imageWidth: number,
@@ -257,6 +295,9 @@ export function defaultNativeListingPrintCropDraft(
   orientation: ListingArtworkOrientation = 'portrait',
 ) {
   const sourceRatio = analyseListingThumbnailDimensions(imageWidth, imageHeight).ratio;
+  if (sourceRatio === '4x5') {
+    return { sourceRatio, ...fourByFivePrintCropDraft(imageWidth, imageHeight, orientation) };
+  }
   return {
     sourceRatio,
     regions: Object.fromEntries(PRINT_CROP_RATIOS.map((ratio) => [
@@ -267,21 +308,20 @@ export function defaultNativeListingPrintCropDraft(
     ])) as unknown as PrintCropRegions,
     placements: Object.fromEntries(PRINT_CROP_RATIOS.map((ratio) => {
       const fullSizePlacement = centredArtworkPlacementForRatio(imageWidth, imageHeight, ratio.key, orientation);
-      return [
-        ratio.key,
-        sourceRatio === '4x5'
-          ? scalePrintArtworkPlacement(
-              fullSizePlacement,
-              fullSizePlacement,
-              DEFAULT_FOUR_BY_FIVE_ARTWORK_SCALE_BY_RATIO[ratio.key],
-            )
-          : fullSizePlacement,
-      ];
+      return [ratio.key, fullSizePlacement];
     })) as unknown as PrintArtworkPlacements,
   };
 }
 
 export function moveNativePrintCrop(crop: PrintCropRegion, deltaX: number, deltaY: number): PrintCropRegion {
+  if (Math.abs(crop.height - 1) < 0.000001) {
+    return {
+      ...crop,
+      x: clamp(crop.x + deltaX, Math.min(0, 1 - crop.width), Math.max(0, 1 - crop.width)),
+      y: 0,
+      height: 1,
+    };
+  }
   if (crop.width < 1 - 0.000001) {
     return { ...crop, x: clamp(crop.x + deltaX, 0, 1 - crop.width), y: 0, height: 1 };
   }
@@ -536,12 +576,56 @@ export function validateNativeListingPrintCropDraft(
   return { regions };
 }
 
+export function validateFourByFivePrintCropDraft(
+  value: unknown,
+  imageWidth: number,
+  imageHeight: number,
+  orientation: ListingArtworkOrientation = 'portrait',
+): ListingPrintCropDraft & { placements: PrintArtworkPlacements } {
+  validImageDimensions(imageWidth, imageHeight);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('The print crop settings are invalid.');
+  const input = (value as Record<string, unknown>).regions;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('The print crop regions are invalid.');
+  const expected = fourByFivePrintCropDraft(imageWidth, imageHeight, orientation);
+  const tolerance = 0.00001;
+  const regions = Object.fromEntries(PRINT_CROP_RATIOS.map(({ key, label }) => {
+    const crop = numericRegion((input as Record<string, unknown>)[key], `${label} crop`);
+    const width = expected.regions[key].width;
+    if (Math.abs(crop.y) > tolerance || Math.abs(crop.height - 1) > tolerance
+      || Math.abs(crop.width - width) > tolerance) {
+      throw new Error(`${label} crop must keep the complete thumbnail height and its paper aspect ratio.`);
+    }
+    const minimum = Math.min(0, 1 - width);
+    const maximum = Math.max(0, 1 - width);
+    if (crop.x < minimum - tolerance || crop.x > maximum + tolerance) {
+      throw new Error(`${label} crop must remain within its horizontal range.`);
+    }
+    return [key, { x: clamp(crop.x, minimum, maximum), y: 0, width, height: 1 }];
+  })) as PrintCropRegions;
+  return {
+    regions,
+    placements: Object.fromEntries(PRINT_CROP_RATIOS.map(({ key }) => [
+      key, cropRegionToArtworkPlacement(regions[key]),
+    ])) as PrintArtworkPlacements,
+  };
+}
+
 export function createListingPrintCropSettings(
   draft: unknown,
   source: ListingPrintCropSettings['source'],
   orientation: ListingArtworkOrientation = 'portrait',
 ): ListingPrintCropSettings {
   const native = defaultNativeListingPrintCropDraft(source.width, source.height, orientation);
+  if (native.sourceRatio === '4x5') {
+    const validated = validateFourByFivePrintCropDraft(draft, source.width, source.height, orientation);
+    return {
+      version: 4,
+      orientation,
+      sourceRatio: native.sourceRatio,
+      source,
+      ...validated,
+    };
+  }
   const validated = validateNativeListingPrintCropDraft(draft, source.width, source.height, orientation);
   const tolerance = 0.00001;
   const nativeCrop = validated.regions[native.sourceRatio];
@@ -554,9 +638,7 @@ export function createListingPrintCropSettings(
     : null;
   const placements = draftRecord?.placements
     ? validatePrintArtworkPlacements(draftRecord.placements, source.width, source.height, orientation)
-    : native.sourceRatio === '4x5'
-      ? native.placements!
-      : Object.fromEntries(PRINT_CROP_RATIOS.map(({ key }) => [
+    : Object.fromEntries(PRINT_CROP_RATIOS.map(({ key }) => [
           key,
           cropRegionToArtworkPlacement(validated.regions[key]),
         ])) as PrintArtworkPlacements;
@@ -580,7 +662,7 @@ export function parseCurrentListingPrintCropSettings(
     const settings = parsed as Partial<ListingPrintCropSettings>;
     const savedOrientation = settings.orientation ?? 'portrait';
     const currentOrientation = source.orientation;
-    if ((settings.version !== 1 && settings.version !== 2 && settings.version !== 3) || !settings.source || !settings.regions
+    if ((settings.version !== 1 && settings.version !== 2 && settings.version !== 3 && settings.version !== 4) || !settings.source || !settings.regions
       || !source.fileName || !source.updatedAt
       || (currentOrientation !== undefined && savedOrientation !== currentOrientation)
       || settings.source.fileName !== source.fileName
@@ -595,13 +677,34 @@ export function parseCurrentListingPrintCropSettings(
         source: settings.source,
         regions: legacy.regions,
         placements: native.sourceRatio === '4x5'
-          ? native.placements!
+          ? legacyFourByFivePlacements(settings.source.width, settings.source.height, savedOrientation)
           : Object.fromEntries(PRINT_CROP_RATIOS.map(({ key }) => [
               key,
               cropRegionToArtworkPlacement(legacy.regions[key]),
             ])) as PrintArtworkPlacements,
       };
     }
+    const sourceRatio = analyseListingThumbnailDimensions(settings.source.width, settings.source.height).ratio;
+    // Preserve existing paper placements until Set Size is saved with the new
+    // full-height selection model. Opening the editor converts the saved regions.
+    if (sourceRatio === '4x5' && settings.version !== 4) {
+      const legacy = validateNativeListingPrintCropDraft(settings, settings.source.width, settings.source.height, savedOrientation);
+      const nativeCrop = legacy.regions['4x5'];
+      if (Math.abs(nativeCrop.x) > 0.00001 || Math.abs(nativeCrop.y) > 0.00001
+        || Math.abs(nativeCrop.width - 1) > 0.00001 || Math.abs(nativeCrop.height - 1) > 0.00001) return null;
+      const placements = settings.placements
+        ? validatePrintArtworkPlacements(settings.placements, settings.source.width, settings.source.height, savedOrientation)
+        : legacyFourByFivePlacements(settings.source.width, settings.source.height, savedOrientation);
+      return {
+        version: 3 as const,
+        sourceRatio,
+        source: settings.source,
+        orientation: savedOrientation,
+        regions: legacy.regions,
+        placements,
+      };
+    }
+    if (settings.version === 4 && sourceRatio !== '4x5') return null;
     return createListingPrintCropSettings(settings, settings.source, savedOrientation);
   } catch {
     return null;

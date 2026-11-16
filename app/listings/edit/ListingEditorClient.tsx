@@ -324,6 +324,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       label: `Primary artwork — ${data.thumbnail.originalFileName ?? data.thumbnail.fileName}`,
       url: getThumbnailUrl(),
       primary: true,
+      printCropSettings: data.listing.printCropSettings,
     }] : []),
     ...data.files.flatMap((file) => {
       const displayName = file.originalFileName ?? file.fileName;
@@ -342,6 +343,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       id: `group-artwork-${item.id}`,
       label: `Grouped artwork ${item.position} — ${item.name}`,
       url: groupedThumbnailUrl(item.id, false),
+      printCropSettings: item.printCropSettings,
     }] : []),
   ];
   const usesDropboxPdfDownload = data.listing.includeAllItems
@@ -2376,7 +2378,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 <h3 className="font-semibold">Thumbnail</h3>
                 <div className="grid gap-1 text-sm text-muted-foreground">
                   <p>Upload the source artwork used by this template.</p>
-                  <p>A ratio of 4:5 or 5:4 will have a transparent background.</p>
+                  <p>For 4:5 or 5:4 thumbnails, use Set Size to choose the area used for each print ratio.</p>
                   <p>A ratio of 2:3 or 3:2 will be clipped down to the sizes.</p>
                 </div>
               </div>

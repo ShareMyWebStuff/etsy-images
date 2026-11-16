@@ -3,15 +3,16 @@ import { describe, expect, it } from 'vitest';
 import {
   centredArtworkPlacementForRatio,
   createListingPrintCropSettings,
+  cropRegionToArtworkPlacement,
   DEFAULT_FOUR_BY_FIVE_ARTWORK_SCALE_BY_RATIO,
   defaultListingPrintCropDraft,
   defaultNativeListingPrintCropDraft,
+  fourByFivePrintCropDraft,
   listingPrintCropDraftForSave,
-  movePrintArtworkPlacement,
+  moveNativePrintCrop,
   moveDerivedPrintCrop,
   moveMainPrintCrop,
   parseCurrentListingPrintCropSettings,
-  printArtworkPlacementScale,
   PRINT_CROP_RATIOS,
   resizeMainPrintCrop,
   scalePrintArtworkPlacement,
@@ -88,47 +89,96 @@ describe('listing print crop geometry', () => {
     })).toBeNull();
   });
 
-  it('uses the configured default artwork scales for a portrait 4:5 source', () => {
+  it('uses full-height portrait selections and derives matching placements for every paper ratio', () => {
     const draft = defaultNativeListingPrintCropDraft(4000, 5000);
     expect(draft.sourceRatio).toBe('4x5');
     expect(draft.regions['4x5']).toEqual({ x: 0, y: 0, width: 1, height: 1 });
     for (const ratio of PRINT_CROP_RATIOS) {
-      const fullSize = centredArtworkPlacementForRatio(4000, 5000, ratio.key, 'portrait');
-      expect(printArtworkPlacementScale(draft.placements![ratio.key], fullSize))
-        .toBeCloseTo(DEFAULT_FOUR_BY_FIVE_ARTWORK_SCALE_BY_RATIO[ratio.key]);
+      const crop = draft.regions[ratio.key];
+      expect(crop.y).toBe(0);
+      expect(crop.height).toBe(1);
+      expect(crop.width * 4000 / 5000).toBeCloseTo(ratio.width / ratio.height);
+      expect(crop.x).toBeCloseTo((1 - crop.width) / 2);
+      expect(draft.placements![ratio.key]).toEqual(cropRegionToArtworkPlacement(crop));
     }
-    expect(draft.placements?.['2x3'].x).toBeCloseTo(0.01);
-    expect(draft.placements?.['2x3'].width).toBeCloseTo(0.98);
-    expect(draft.placements?.['2x3'].height).toBeCloseTo((5 / 6) * 0.98);
-    const moved = movePrintArtworkPlacement(draft.placements!['2x3'], 10, 10, 'portrait', true);
-    expect(moved.x + moved.width).toBeCloseTo(1);
-    expect(moved.y + moved.height).toBeCloseTo(1);
+    expect(draft.regions['2x3'].width).toBeCloseTo(5 / 6);
+    expect(draft.placements?.['2x3'].height).toBe(1);
     const source = { fileName: 'thumbnail.png', updatedAt: '2026-10-18T10:00:00.000Z', width: 4000, height: 5000 };
     const settings = createListingPrintCropSettings(draft, source);
-    expect(settings.version).toBe(3);
+    expect(settings.version).toBe(4);
     expect(settings.sourceRatio).toBe('4x5');
+    expect(parseCurrentListingPrintCropSettings(settings, source)).toEqual(settings);
   });
 
-  it('uses the same configured defaults for a landscape 5:4 source', () => {
+  it('keeps full height for landscape outputs and allows the wider paper frame to include side margins', () => {
     const draft = defaultNativeListingPrintCropDraft(5000, 4000, 'landscape');
     expect(draft.sourceRatio).toBe('4x5');
     for (const ratio of PRINT_CROP_RATIOS) {
-      const fullSize = centredArtworkPlacementForRatio(5000, 4000, ratio.key, 'landscape');
-      expect(printArtworkPlacementScale(draft.placements![ratio.key], fullSize))
-        .toBeCloseTo(DEFAULT_FOUR_BY_FIVE_ARTWORK_SCALE_BY_RATIO[ratio.key]);
+      const crop = draft.regions[ratio.key];
+      expect(crop.y).toBe(0);
+      expect(crop.height).toBe(1);
+      expect(crop.width * 5000 / 4000).toBeCloseTo(ratio.height / ratio.width);
+      expect(crop.width).toBeGreaterThanOrEqual(1);
+      expect(draft.placements![ratio.key]).toEqual(cropRegionToArtworkPlacement(crop));
+    }
+    expect(draft.regions['2x3'].width).toBeCloseTo(1.2);
+    expect(draft.regions['2x3'].x).toBeCloseTo(-0.1);
+    const source = { fileName: 'landscape.png', updatedAt: '2026-11-13T10:00:00.000Z', width: 5000, height: 4000 };
+    const settings = createListingPrintCropSettings(draft, source, 'landscape');
+    expect(parseCurrentListingPrintCropSettings(settings, source)).toEqual(settings);
+  });
+
+  it.each(['portrait', 'landscape'] as const)('moves %s selections horizontally and clamps both ends', (orientation) => {
+    const draft = fourByFivePrintCropDraft(orientation === 'portrait' ? 4000 : 5000, orientation === 'portrait' ? 5000 : 4000, orientation);
+    for (const ratio of PRINT_CROP_RATIOS) {
+      const crop = draft.regions[ratio.key];
+      const left = moveNativePrintCrop(crop, -10, 10);
+      const right = moveNativePrintCrop(crop, 10, -10);
+      expect(left.x).toBeCloseTo(Math.min(0, 1 - crop.width));
+      expect(right.x).toBeCloseTo(Math.max(0, 1 - crop.width));
+      expect(left.y).toBe(0);
+      expect(right.y).toBe(0);
+      expect(left.height).toBe(1);
+      expect(right.width).toBe(crop.width);
     }
   });
 
-  it('scales a 4:5 artwork proportionally and saves a free position inside each paper', () => {
+  it('makes the selected region authoritative when a stale paper placement is submitted', () => {
     const draft = defaultNativeListingPrintCropDraft(4000, 5000);
-    const fullSize = centredArtworkPlacementForRatio(4000, 5000, '4x5', 'portrait');
-    const scaled = scalePrintArtworkPlacement(draft.placements!['4x5'], fullSize, 0.6);
-    const moved = movePrintArtworkPlacement(scaled, 0.3, 0.2, 'portrait', true);
-    draft.placements!['4x5'] = moved;
-
+    draft.regions['2x3'] = moveNativePrintCrop(draft.regions['2x3'], 10, 0);
+    draft.placements!['2x3'] = { x: 0.2, y: 0.2, width: 0.6, height: 0.5 };
     const source = { fileName: 'thumbnail.png', updatedAt: '2026-10-18T11:00:00.000Z', width: 4000, height: 5000 };
     const settings = createListingPrintCropSettings(draft, source);
-    expect(settings.placements['4x5']).toEqual(moved);
-    expect(moved).toMatchObject({ x: 0.4, y: 0.4, width: 0.6, height: 0.6 });
+    expect(settings.placements['2x3']).toEqual(cropRegionToArtworkPlacement(draft.regions['2x3']));
+    expect(settings.regions['4x5']).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+  });
+
+  it('retains old 4:5 paper placements until the new selections are saved', () => {
+    const source = { fileName: 'thumbnail.png', updatedAt: '2026-10-18T11:00:00.000Z', width: 4000, height: 5000 };
+    const draft = fourByFivePrintCropDraft(source.width, source.height);
+    draft.regions['2x3'] = moveNativePrintCrop(draft.regions['2x3'], 10, 0);
+    const legacy = {
+      version: 3 as const, orientation: 'portrait' as const, sourceRatio: '4x5' as const, source,
+      regions: draft.regions,
+      placements: Object.fromEntries(PRINT_CROP_RATIOS.map(({ key }) => {
+        const full = centredArtworkPlacementForRatio(source.width, source.height, key);
+        return [key, scalePrintArtworkPlacement(full, full, DEFAULT_FOUR_BY_FIVE_ARTWORK_SCALE_BY_RATIO[key])];
+      })) as typeof draft.placements,
+    };
+    expect(parseCurrentListingPrintCropSettings(legacy, source)).toEqual(legacy);
+    const reopened = fourByFivePrintCropDraft(source.width, source.height, 'portrait', legacy.regions);
+    expect(reopened.regions['2x3'].x).toBeCloseTo(draft.regions['2x3'].x);
+    const settings = createListingPrintCropSettings(reopened, source);
+    expect(settings.version).toBe(4);
+    expect(settings.placements['2x3']).not.toEqual(legacy.placements['2x3']);
+  });
+
+  it('rejects resized, vertically shifted, and out-of-range 4:5 crop frames', () => {
+    const source = { fileName: 'thumbnail.png', updatedAt: '2026-10-18T11:00:00.000Z', width: 4000, height: 5000 };
+    for (const changes of [{ y: 0.1 }, { height: 0.9 }, { width: 0.7 }, { x: -0.2 }]) {
+      const draft = fourByFivePrintCropDraft(source.width, source.height);
+      Object.assign(draft.regions['2x3'], changes);
+      expect(() => createListingPrintCropSettings(draft, source)).toThrow(/complete thumbnail height|horizontal range/);
+    }
   });
 });

@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createListingPrintCropSettings, defaultNativeListingPrintCropDraft } from '@/lib/listing-print-crops';
 
 import { ListingMockupTesterDialog } from './ListingMockupTesterDialog';
 
@@ -81,5 +82,52 @@ describe('Listing mockup tester dialog', () => {
     />);
 
     expect((screen.getByLabelText('Background Colour') as HTMLSelectElement).value).toBe('#FAF8F4');
+  });
+
+  it('uses the saved thumbnail crop when generating the preview and downloadable mockup', async () => {
+    class ReadableImage {
+      naturalWidth = 1600;
+      naturalHeight = 1200;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      url = '';
+      get src() { return this.url; }
+      set src(url: string) {
+        this.url = url;
+        if (url === '/artwork.png') { this.naturalWidth = 4000; this.naturalHeight = 5000; }
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+    vi.stubGlobal('Image', ReadableImage);
+    const canvasContext = {
+      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(),
+      drawImage: vi.fn(), fillRect: vi.fn(), strokeRect: vi.fn(),
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(canvasContext as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => callback(new Blob(['png'], { type: 'image/png' })));
+    const crops = createListingPrintCropSettings(defaultNativeListingPrintCropDraft(4000, 5000), {
+      fileName: 'thumbnail.png', updatedAt: '2026-11-13T12:00:00.000Z', width: 4000, height: 5000,
+    });
+    crops.regions['2x3'].x = 1 / 6;
+    const user = userEvent.setup();
+    render(<ListingMockupTesterDialog
+      open onOpenChange={vi.fn()} context={{ shopId: '10', sectionId: '20', subSectionId: '30', listingId: '43' }}
+      listingName="Jellyfish"
+      artworkOptions={[{ id: 'primary', label: 'Primary artwork', url: '/artwork.png', primary: true, printCropSettings: crops }]}
+    />);
+    await user.selectOptions(screen.getByLabelText('Print ratio'), '2x3');
+    await user.upload(screen.getByLabelText('Room background image'), new File(['image'], 'room.png', { type: 'image/png' }));
+    await user.click(screen.getByRole('button', { name: /Reset placement/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Generate' }).hasAttribute('disabled')).toBe(false));
+    await user.click(screen.getByRole('button', { name: 'Generate' }));
+    await waitFor(() => expect(canvasContext.clip).toHaveBeenCalledOnce());
+    const paper = canvasContext.rect.mock.calls[0] as unknown as number[];
+    const artwork = canvasContext.drawImage.mock.calls.find((args) => (args[0] as ReadableImage).src === '/artwork.png')!;
+    expect(artwork[1]).toBeCloseTo(paper[0] - (paper[2] * 0.2));
+    expect(artwork[2]).toBeCloseTo(paper[1]);
+    expect(artwork[3]).toBeCloseTo(paper[2] * 1.2);
+    expect(artwork[4]).toBeCloseTo(paper[3]);
+    expect(await screen.findByAltText('Jellyfish unframed room mockup')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Download PNG/ }).getAttribute('href')).toBe('blob:background');
   });
 });

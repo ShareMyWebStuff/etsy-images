@@ -6,8 +6,44 @@ import {
   listingPersonalisationPreviewDimensions,
 } from '@/lib/listing-personalisation-preview';
 import { DEFAULT_LISTING_PERSONALISATION_TEXT_AREAS } from '@/lib/personalisation-text-areas';
+import { createListingPrintCropSettings, fourByFivePrintCropDraft } from '@/lib/listing-print-crops';
 
 describe('listing personalisation previews', () => {
+  it('uses the selected 4:5 thumbnail crop in View Images instead of adding old artwork margins', async () => {
+    const source = await sharp({ create: { width: 400, height: 500, channels: 3, background: '#008000' } })
+      .composite([
+        { input: await sharp({ create: { width: 100, height: 500, channels: 3, background: '#ff0000' } }).png().toBuffer(), left: 0, top: 0 },
+        { input: await sharp({ create: { width: 100, height: 500, channels: 3, background: '#0000ff' } }).png().toBuffer(), left: 300, top: 0 },
+      ]).png().toBuffer();
+    const previews: Array<{ red: number; green: number; blue: number }> = [];
+    for (const side of ['left', 'right'] as const) {
+      const draft = fourByFivePrintCropDraft(400, 500, 'portrait');
+      draft.regions['2x3'].x = side === 'left' ? 0 : 1 - draft.regions['2x3'].width;
+      const settings = createListingPrintCropSettings(draft, {
+        fileName: 'art.png', updatedAt: '2026-11-13T00:00:00.000Z', width: 400, height: 500,
+      });
+      const result = await createListingPersonalisationPreview(source, {
+        sizeKey: '12x18', topText: '', bottomText: '', fontId: 'nunito-semibold',
+        borderEnabled: false, borderSizePercent: 5, textAreas: DEFAULT_LISTING_PERSONALISATION_TEXT_AREAS,
+        cropRegion: settings.regions['2x3'], artworkPlacement: settings.placements['2x3'], orientation: 'portrait',
+      });
+      const { data, info } = await sharp(result.buffer).raw().toBuffer({ resolveWithObject: true });
+      const sampleX = Math.round(info.width * 0.15);
+      const offset = ((Math.floor(info.height / 2) * info.width) + sampleX) * info.channels;
+      previews.push({ red: data[offset], green: data[offset + 1], blue: data[offset + 2] });
+      for (const y of [0, info.height - 1]) {
+        const middle = ((y * info.width) + Math.floor(info.width / 2)) * info.channels;
+        expect(data[middle]).toBeLessThan(30);
+        expect(data[middle + 1]).toBeGreaterThan(100);
+        expect(data[middle + 2]).toBeLessThan(30);
+      }
+    }
+    expect(previews[0].red).toBeGreaterThan(220);
+    expect(previews[0].green).toBeLessThan(30);
+    expect(previews[1].red).toBeLessThan(30);
+    expect(previews[1].green).toBeGreaterThan(100);
+  });
+
   it('uses the paper aspect ratio and source orientation', () => {
     expect(listingPersonalisationPreviewDimensions('8x10', false)).toEqual({ width: 1120, height: 1400, ratio: '4x5' });
     expect(listingPersonalisationPreviewDimensions('8x10', true)).toEqual({ width: 1400, height: 1120, ratio: '4x5' });

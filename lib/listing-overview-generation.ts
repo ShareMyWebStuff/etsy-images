@@ -205,6 +205,8 @@ async function loadGenerationSnapshot(context: ListingEditorContext) {
                 secondaryColour: true,
                 thumbnailFileName: true,
                 thumbnailUpdatedAt: true,
+                printCropSettings: true,
+                personalisationTextAreas: true,
                 downloadsRevision: true,
                 dropboxRevision: true,
                 dropboxSyncedAt: true,

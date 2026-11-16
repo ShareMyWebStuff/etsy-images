@@ -12,7 +12,7 @@ import {
   type PrintableDownloadOrientation,
   type PrintableDownloadRatio,
 } from '@/lib/printable-download-specs';
-import { printCropPixelBounds, type PrintArtworkPlacement, type PrintCropRegion } from '@/lib/listing-print-crops';
+import { cropRegionToArtworkPlacement, printCropPixelBounds, type PrintArtworkPlacement, type PrintCropRegion } from '@/lib/listing-print-crops';
 import { createThumbnailPrintMaster } from '@/lib/thumbnail-print-master';
 
 const JPEG_QUALITY = 95;
@@ -122,12 +122,16 @@ export async function createPrintableDownload(
   const dimensions = dimensionsOverride ?? printableDownloadDimensions(ratio, orientation);
   let buffer: Buffer;
 
-  if (artworkPlacement) {
+  // Extended frames include paper outside the image; extracting a clamped
+  // source rectangle would remove that paper and stretch the remaining art.
+  const extendedCrop = cropRegion && (cropRegion.x < 0 || cropRegion.y < 0
+    || cropRegion.x + cropRegion.width > 1 || cropRegion.y + cropRegion.height > 1);
+  if (artworkPlacement || extendedCrop) {
     buffer = await placeArtworkOnPaper(
       normalized.data,
       dimensions.width,
       dimensions.height,
-      artworkPlacement,
+      artworkPlacement ?? cropRegionToArtworkPlacement(cropRegion!),
       backgroundColour,
     );
   } else if (cropRegion) {

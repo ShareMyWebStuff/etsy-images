@@ -14,7 +14,6 @@ import {
 import {
   MOCKUP_RATIO_OPTIONS,
   constrainMockupPlacement,
-  containArtwork,
   defaultMockupPlacement,
   displayPointToImagePoint,
   mockupExportDimensions,
@@ -30,6 +29,8 @@ import {
   type MockupResizeCorner,
 } from '@/lib/listing-mockup-tester';
 import type { ListingEditorContext } from '@/lib/listing-editor';
+import type { ListingPrintCropSettings } from '@/lib/listing-print-crops';
+import { drawMockupArtwork } from '@/lib/listing-mockup-artwork';
 
 export type ListingMockupArtworkOption = {
   id: string;
@@ -37,6 +38,7 @@ export type ListingMockupArtworkOption = {
   url: string;
   ratio?: MockupRatio;
   primary?: boolean;
+  printCropSettings?: ListingPrintCropSettings | null;
 };
 
 type BackgroundImage = {
@@ -326,6 +328,7 @@ function drawFrame(
 async function renderMockup({
   background,
   artworkUrl,
+  printCropSettings,
   backgroundColour,
   placement,
   ratio,
@@ -337,6 +340,7 @@ async function renderMockup({
 }: {
   background: BackgroundImage;
   artworkUrl: string;
+  printCropSettings?: ListingPrintCropSettings | null;
   backgroundColour: ArtworkBackgroundColour;
   placement: MockupPlacement;
   ratio: MockupRatio;
@@ -392,8 +396,7 @@ async function renderMockup({
 
   context.fillStyle = backgroundColour;
   context.fillRect(outputPlacement.x, outputPlacement.y, outputPlacement.width, outputPlacement.height);
-  const artwork = containArtwork(artworkImage.naturalWidth, artworkImage.naturalHeight, outputPlacement);
-  context.drawImage(artworkImage, artwork.x, artwork.y, artwork.width, artwork.height);
+  drawMockupArtwork(context, artworkImage, outputPlacement, ratio, printCropSettings);
 
   if (finish !== 'unframed') {
     if (!horizontalTexture || !verticalTexture) throw new Error(`The ${frame.label} frame texture is unavailable.`);
@@ -612,6 +615,7 @@ export function ListingMockupTesterDialog({
       const generated = await renderMockup({
         background,
         artworkUrl: selectedArtwork.url,
+        printCropSettings: selectedArtwork.printCropSettings,
         backgroundColour,
         placement,
         ratio,
