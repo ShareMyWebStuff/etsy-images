@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { publicationKey, spreadSchedule } from '@/lib/pinterest/copy';
+import { publicationKey } from '@/lib/pinterest/copy';
+import { PinterestSchedulingError, schedulePinterestPins } from '@/lib/pinterest/scheduling';
 
 export async function GET() {
   const campaigns = await prisma.pinterestCampaign.findMany({
@@ -17,48 +18,29 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as { name?: string; boardId?: number; startDate?: string; pinsPerDay?: number };
+    const body = await request.json() as { action?: string; name?: string; boardId?: number; pinIds?: number[]; startDate?: string; pinsPerDay?: number; timeZone?: string };
+    if (body.action !== undefined && body.action !== 'schedule-selected') return NextResponse.json({ error: 'Unknown campaign action.' }, { status: 400 });
     const name = body.name?.trim();
     const boardId = Number(body.boardId);
-    const startDate = body.startDate ? new Date(body.startDate) : null;
-    const pinsPerDay = Math.min(4, Math.max(1, Number(body.pinsPerDay) || 1));
-    if (!name || !Number.isInteger(boardId) || !startDate || Number.isNaN(startDate.getTime())) {
+    if (!name || !Number.isSafeInteger(boardId) || boardId < 1 || boardId > 2_147_483_647 || !body.startDate) {
       return NextResponse.json({ error: 'Enter a campaign name, board, and valid start date.' }, { status: 400 });
     }
-
-    const board = await prisma.pinterestBoard.findUnique({ where: { id: boardId }, select: { id: true } });
-    if (!board) return NextResponse.json({ error: 'Pinterest board not found.' }, { status: 404 });
-    const pins = await prisma.pinterestPin.findMany({
-      where: { boardId, status: 'DRAFT', scheduledAt: null, campaignId: null },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, listingId: true, imageId: true },
-    });
-    if (!pins.length) {
-      return NextResponse.json({ error: 'This board has no unscheduled Pins. Add listings to the board for a campaign first.' }, { status: 400 });
-    }
-
-    const dates = spreadSchedule(startDate, pins.length, pinsPerDay);
-    const campaign = await prisma.$transaction(async (tx) => {
-      const created = await tx.pinterestCampaign.create({
-        data: { name, sourceSectionId: null, startDate, pinsPerDay, configuration: { boardId } },
+    let pinIds = body.pinIds;
+    if (body.action !== 'schedule-selected') {
+      const pins = await prisma.pinterestPin.findMany({
+        where: { boardId, status: 'DRAFT', scheduledAt: null, campaignId: null },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { id: true },
       });
-      for (let index = 0; index < pins.length; index += 1) {
-        const pin = pins[index];
-        await tx.pinterestPin.update({
-          where: { id: pin.id },
-          data: {
-            campaignId: created.id,
-            status: 'SCHEDULED',
-            scheduledAt: dates[index],
-            publicationKey: publicationKey(pin.listingId, pin.imageId, boardId, dates[index]),
-          },
-        });
-      }
-      return created;
+      pinIds = pins.map(pin => pin.id);
+      if (!pinIds.length) return NextResponse.json({ error: 'This board has no unscheduled Pins. Add listings to the board for a campaign first.' }, { status: 400 });
+    }
+    const campaign = await schedulePinterestPins({
+      name, boardId, pinIds: pinIds!, startDate: body.startDate,
+      pinsPerDay: body.pinsPerDay ?? 1, timeZone: body.timeZone ?? 'Europe/London',
     });
     return NextResponse.json({ data: campaign }, { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Campaign could not be created.' }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Campaign could not be created.' }, { status: error instanceof PinterestSchedulingError ? error.status : 400 });
   }
 }
 

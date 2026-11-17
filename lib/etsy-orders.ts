@@ -13,7 +13,7 @@ import { prisma } from '@/lib/prisma';
 import { PRINTSHRIMP_SUPPORTED_SIZES } from '@/lib/printshrimp/artwork';
 import { PrintShrimpAdapterError } from '@/lib/printshrimp/client';
 import { getPrintShrimpReturnEmail } from '@/lib/printshrimp/config';
-import { getPrintShrimpCustomFont, type PrintShrimpCustomFontId } from '@/lib/printshrimp/custom-fonts';
+import { DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID } from '@/lib/printshrimp/custom-fonts';
 import {
   generatePrintShrimpCustomArtworkPreview,
   submitPreparedPrintShrimpOrder,
@@ -25,14 +25,6 @@ import { printShrimpFulfilmentDetails, refreshPrintShrimpFulfilment } from '@/li
 
 const ORDER_SYNC_OVERLAP_SECONDS = 7 * 24 * 60 * 60;
 const ACTIVE_PROCESSING_STATUSES: EtsyOrderProcessingStatus[] = ['UNPROCESSED', 'BLOCKED', 'FAILED', 'UNKNOWN'];
-const FONT_ID_BY_NAME: Record<string, PrintShrimpCustomFontId> = {
-  nunito: 'nunito-semibold',
-  fredoka: 'fredoka-bold',
-  quicksand: 'quicksand-semibold',
-  'patrick hand': 'patrick-hand-regular',
-  caveat: 'caveat-bold',
-  sacramento: 'sacramento-regular',
-};
 
 const ORDER_INCLUDE = Prisma.validator<Prisma.EtsyOrderInclude>()({
   items: {
@@ -130,12 +122,6 @@ export function normalizePrintShrimpOrderSize(value: string | null | undefined) 
   return PRINTSHRIMP_SUPPORTED_SIZES.find((size) => size.toLocaleLowerCase() === candidate.toLocaleLowerCase()) ?? null;
 }
 
-function fontIdFromValue(value: string | null) {
-  const normalized = value?.trim().toLocaleLowerCase() ?? '';
-  if (!normalized || normalized.includes('no custom')) return 'nunito-semibold' as const;
-  return Object.entries(FONT_ID_BY_NAME).find(([name]) => normalized.includes(name))?.[1] ?? 'nunito-semibold';
-}
-
 function customTextLines(value: string | null) {
   if (!value) return { topText: null, bottomText: null };
   const labels = Array.from(value.matchAll(/\b(top(?:\s*text)?|bottom(?:\s*text)?)\s*:/gi));
@@ -158,7 +144,6 @@ export function parseEtsyOrderTransaction(transaction: EtsyTransactionResponse) 
   const combinedText = customTextLines(variationValue(pairs, /^custom\s*text$/i));
   const topText = variationValue(pairs, /^top\s*text$/i, /text.*top/i)?.slice(0, 40) ?? combinedText.topText;
   const bottomText = variationValue(pairs, /^bottom\s*text$/i, /text.*bottom/i)?.slice(0, 40) ?? combinedText.bottomText;
-  const fontValue = variationValue(pairs, /^font(?:\s*style)?$/i);
   const customisation = getEtsyItemCustomisation({ rawJson: transaction, topText, bottomText });
   const noFrame = !frameValue || /no\s*frame|unframed/i.test(frameValue);
   return {
@@ -171,7 +156,7 @@ export function parseEtsyOrderTransaction(transaction: EtsyTransactionResponse) 
     productType: noFrame ? 'Print' as const : 'Frame' as const,
     frameColour: noFrame ? null : /white/i.test(frameValue) ? 'White' : /oak|natural/i.test(frameValue) ? 'Oak' : 'Black',
     paperType: 'Matte' as const,
-    fontId: fontIdFromValue(fontValue),
+    fontId: customisation.fontId ?? DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID,
     topText,
     bottomText,
     isCustomised: customisation.border || Boolean(topText || bottomText),
@@ -574,14 +559,14 @@ export async function generateEtsyOrderArtwork(orderIdValue: string) {
   for (const item of order.items.filter((candidate) => getEtsyItemCustomisation(candidate).orderType === 'Customised')) {
     if (!item.listingId) throw new Error(`${item.title || 'The customised item'} is not linked to a local listing.`);
     if (!item.size) throw new Error(`${item.title || 'The customised item'} does not have a supported PrintShrimp size.`);
-    const fontId = getPrintShrimpCustomFont(item.fontId) ? item.fontId as PrintShrimpCustomFontId : 'nunito-semibold';
+    const customisation = getEtsyItemCustomisation(item);
     const rendered = await generatePrintShrimpCustomArtworkPreview({
       listingId: String(item.listingId),
       size: item.size,
       topText: item.topText ?? '',
       bottomText: item.bottomText ?? '',
-      fontId,
-      borderEnabled: getEtsyItemCustomisation(item).border,
+      fontId: customisation.fontId ?? DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID,
+      borderEnabled: customisation.border,
       externalOrderNumber: `ETSY-${order.etsyReceiptId.toString()}`,
     });
     const objectKey = `printshrimp-staging/etsy-orders/${order.etsyReceiptId.toString()}/${item.id}-${rendered.fileName}`;

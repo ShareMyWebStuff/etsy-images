@@ -1,0 +1,25 @@
+{
+  "draftPins": 45,
+  "exactContentAndAssets": true,
+  "byBoard": [
+    {
+      "name": "Safari Animal Nursery Wall Art",
+      "pins": 15
+    },
+    {
+      "name": "Woodland Nursery Prints & Decor",
+      "pins": 15
+    },
+    {
+      "name": "Farm Animal Nursery Prints",
+      "pins": 15
+    }
+  ],
+  "original107PinsUnchanged": true,
+  "originalBoardsUnchanged": true,
+  "etsyListingsUnchanged": true,
+  "etsyImagesUnchanged": true,
+  "applicationApiDraftPreviews": 45,
+  "privateImageRouteSamplesVerified": 9,
+  "privateStorageKeysHidden": true
+}

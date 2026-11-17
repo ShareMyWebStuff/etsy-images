@@ -1,4 +1,5 @@
-import { PRINTSHRIMP_CUSTOM_FONTS } from '@/lib/printshrimp/custom-fonts';
+import { isEtsyFontStyleQuestion } from '@/lib/etsy-personalisation-font';
+import { DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID, PRINTSHRIMP_CUSTOM_FONTS } from '@/lib/printshrimp/custom-fonts';
 
 export type EtsyOrderType = 'Normal' | 'Customised' | 'In Error';
 
@@ -15,16 +16,20 @@ export function etsyOrderVariationPairs(raw: unknown) {
 
 export function getEtsyItemCustomisation(item: { rawJson: unknown; topText?: string | null; bottomText?: string | null }) {
   const pairs = etsyOrderVariationPairs(item.rawJson);
-  const fontStyle = pairs.find((pair) => /^font(?:\s*style)?$/i.test(pair.name))?.value ?? '';
+  const fontStyle = pairs.find((pair) => isEtsyFontStyleQuestion(pair.name))?.value ?? '';
   const border = /^(yes|true|with border)$/i.test(pairs.find((pair) => /^border$/i.test(pair.name))?.value ?? '');
-  const font = PRINTSHRIMP_CUSTOM_FONTS.find((choice) => fontStyle.toLocaleLowerCase().includes(choice.family.toLocaleLowerCase()));
-  const hasFont = Boolean(fontStyle && !/no\s*custom|^none$/i.test(fontStyle));
   const hasText = Boolean(item.topText?.trim() || item.bottomText?.trim());
-  const error = hasText && (!hasFont || !font)
-    ? 'Custom text was supplied without a valid Font Style, or No Customisation was selected. Message the buyer on Etsy to confirm their font before creating this order.'
+  const noCustomisation = /no\s*custom|^none$/i.test(fontStyle);
+  const font = !fontStyle && hasText
+    ? PRINTSHRIMP_CUSTOM_FONTS.find((choice) => choice.id === DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID)
+    : !noCustomisation
+      ? PRINTSHRIMP_CUSTOM_FONTS.find((choice) => fontStyle.toLocaleLowerCase().includes(choice.family.toLocaleLowerCase()))
+      : null;
+  const error = hasText && !font
+    ? 'Custom text was supplied with an unsupported Font Style, or No Customisation was selected. Message the buyer on Etsy to confirm their font before creating this order.'
     : null;
   const orderType: EtsyOrderType = error ? 'In Error' : border || hasText ? 'Customised' : 'Normal';
-  return { border, fontStyle: fontStyle || 'No Customisation', fontId: font?.id ?? null, orderType, error };
+  return { border, fontStyle: fontStyle || font?.family || 'No Customisation', fontId: font?.id ?? null, orderType, error };
 }
 
 export function getEtsyOrderType(items: Array<{ orderType: EtsyOrderType }>): EtsyOrderType {

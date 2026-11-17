@@ -42,6 +42,8 @@ import {
 import { prisma } from '@/lib/prisma';
 import { ensureRegisteredEtsySectionExists } from '@/lib/local-shop-sections';
 import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
+import { etsyPersonalisationFingerprint, recordEtsyPersonalisationSync } from '@/lib/etsy-personalisation-sync-state';
+import { isEtsyFontStyleQuestion } from '@/lib/etsy-personalisation-font';
 import { composeDeliveryDescription, validateEtsyDescription } from '@/lib/delivery-description';
 import { getEffectiveListingDelivery, markDeliveryAssignmentSynced, recordDeliveryAssignmentMetadata } from '@/lib/markets-delivery';
 
@@ -1919,9 +1921,8 @@ export async function syncListingPersonalization(
   customisePrints: boolean,
   customTop: boolean,
   customBottom: boolean,
-  customisationFeePence: number,
 ) {
-  const desired = buildPersonalizationQuestions(customisePrints, customTop, customBottom, customisationFeePence);
+  const desired = buildPersonalizationQuestions(customisePrints, customTop, customBottom);
   const currentPayload = await fetchEtsyListingMutation<unknown>(
     `/listings/${encodeURIComponent(etsyListingId)}/personalization`,
     { method: 'GET' }
@@ -1932,8 +1933,8 @@ export async function syncListingPersonalization(
     if (current.length > 0) await fetchEtsyListingMutation<null>(mutationPath, { method: 'DELETE' });
     return;
   }
-  const alreadyCurrent = current.length === desired.length && desired.every((question) => {
-    const saved = current.find((item) => item.question_text?.trim() === question.question_text);
+  const alreadyCurrent = current.length === desired.length && desired.every((question, index) => {
+    const saved = current[index];
     const rawPrice = saved?.add_on_price;
     const savedFeePence = typeof rawPrice === 'number'
       ? Math.round(rawPrice * 100)
@@ -1947,7 +1948,8 @@ export async function syncListingPersonalization(
     const expectedOptionLabels = 'options' in question && Array.isArray(question.options)
       ? question.options.map((option) => option.label)
       : [];
-    return saved?.question_type === question.question_type
+    return saved?.question_text?.trim() === question.question_text
+      && saved.question_type === question.question_type
       && saved.required === question.required
       && (saved.max_allowed_characters ?? null) === ('max_allowed_characters' in question ? question.max_allowed_characters : null)
       && (saved.instructions ?? '') === ('instructions' in question ? question.instructions : '')
@@ -1955,14 +1957,12 @@ export async function syncListingPersonalization(
       && JSON.stringify(savedOptionLabels) === JSON.stringify(expectedOptionLabels);
   });
   if (alreadyCurrent) return;
-  const idByText = new Map(current.flatMap((question) => {
-    const id = positiveEtsyId(question.question_id);
-    const text = question.question_text?.trim();
-    return id && text ? [[text, id] as const] : [];
-  }));
   const questions = desired.map((question) => {
-    const questionId = idByText.get(question.question_text);
-    const saved = current.find((item) => item.question_text?.trim() === question.question_text);
+    const saved = current.find((item) => item.question_text?.trim() === question.question_text)
+      ?? (isEtsyFontStyleQuestion(question.question_text)
+        ? current.find((item) => isEtsyFontStyleQuestion(item.question_text ?? ''))
+        : undefined);
+    const questionId = positiveEtsyId(saved?.question_id);
     const existingOptionIdByLabel = new Map((saved?.options ?? []).flatMap((option) => {
       const optionId = positiveEtsyId(option.option_id);
       const label = option.label?.trim();
@@ -2200,24 +2200,13 @@ export async function syncListingToEtsy(
     ...(enabled.some((variant) => variant !== 'download') ? physicalProducts : []),
     ...(enabled.includes('download') && digitalProduct ? [digitalProduct] : []),
   ];
-  const needsCustomisationFee = customisation.customisePrints && (customisation.customTop || customisation.customBottom)
-    && (enabled.includes('customised') || (enabled.includes('print') && customisedSharesPrintSection));
-  const priceKeys = [...new Set([
-    ...relevantProducts.map(({ priceKey }) => priceKey),
-    ...(needsCustomisationFee ? ['customisation_fee'] : []),
-  ])];
+  const priceKeys = [...new Set(relevantProducts.map(({ priceKey }) => priceKey))];
   const savedPrices = await prisma.adminProductPrice.findMany({
     where: { productKey: { in: priceKeys } },
     select: { productKey: true, amountPence: true },
   });
   const prices = new Map(savedPrices.map(({ productKey, amountPence }) => [productKey, amountPence]));
   for (const product of relevantProducts) productPricePence(product, prices);
-  const customisationFeePence = needsCustomisationFee
-    ? prices.get('customisation_fee') ?? PRICE_OPTION_BY_KEY.get('customisation_fee')!.defaultAmountPence
-    : 0;
-  if (!Number.isSafeInteger(customisationFeePence) || customisationFeePence < 0) {
-    throw new Error('Set a valid customisation fee on the Set Prices page before syncing.');
-  }
 
   const etsyShopId = context.shop.etsyShopId.toString();
   const ensuredSectionIds = new Map<number, number>();
@@ -2458,13 +2447,17 @@ export async function syncListingToEtsy(
     await syncChangedImages(etsyShopId, remoteId, listingDirectory, chosenImages, variant);
 
     if (!inventorySynced) await syncInventory(remoteId);
+    const personalisesVariant = !isDownload && (variant === 'customised' || customisedSharesPrintSection)
+      && customisation.customisePrints;
+    const syncedPersonalisationFingerprint = personalisesVariant
+      ? etsyPersonalisationFingerprint(remoteId, customisation)
+      : null;
     await syncListingPersonalization(
       etsyShopId,
       remoteId,
       !isDownload && (variant === 'customised' || customisedSharesPrintSection) && customisation.customisePrints,
       !isDownload && (variant === 'customised' || customisedSharesPrintSection) && customisation.customTop,
       !isDownload && (variant === 'customised' || customisedSharesPrintSection) && customisation.customBottom,
-      customisationFeePence,
     );
     if (isDownload) {
       const etsyDownloadFiles = selectEtsyDigitalDownloadPdf(listing.files);
@@ -2518,6 +2511,9 @@ export async function syncListingToEtsy(
         managedDescription: body.get('description') ?? '',
         expected: selectedDelivery!,
       });
+      if (syncedPersonalisationFingerprint) {
+        await recordEtsyPersonalisationSync(listing.id, variant, remoteId, syncedPersonalisationFingerprint);
+      }
     }
   }
 

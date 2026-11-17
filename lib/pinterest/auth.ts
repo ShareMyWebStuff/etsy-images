@@ -29,27 +29,69 @@ export function authorizationUrl(state: string) {
   return url;
 }
 type TokenResponse = { access_token: string; refresh_token?: string; expires_in?: number; refresh_token_expires_in?: number; refresh_token_expires_at?: number; scope?: string };
-async function tokenRequest(values: Record<string, string>) {
+async function tokenRequest(values: Record<string, string>, env: PinterestEnvironment) {
   const { id, secret } = credentials();
-  const response = await fetch(`${apiBase()}/oauth/token`, { method: 'POST', headers: { Authorization: `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(values), cache: 'no-store' });
+  const response = await fetch(`${apiBase(env)}/oauth/token`, { method: 'POST', headers: { Authorization: `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(values), cache: 'no-store' });
   const data = await response.json().catch(() => ({})) as TokenResponse & { message?: string };
   if (!response.ok) throw new Error(data.message ?? `Pinterest OAuth failed (${response.status}).`);
   return data;
 }
 function expiry(seconds?: number) { return seconds ? new Date(Date.now() + seconds * 1000) : null; }
+function refreshExpiry(token: TokenResponse) {
+  return token.refresh_token_expires_at ? new Date(token.refresh_token_expires_at * 1000) : expiry(token.refresh_token_expires_in);
+}
 export async function exchangeCode(code: string) {
-  const token = await tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: redirectUri(), continuous_refresh: 'true' });
-  const accountResponse = await fetch(`${apiBase()}/user_account`, { headers: { Authorization: `Bearer ${token.access_token}` }, cache: 'no-store' });
+  const env = environment();
+  const token = await tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: redirectUri(), continuous_refresh: 'true' }, env);
+  const accountResponse = await fetch(`${apiBase(env)}/user_account`, { headers: { Authorization: `Bearer ${token.access_token}` }, cache: 'no-store' });
   if (!accountResponse.ok) throw new Error('Pinterest connected, but the account profile could not be read.');
   const account = await accountResponse.json() as PinterestAccount;
-  return prisma.pinterestConnection.upsert({ where: { id: 1 }, create: { id: 1, accountId: account.id, username: account.username, accessTokenEncrypted: encryptSecret(token.access_token), refreshTokenEncrypted: token.refresh_token ? encryptSecret(token.refresh_token) : null, accessTokenExpiresAt: expiry(token.expires_in), refreshTokenExpiresAt: token.refresh_token_expires_at ? new Date(token.refresh_token_expires_at * 1000) : expiry(token.refresh_token_expires_in), scopes: (token.scope?.split(/[ ,]+/) ?? [...PINTEREST_SCOPES]), environment: environment() }, update: { accountId: account.id, username: account.username, accessTokenEncrypted: encryptSecret(token.access_token), refreshTokenEncrypted: token.refresh_token ? encryptSecret(token.refresh_token) : undefined, accessTokenExpiresAt: expiry(token.expires_in), refreshTokenExpiresAt: token.refresh_token_expires_at ? new Date(token.refresh_token_expires_at * 1000) : expiry(token.refresh_token_expires_in), scopes: (token.scope?.split(/[ ,]+/) ?? [...PINTEREST_SCOPES]), environment: environment(), connectedAt: new Date(), lastError: null } });
+  const previous = await prisma.pinterestConnection.findUnique({ where: { id: 1 } });
+  const sameConnection = previous?.environment === env && previous.accountId === account.id;
+  const retainedRefreshToken = sameConnection ? previous.refreshTokenEncrypted : null;
+  const data = {
+    accountId: account.id,
+    username: account.username,
+    accessTokenEncrypted: encryptSecret(token.access_token),
+    refreshTokenEncrypted: token.refresh_token ? encryptSecret(token.refresh_token) : retainedRefreshToken,
+    accessTokenExpiresAt: expiry(token.expires_in),
+    refreshTokenExpiresAt: token.refresh_token
+      ? refreshExpiry(token)
+      : retainedRefreshToken ? previous!.refreshTokenExpiresAt : null,
+    scopes: token.scope?.split(/[ ,]+/) ?? [...PINTEREST_SCOPES],
+    environment: env,
+  };
+  return prisma.pinterestConnection.upsert({
+    where: { id: 1 },
+    create: { id: 1, ...data },
+    update: { ...data, connectedAt: new Date(), lastSuccessfulApiTestAt: null, lastError: null },
+  });
 }
 export async function getAccessToken() {
+  const env = environment();
   const connection = await prisma.pinterestConnection.findUnique({ where: { id: 1 } });
   if (!connection) throw new Error('Pinterest is not connected.');
+  if (connection.environment !== env) throw new Error(`Pinterest is connected to ${connection.environment}, but this application is using ${env}. Reconnect Pinterest for ${env} before continuing.`);
   if (!connection.accessTokenExpiresAt || connection.accessTokenExpiresAt.getTime() > Date.now() + 5 * 60_000) return decryptSecret(connection.accessTokenEncrypted);
   if (!connection.refreshTokenEncrypted) throw new Error('Pinterest access expired. Reconnect the account.');
-  const token = await tokenRequest({ grant_type: 'refresh_token', refresh_token: decryptSecret(connection.refreshTokenEncrypted) });
-  await prisma.pinterestConnection.update({ where: { id: 1 }, data: { accessTokenEncrypted: encryptSecret(token.access_token), refreshTokenEncrypted: token.refresh_token ? encryptSecret(token.refresh_token) : connection.refreshTokenEncrypted, accessTokenExpiresAt: expiry(token.expires_in), refreshTokenExpiresAt: token.refresh_token_expires_at ? new Date(token.refresh_token_expires_at * 1000) : expiry(token.refresh_token_expires_in), scopes: token.scope?.split(/[ ,]+/) ?? [...PINTEREST_SCOPES], lastError: null } });
+  const token = await tokenRequest({ grant_type: 'refresh_token', refresh_token: decryptSecret(connection.refreshTokenEncrypted) }, env);
+  const updated = await prisma.pinterestConnection.updateMany({
+    where: {
+      id: connection.id,
+      environment: env,
+      accountId: connection.accountId,
+      accessTokenEncrypted: connection.accessTokenEncrypted,
+      refreshTokenEncrypted: connection.refreshTokenEncrypted,
+    },
+    data: {
+      accessTokenEncrypted: encryptSecret(token.access_token),
+      refreshTokenEncrypted: token.refresh_token ? encryptSecret(token.refresh_token) : connection.refreshTokenEncrypted,
+      accessTokenExpiresAt: expiry(token.expires_in),
+      refreshTokenExpiresAt: refreshExpiry(token) ?? (token.refresh_token ? null : connection.refreshTokenExpiresAt),
+      scopes: token.scope?.split(/[ ,]+/) ?? [...PINTEREST_SCOPES],
+      lastError: null,
+    },
+  });
+  if (updated.count !== 1) throw new Error('The Pinterest connection changed while access was refreshing. Retry the request, or reconnect Pinterest before continuing.');
   return token.access_token;
 }

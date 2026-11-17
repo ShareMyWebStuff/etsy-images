@@ -59,10 +59,11 @@ describe('Set Prices screen', () => {
     expect(tabs.map((tab) => tab.textContent)).toEqual(['Unframed Prints', 'Framed Prints', 'Digital Downloads']);
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('heading', { name: 'Unframed Prints' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Customisation' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Customisation' })).toBeNull();
+    expect(screen.getByText('Customisation is free.')).toBeTruthy();
     expect((screen.getByLabelText('A5') as HTMLInputElement).value).toBe('12.99');
     expect((screen.getByLabelText('A1') as HTMLInputElement).value).toBe('34.99');
-    expect((screen.getByLabelText('Fee') as HTMLInputElement).value).toBe('4.99');
+    expect(screen.queryByLabelText('Fee')).toBeNull();
     expect(screen.getByLabelText('30 × 40 cm')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Framed Prints' }));
     expect(screen.getByRole('heading', { name: 'Framed Prints' })).toBeTruthy();
@@ -102,6 +103,9 @@ describe('Set Prices screen', () => {
     await user.click(screen.getByRole('button', { name: 'Not now' }));
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Apply saved prices to Etsy?' })).toBeNull());
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    const submittedPrices = JSON.parse(String(fetchMock.mock.calls[0][1].body)).prices as Array<{ key: string; amountPence: number }>;
+    expect(submittedPrices).toHaveLength(PRICE_OPTIONS.length);
+    expect(submittedPrices.map((price) => price.key)).not.toContain('customisation_fee');
     expect((input as HTMLInputElement).value).toBe('3.99');
     expect(screen.getByRole('button', { name: 'Save prices' }).hasAttribute('disabled')).toBe(true);
   });

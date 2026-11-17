@@ -14,15 +14,14 @@ import {
 import { PRINTSHRIMP_SUPPORTED_SIZES } from '@/lib/printshrimp/artwork';
 
 describe('Set Prices catalogue and validation', () => {
-  it('defines all four sections and every requested stable product option', () => {
+  it('defines the three product price sections without a customisation fee', () => {
     expect(PRICE_SECTIONS.map((section) => section.title)).toEqual([
       'Digital Downloads',
       'Unframed Prints',
       'Framed Prints',
-      'Customisation',
     ]);
-    expect(PRICE_OPTIONS).toHaveLength(44);
-    expect(new Set(PRICE_OPTIONS.map((option) => option.key)).size).toBe(44);
+    expect(PRICE_OPTIONS).toHaveLength(43);
+    expect(new Set(PRICE_OPTIONS.map((option) => option.key)).size).toBe(43);
     expect(PRICE_OPTIONS.filter((option) => option.category === 'digital').map((option) => option.label)).toEqual([
       '1 Image Download', '3 Downloads', '6 Downloads', '12 Downloads', 'Complete Set',
     ]);
@@ -32,8 +31,9 @@ describe('Set Prices catalogue and validation', () => {
     expect(PRICE_OPTIONS.filter((option) => option.category === 'framed').map((option) => option.label)).toContain('20 × 28 inches');
     expect(PRICE_OPTIONS.filter((option) => option.category === 'unframed').map((option) => option.label)).toContain('5 × 7 inches');
     expect(PRICE_OPTIONS.filter((option) => option.category === 'framed').map((option) => option.label)).toContain('12 × 18 inches');
-    expect(PHYSICAL_KEYS.has('customisation_fee')).toBe(false);
-    expect(ETSY_SYNCABLE_KEYS.has('customisation_fee')).toBe(false);
+    expect(PRICE_OPTIONS.map((option) => option.key)).not.toContain('customisation_fee');
+    expect([...PHYSICAL_KEYS]).not.toContain('customisation_fee');
+    expect([...ETSY_SYNCABLE_KEYS]).not.toContain('customisation_fee');
   });
 
   it('uses the requested integer-pence defaults', () => {
@@ -71,8 +71,8 @@ describe('Set Prices catalogue and validation', () => {
       framed_20x30: 8499,
       framed_30x40cm: 4499,
       framed_50x70cm: 8499,
-      customisation_fee: 499,
     });
+    expect(getDefaultPriceRows().map((row) => row.productKey)).not.toContain('customisation_fee');
   });
 
   it('has unframed and framed prices for every size sent to PrintShrimp', () => {
@@ -95,11 +95,12 @@ describe('Set Prices catalogue and validation', () => {
 
   it('validates a complete payload and rejects missing, duplicate, unknown, or invalid prices', () => {
     const valid = PRICE_OPTIONS.map((option) => ({ key: option.key, amountPence: option.defaultAmountPence }));
-    expect(validatePriceEntries(valid)).toHaveLength(44);
+    expect(validatePriceEntries(valid)).toHaveLength(43);
     expect(() => validatePriceEntries(valid.slice(1))).toThrow(/every product option/i);
     expect(() => validatePriceEntries([...valid, valid[0]])).toThrow(/more than once/i);
     expect(() => validatePriceEntries(valid.map((entry, index) => index === 0 ? { key: 'unknown', amountPence: 1 } : entry))).toThrow(/unknown product/i);
     expect(() => validatePriceEntries(valid.map((entry, index) => index === 0 ? { ...entry, amountPence: 0 } : entry))).toThrow(/positive GBP/i);
+    expect(() => validatePriceEntries([...valid, { key: 'customisation_fee', amountPence: 499 }])).toThrow(/unknown product price key: customisation_fee/i);
   });
 
   it('maps digital listings by stable section download settings', () => {

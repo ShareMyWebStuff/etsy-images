@@ -1,0 +1,60 @@
+{
+  "verifiedAt": "2026-11-16T23:14:11.880Z",
+  "scheduledPins": 570,
+  "activeEtsyDestinations": 555,
+  "activeArtworks": 285,
+  "newPins": 418,
+  "boards": 7,
+  "activeCampaigns": 7,
+  "dailyLimit": 2,
+  "timeZone": "Europe/London",
+  "firstScheduledAt": "2026-11-17T09:00:00.000Z",
+  "lastScheduledAt": "2027-01-14T13:00:00.000Z",
+  "existingPinMediaPreserved": true,
+  "reviewedDescriptionsPreserved": 45,
+  "etsyArtworkContentUnchanged": true,
+  "observedEtsySyncMetadataChanges": {
+    "listings": 27,
+    "fields": [
+      "etsyPrintPersonalisationFingerprint",
+      "rawJson",
+      "updatedAt",
+      "lastSyncedAt",
+      "priceMappings"
+    ]
+  },
+  "unpublishedLocalArtworksSkipped": 192,
+  "alreadyPublished": 0,
+  "runtimePaginationVerified": true,
+  "privatePreviewsVerified": 2,
+  "byBoard": [
+    {
+      "name": "Bugs Nursery Prints & Wall Art",
+      "scheduledPins": 118
+    },
+    {
+      "name": "Dinosaurs Nursery Prints & Wall Art",
+      "scheduledPins": 96
+    },
+    {
+      "name": "Safari Animal Nursery Wall Art",
+      "scheduledPins": 111
+    },
+    {
+      "name": "Woodland Nursery Prints & Decor",
+      "scheduledPins": 99
+    },
+    {
+      "name": "Farm Animal Nursery Prints",
+      "scheduledPins": 93
+    },
+    {
+      "name": "Sea Creature Nursery Wall Art",
+      "scheduledPins": 8
+    },
+    {
+      "name": "Scarecrow & Autumn Wall Art",
+      "scheduledPins": 45
+    }
+  ]
+}

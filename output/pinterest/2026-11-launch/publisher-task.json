@@ -1,0 +1,12 @@
+﻿{
+    "TaskName":  "Etsy Pinterest Publisher",
+    "State":  "Ready",
+    "Enabled":  true,
+    "User":  "dave",
+    "LogonType":  "Interactive",
+    "LastTaskResult":  0,
+    "NextRunTime":  "2026-11-17T00:00:00.0000000+00:00",
+    "LastRunTime":  "2026-11-16T23:09:09.0000000+00:00",
+    "WakeToRun":  true,
+    "RequiresDevelopmentServer":  false
+}

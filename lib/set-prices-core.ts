@@ -63,14 +63,6 @@ export const PRICE_SECTIONS = [
       { key: 'framed_50x70cm', label: '50 × 70 cm', defaultAmountPence: 8499 },
     ],
   },
-  {
-    key: 'customisation',
-    title: 'Customisation',
-    description: 'Fee for customising a listing.',
-    options: [
-      { key: 'customisation_fee', label: 'Fee', defaultAmountPence: 499 },
-    ],
-  },
 ] as const;
 
 export type PriceCategory = (typeof PRICE_SECTIONS)[number]['key'];
@@ -86,7 +78,7 @@ export const PHYSICAL_KEYS = new Set<ProductPriceKey>(
   PRICE_OPTIONS.filter((option) => option.category === 'unframed' || option.category === 'framed').map((option) => option.key)
 );
 export const ETSY_SYNCABLE_KEYS = new Set<ProductPriceKey>(
-  PRICE_OPTIONS.filter((option) => option.category !== 'customisation').map((option) => option.key)
+  PRICE_OPTIONS.map((option) => option.key)
 );
 
 export function getDefaultPriceRows() {

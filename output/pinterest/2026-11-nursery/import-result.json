@@ -1,0 +1,388 @@
+{
+  "createdAt": "2026-11-16T18:40:18.621Z",
+  "environment": "sandbox",
+  "boards": [
+    {
+      "key": "safari",
+      "id": 9,
+      "pinterestBoardId": "856387754082986585",
+      "name": "Safari Animal Nursery Wall Art"
+    },
+    {
+      "key": "woodland",
+      "id": 10,
+      "pinterestBoardId": "856387754082986586",
+      "name": "Woodland Nursery Prints & Decor"
+    },
+    {
+      "key": "farm",
+      "id": 11,
+      "pinterestBoardId": "856387754082986587",
+      "name": "Farm Animal Nursery Prints"
+    }
+  ],
+  "pins": [
+    {
+      "id": 297,
+      "batchPinId": "safari-267-room_inspiration",
+      "boardId": 9,
+      "listingId": 267,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/267/5b9422ce0e149ba6811e18a5bd30f26d58bc8366b9053f3613f25edd979d1eae.png"
+    },
+    {
+      "id": 298,
+      "batchPinId": "safari-267-product_detail",
+      "boardId": 9,
+      "listingId": 267,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/267/403e7f9749adb1ca77943e8f41affc90eb5c43a0318aaa3b294f38168c1f0b66.png"
+    },
+    {
+      "id": 299,
+      "batchPinId": "safari-267-digital_download",
+      "boardId": 9,
+      "listingId": 267,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/267/0cbd9c0d34ae7a71588aa67acf57a220239bc600e4f58df8eb01eb2f3183a94e.png"
+    },
+    {
+      "id": 300,
+      "batchPinId": "safari-282-room_inspiration",
+      "boardId": 9,
+      "listingId": 282,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/282/fdba58bbbaa0cdb764e6e93c8e9c2f61c275239aa88dd33e4d9397c6ab439597.png"
+    },
+    {
+      "id": 301,
+      "batchPinId": "safari-282-product_detail",
+      "boardId": 9,
+      "listingId": 282,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/282/4fb2f658d552c43a0c927322a19564be7f44e6c43ebe90d9cda6e64838720171.png"
+    },
+    {
+      "id": 302,
+      "batchPinId": "safari-282-digital_download",
+      "boardId": 9,
+      "listingId": 282,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/282/355740fca34c01ea313cb73964da11200fe3ca62083ee6f58ad684e0ecf5b036.png"
+    },
+    {
+      "id": 303,
+      "batchPinId": "safari-292-room_inspiration",
+      "boardId": 9,
+      "listingId": 292,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/292/be509e0ffc79b506772a258a8e2ed56b4a00151b2fdbc7b8f0b73415264264e0.png"
+    },
+    {
+      "id": 304,
+      "batchPinId": "safari-292-product_detail",
+      "boardId": 9,
+      "listingId": 292,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/292/fd054863ed6fb0411a0d44df04ab8d30436a95097708dc299e060f2a28586335.png"
+    },
+    {
+      "id": 305,
+      "batchPinId": "safari-292-digital_download",
+      "boardId": 9,
+      "listingId": 292,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/292/a69733796cb40b4e99c182c200fd372b251e9ab756f3f2a4bcebbdf89e9bcd8b.png"
+    },
+    {
+      "id": 306,
+      "batchPinId": "safari-305-room_inspiration",
+      "boardId": 9,
+      "listingId": 305,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/305/fd0daeba6e4229d98b6484d85a6fd8bb811d1ce7e0fdc73b4f63cbdfbcf9d969.png"
+    },
+    {
+      "id": 307,
+      "batchPinId": "safari-305-product_detail",
+      "boardId": 9,
+      "listingId": 305,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/305/3727287649e824d793f01be7ec33f21cea28b9561f6f08b7ba2d546f23d43a0f.png"
+    },
+    {
+      "id": 308,
+      "batchPinId": "safari-305-digital_download",
+      "boardId": 9,
+      "listingId": 305,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/305/96a867ccd85f19f6da8b90e0a78905366b2dfacb9da5e3879bbd64188e568382.png"
+    },
+    {
+      "id": 309,
+      "batchPinId": "safari-308-room_inspiration",
+      "boardId": 9,
+      "listingId": 308,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/308/4e26647c63abe1a4fe534391221b8b7ca399990066d27422bacfcfaf65d66da7.png"
+    },
+    {
+      "id": 310,
+      "batchPinId": "safari-308-product_detail",
+      "boardId": 9,
+      "listingId": 308,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/308/9133c49cfc2666b6c8fbfef20c424dd3b7d86377f29167b4ccc42f8627ced9f0.png"
+    },
+    {
+      "id": 311,
+      "batchPinId": "safari-308-digital_download",
+      "boardId": 9,
+      "listingId": 308,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/308/cb07ed90f7442ae413c600dc0ee8849ab0b4871a8e2ffaf1a8eac80d3991718d.png"
+    },
+    {
+      "id": 312,
+      "batchPinId": "woodland-194-room_inspiration",
+      "boardId": 10,
+      "listingId": 194,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/194/3e7ca183259edfee807048ece9794d27b3084544116d332cfebac4d31205155f.png"
+    },
+    {
+      "id": 313,
+      "batchPinId": "woodland-194-product_detail",
+      "boardId": 10,
+      "listingId": 194,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/194/e1d2862e9103c90bfd5004685dd2f027439296cacdc16386b99b15722082368d.png"
+    },
+    {
+      "id": 314,
+      "batchPinId": "woodland-194-digital_download",
+      "boardId": 10,
+      "listingId": 194,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/194/86fbea7ef0c8b28c8664272753d40a47a836fbe5bcd433bfc8f46371e8ad27f7.png"
+    },
+    {
+      "id": 315,
+      "batchPinId": "woodland-181-room_inspiration",
+      "boardId": 10,
+      "listingId": 181,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/181/ecb40b7eb89f5d7f04281b1df1f01872315d500bfbcff194ceeb510745e4cd32.png"
+    },
+    {
+      "id": 316,
+      "batchPinId": "woodland-181-product_detail",
+      "boardId": 10,
+      "listingId": 181,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/181/6e7a19746981846ba635a608ff478b1c7bc45c601ec7eb811309866b3981865b.png"
+    },
+    {
+      "id": 317,
+      "batchPinId": "woodland-181-digital_download",
+      "boardId": 10,
+      "listingId": 181,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/181/540b7d70446edb04a80a52a90c3c63d6527aea246418297cd62f3143d3363f33.png"
+    },
+    {
+      "id": 318,
+      "batchPinId": "woodland-186-room_inspiration",
+      "boardId": 10,
+      "listingId": 186,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/186/c57e3c2e41a44d968686c222b62a232822cd2663401a6eabc0cfffa566ebd90e.png"
+    },
+    {
+      "id": 319,
+      "batchPinId": "woodland-186-product_detail",
+      "boardId": 10,
+      "listingId": 186,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/186/f245a6a4846385e9e9afc0918baf322d09c0e2ed13e8b910708f810cef7fbb87.png"
+    },
+    {
+      "id": 320,
+      "batchPinId": "woodland-186-digital_download",
+      "boardId": 10,
+      "listingId": 186,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/186/0f9e100af24abb1e244b07bcbfaa44c3475e1d4e132c7bfcee4a77dbfe721991.png"
+    },
+    {
+      "id": 321,
+      "batchPinId": "woodland-190-room_inspiration",
+      "boardId": 10,
+      "listingId": 190,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/190/83b45fce53ca6160512aac6b08902644bd8a62c3038b253f7ae6d51ef201b77a.png"
+    },
+    {
+      "id": 322,
+      "batchPinId": "woodland-190-product_detail",
+      "boardId": 10,
+      "listingId": 190,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/190/9b44fa38e68290c0b5f9d67679ca476c99715864ee71ceab6f38ef850e7b5924.png"
+    },
+    {
+      "id": 323,
+      "batchPinId": "woodland-190-digital_download",
+      "boardId": 10,
+      "listingId": 190,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/190/a5b77ad9a6f275f495cad034adfade1c9728b4f1b1e362a98d7fd26846971ff0.png"
+    },
+    {
+      "id": 324,
+      "batchPinId": "woodland-540-room_inspiration",
+      "boardId": 10,
+      "listingId": 540,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/540/16cb6b6e361b691b80895460439cca33b1dbc2c028df0879a60d97eb11d0a283.png"
+    },
+    {
+      "id": 325,
+      "batchPinId": "woodland-540-product_detail",
+      "boardId": 10,
+      "listingId": 540,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/540/14037e938d0fd365d67d3e233f0536d7b783860ec5b871b0855ec258fccb0581.png"
+    },
+    {
+      "id": 326,
+      "batchPinId": "woodland-540-digital_download",
+      "boardId": 10,
+      "listingId": 540,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/540/a5c19626c7cf75bb5cff5ad14946c14e87900680f20e76b2f67d0818c29bf8ab.png"
+    },
+    {
+      "id": 327,
+      "batchPinId": "farm-242-room_inspiration",
+      "boardId": 11,
+      "listingId": 242,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/242/5ce7a44c6e6fc3df1cd25fd492b27f6507c36543c14c632b57ad8a0c17204dc9.png"
+    },
+    {
+      "id": 328,
+      "batchPinId": "farm-242-product_detail",
+      "boardId": 11,
+      "listingId": 242,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/242/c867d5cd8cb54abc0ce4ad9d3cba5c15bfca059bbb7313b4528834265c0dbcb8.png"
+    },
+    {
+      "id": 329,
+      "batchPinId": "farm-242-digital_download",
+      "boardId": 11,
+      "listingId": 242,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/242/66877da797c51d7a2d215d3abd55b62193f5adc0ccb2872cf39d28f7b868a439.png"
+    },
+    {
+      "id": 330,
+      "batchPinId": "farm-227-room_inspiration",
+      "boardId": 11,
+      "listingId": 227,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/227/6b0ea4141bba7088892aba43fb381c5dab4b51fa3e0521288c86b17005bbb2b4.png"
+    },
+    {
+      "id": 331,
+      "batchPinId": "farm-227-product_detail",
+      "boardId": 11,
+      "listingId": 227,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/227/9065754c7feedc4d511846414809dace8491abb237213612a43d760532021148.png"
+    },
+    {
+      "id": 332,
+      "batchPinId": "farm-227-digital_download",
+      "boardId": 11,
+      "listingId": 227,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/227/f68982da52fbd1aad18165d3389548b31b52ac3fc2030a65128fed7ecce4518e.png"
+    },
+    {
+      "id": 333,
+      "batchPinId": "farm-246-room_inspiration",
+      "boardId": 11,
+      "listingId": 246,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/246/2746e7dd08b11d01b8d8d5b8c0b9d039b96bda33093e6f76c865a69fda94fb3e.png"
+    },
+    {
+      "id": 334,
+      "batchPinId": "farm-246-product_detail",
+      "boardId": 11,
+      "listingId": 246,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/246/a166cdc32a07d7dc0ea9b46b6ff7cd238603046d7dff62966622d6b60fba9e28.png"
+    },
+    {
+      "id": 335,
+      "batchPinId": "farm-246-digital_download",
+      "boardId": 11,
+      "listingId": 246,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/246/289f3af6d820913f68e0a0824b72594abf91a256452627f3e4b9e3c0628b3410.png"
+    },
+    {
+      "id": 336,
+      "batchPinId": "farm-253-room_inspiration",
+      "boardId": 11,
+      "listingId": 253,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/253/59eb54abe0c1568d1095b87f66d87c7a9680111e77c11334f123cb0efef7fd92.png"
+    },
+    {
+      "id": 337,
+      "batchPinId": "farm-253-product_detail",
+      "boardId": 11,
+      "listingId": 253,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/253/52589e4e233e708957f75b44989adce151f672509effcbd6283b3eb69cc3914f.png"
+    },
+    {
+      "id": 338,
+      "batchPinId": "farm-253-digital_download",
+      "boardId": 11,
+      "listingId": 253,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/253/671043266b0e700035d0720d679154f8cbcdc43497a34e30b9b0f576558eb4ae.png"
+    },
+    {
+      "id": 339,
+      "batchPinId": "farm-220-room_inspiration",
+      "boardId": 11,
+      "listingId": 220,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/220/8fda25ccac7a651e9dae1dfa5c6172a93a76885374a1deb5f185f01cd32183b1.png"
+    },
+    {
+      "id": 340,
+      "batchPinId": "farm-220-product_detail",
+      "boardId": 11,
+      "listingId": 220,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/220/c2211e49891d1e9629f31adda6b1e1d675314e1107ec85d88552048eae24dbd7.png"
+    },
+    {
+      "id": 341,
+      "batchPinId": "farm-220-digital_download",
+      "boardId": 11,
+      "listingId": 220,
+      "status": "DRAFT",
+      "creativeStorageKey": ".pinterest-creatives/220/55133e22d02f1b3d141d457284269a51f03458e87ddff54bf82e131f1b9b415e.png"
+    }
+  ],
+  "published": 0,
+  "scheduled": 0
+}

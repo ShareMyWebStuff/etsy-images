@@ -37,7 +37,7 @@ describe('Etsy product inventory', () => {
     expect(plan.body.sku_on_property).toEqual([]);
   });
 
-  it('creates a No Frame option and optional top/bottom questions with the configured fee', () => {
+  it('creates a No Frame option and separate free top/bottom questions beneath the font choice', () => {
     const plan = buildEtsyInventoryPlan([{
       key: '20x28:no_frame', productType: 'unframed', sizeKey: '20x28', frameKey: 'no_frame',
       sku: 'PF-DONKEY-20X28-NF', amountPence: 3999,
@@ -45,17 +45,17 @@ describe('Etsy product inventory', () => {
     expect(plan.body.products).toHaveLength(2);
     expect(plan.body.products[0].property_values.map((value) => value.values[0])).toEqual(['20 x 28', 'No Frame', 'No']);
     expect(plan.body.products[1].property_values.map((value) => value.values[0])).toEqual(['20 x 28', 'No Frame', 'Yes']);
-    const both = buildPersonalizationQuestions(true, true, true, 300);
-    expect(both).toHaveLength(2);
+    const both = buildPersonalizationQuestions(true, true, true);
+    expect(both).toHaveLength(3);
     expect(both.map((question) => question.question_text)).toEqual([
-      'Font Style',
-      'Custom Text',
+      'Font Style (default: Nunito)',
+      'Top Text',
+      'Bottom Text',
     ]);
     expect(both[0]).toMatchObject({
       question_type: 'dropdown',
-      required: true,
+      required: false,
       options: [
-        { label: 'No Customisation' },
         { label: 'Nunito' },
         { label: 'Fredoka' },
         { label: 'Quicksand' },
@@ -64,26 +64,28 @@ describe('Etsy product inventory', () => {
         { label: 'Sacramento' },
       ],
     });
-    expect(both[1]).toMatchObject({ question_type: 'text_input', required: false, add_on_price: 3, max_allowed_characters: 100 });
-    expect('instructions' in both[1] && both[1].instructions.length).toBeLessThanOrEqual(120);
-    expect(buildPersonalizationQuestions(true, true, false, 300).map(({ question_text }) => question_text)).toEqual(['Font Style', 'Top Text']);
-    expect(buildPersonalizationQuestions(true, false, true, 300).map(({ question_text }) => question_text)).toEqual(['Font Style', 'Bottom Text']);
-    expect(buildPersonalizationQuestions(false, true, true, 300)).toEqual([]);
+    for (const question of both.slice(1)) {
+      expect(question).toMatchObject({ question_type: 'text_input', required: false, add_on_price: 0, max_allowed_characters: 40 });
+      expect('instructions' in question && question.instructions.length).toBeLessThanOrEqual(120);
+    }
   });
 
-  it.each([[true, false], [false, true], [true, true]])('applies the configured fee to exactly one optional text question (top %s, bottom %s)', (top, bottom) => {
-    const questions = buildPersonalizationQuestions(true, top, bottom, 300);
-    const paidQuestions = questions.filter((question) => 'add_on_price' in question && question.add_on_price > 0);
-    expect(paidQuestions).toHaveLength(1);
-    expect(paidQuestions[0]).toMatchObject({ add_on_price: 3, required: false });
+  it.each([[true, false], [false, true], [true, true]])('offers only enabled text areas without a fee (top %s, bottom %s)', (top, bottom) => {
+    const questions = buildPersonalizationQuestions(true, top, bottom);
+    expect(questions.map(({ question_text }) => question_text)).toEqual([
+      'Font Style (default: Nunito)',
+      ...(top ? ['Top Text'] : []),
+      ...(bottom ? ['Bottom Text'] : []),
+    ]);
+    const textQuestions = questions.filter((question) => question.question_type === 'text_input');
+    expect(textQuestions).toHaveLength(Number(top) + Number(bottom));
+    expect(textQuestions.every((question) => question.add_on_price === 0 && !question.required && question.max_allowed_characters === 40)).toBe(true);
     expect(questions[0]).not.toHaveProperty('add_on_price');
   });
 
-  it('supports a changed fee, an explicit zero fee and no enabled text areas', () => {
-    expect(buildPersonalizationQuestions(true, true, false, 450)[1]).toMatchObject({ add_on_price: 4.5 });
-    expect(buildPersonalizationQuestions(true, true, true, 0)[1]).toMatchObject({ add_on_price: 0 });
-    expect(buildPersonalizationQuestions(true, false, false, 300)).toEqual([]);
-    expect(() => buildPersonalizationQuestions(true, true, true, -1)).toThrow('valid customisation fee');
+  it('omits all personalisation fields when customisation or both text areas are disabled', () => {
+    expect(buildPersonalizationQuestions(false, true, true)).toEqual([]);
+    expect(buildPersonalizationQuestions(true, false, false)).toEqual([]);
   });
 
   it('maps the added 5 x 7 and 12 x 18 sizes to Etsy variation labels', () => {

@@ -288,7 +288,6 @@ export function SetPricesClient({ initialData }: SetPricesClientProps) {
 
   const progressPercent = job && job.total > 0 ? Math.round((job.processed / job.total) * 100) : job?.status === 'completed' ? 100 : 0;
   const activePriceSection = data.sections.find((section) => section.key === activePriceTab);
-  const customisationSection = data.sections.find((section) => section.key === 'customisation');
 
   function priceRows(section: SetPricesData['sections'][number]) {
     return <div className="divide-y divide-border">
@@ -311,8 +310,6 @@ export function SetPricesClient({ initialData }: SetPricesClientProps) {
           <div id={`price-${price.key}-help`} className="min-h-5 text-xs">
             {validationErrors[price.key] ? (
               <span className="text-destructive">{validationErrors[price.key]}</span>
-            ) : section.key === 'customisation' ? (
-              <span className="text-muted-foreground">Saved locally as the default customisation fee</span>
             ) : price.affectedListings > 0 ? (
               <span className="text-muted-foreground">{price.affectedListings} mapped Etsy listing{price.affectedListings === 1 ? '' : 's'}</span>
             ) : price.unsupportedMappings > 0 ? (
@@ -333,6 +330,7 @@ export function SetPricesClient({ initialData }: SetPricesClientProps) {
       <div>
         <h1 className="text-2xl font-semibold">Set Prices</h1>
         <p className="mt-2 text-muted-foreground">Manage base GBP prices locally, then explicitly choose whether to apply saved changes to Etsy.</p>
+        <p className="mt-2 text-sm text-muted-foreground">Customisation is free.</p>
       </div>
 
       <div className="flex gap-3 rounded-lg border border-border bg-muted/40 p-4 text-sm">
@@ -373,14 +371,6 @@ export function SetPricesClient({ initialData }: SetPricesClientProps) {
           <CardContent className="max-w-3xl">{priceRows(activePriceSection)}</CardContent>
         </Card> : null}
       </div>
-
-      {customisationSection ? <Card>
-        <CardHeader>
-          <CardTitle>{customisationSection.title}</CardTitle>
-          <CardDescription>{customisationSection.description}</CardDescription>
-        </CardHeader>
-        <CardContent className="max-w-3xl">{priceRows(customisationSection)}</CardContent>
-      </Card> : null}
 
       {data.deliveryWarnings.length > 0 ? (
         <Card>

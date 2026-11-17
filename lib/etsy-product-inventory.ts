@@ -1,4 +1,5 @@
 import { ETSY_PRODUCT_SIZES } from '@/lib/listing-products';
+import { ETSY_FONT_STYLE_QUESTION_TEXT } from '@/lib/etsy-personalisation-font';
 
 export const ETSY_DIGITAL_PRINTS_TAXONOMY_ID = 2078;
 export const ETSY_GICLEE_PRINTS_TAXONOMY_ID = 121;
@@ -158,7 +159,6 @@ export function buildEtsyInventoryPlan(
 }
 
 export const ETSY_PERSONALISATION_FONT_OPTIONS = [
-  'No Customisation',
   'Nunito',
   'Fredoka',
   'Quicksand',
@@ -171,37 +171,29 @@ export function buildPersonalizationQuestions(
   customisePrints: boolean,
   customTop: boolean,
   customBottom: boolean,
-  customisationFeePence: number,
 ) {
   if (!customisePrints || (!customTop && !customBottom)) return [];
-  if (!Number.isSafeInteger(customisationFeePence) || customisationFeePence < 0) {
-    throw new Error('Set a valid customisation fee on the Set Prices page before syncing.');
-  }
 
   const textInputBase = {
     question_type: 'text_input' as const,
     required: false,
     max_allowed_characters: 40,
-    add_on_price: customisationFeePence / 100,
+    // An explicit zero clears a previous Etsy add-on price; omitting it can retain the charge.
+    add_on_price: 0,
   };
   return [
     {
       question_type: 'dropdown' as const,
-      question_text: 'Font Style',
-      required: true,
+      question_text: ETSY_FONT_STYLE_QUESTION_TEXT,
+      required: false,
       options: ETSY_PERSONALISATION_FONT_OPTIONS.map((label) => ({ label })),
     },
-    customTop && customBottom ? {
-      ...textInputBase,
-      question_text: 'Custom Text',
-      max_allowed_characters: 100,
-      instructions: 'Use Top: and/or Bottom: before your wording on separate lines. Max 40 characters each. One fee; leave blank for none.',
-    } : customTop ? {
+    customTop ? {
       ...textInputBase,
       question_text: 'Top Text',
       instructions: 'Enter the wording exactly as you would like it to appear at the top.',
     } : null,
-    !customTop && customBottom ? {
+    customBottom ? {
       ...textInputBase,
       question_text: 'Bottom Text',
       instructions: 'Enter the wording exactly as you would like it to appear at the bottom.',

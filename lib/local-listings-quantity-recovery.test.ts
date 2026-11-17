@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   shop: vi.fn(), section: vi.fn(), subSection: vi.fn(), listing: vi.fn(), reload: vi.fn(), update: vi.fn(),
   prices: vi.fn(), query: vi.fn(), defaults: vi.fn(), ensureSection: vi.fn(), transaction: vi.fn(),
+  execute: vi.fn(),
   write: vi.fn().mockResolvedValue({}),
   delivery: vi.fn(), deliverySynced: vi.fn(), deliveryMetadata: vi.fn(),
 }));
@@ -10,7 +11,7 @@ vi.mock('@/lib/prisma', () => ({ prisma: {
   etsyShop: { findUnique: mocks.shop }, etsyShopSection: { findFirst: mocks.section },
   etsyShopSubSection: { findFirst: mocks.subSection },
   etsyListing: { findFirst: mocks.listing, findUnique: mocks.reload, update: mocks.update },
-  adminProductPrice: { findMany: mocks.prices }, $queryRaw: mocks.query, $transaction: mocks.transaction,
+  adminProductPrice: { findMany: mocks.prices }, $queryRaw: mocks.query, $executeRaw: mocks.execute, $transaction: mocks.transaction,
   etsyListingFile: { updateMany: mocks.write, update: mocks.write }, etsyListingZip: { updateMany: mocks.write },
 } }));
 vi.mock('@/lib/etsy-oauth', () => ({
@@ -65,6 +66,18 @@ function listing(variant: 'print' | 'download') {
   };
 }
 
+function customisedListing(sharedSection = false) {
+  const saved = listing('print');
+  return {
+    ...saved, etsyCustomisedId: sharedSection ? null : '4601679091', etsyCustomisedRawJson: saved.rawJson,
+    productConfig: { ...saved.productConfig, customisePrints: true, customTop: true, customBottom: false },
+    ourCategory: { ...saved.ourCategory, customisePrints: true, customTop: true, customBottom: false,
+      customisedSection: sharedSection ? saved.ourCategory.printFrameSection
+        : { id: 10, etsyShopSectionId: 456, title: 'Customised prints' } },
+    images: saved.images.map((image) => ({ ...image, etsyCustomisedImageId: '88' })),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv('ETSY_SHARED_SECRET', 'test-secret');
@@ -73,6 +86,7 @@ beforeEach(() => {
   mocks.subSection.mockResolvedValue({ id: 3, name: 'SingleListings' });
   mocks.prices.mockResolvedValue([{ productKey: 'unframed_a4', amountPence: 1099 }, { productKey: 'digital_1', amountPence: 599 }]);
   mocks.query.mockResolvedValue([{ artworkOrientation: 'portrait' }]);
+  mocks.execute.mockResolvedValue(1);
   mocks.delivery.mockResolvedValue({
     profileId: null, shippingProfileId: null, readinessStateId: null, includeDeliveryInformation: false,
     deliveryInformation: '', usesManagedProfile: false, inherited: true, pending: false,
@@ -178,14 +192,7 @@ describe('recovering zero variation quantities during Etsy sync', () => {
   });
 
   it('assigns different profiles and wording to the actual print and customised Etsy listing IDs', async () => {
-    const saved = listing('print');
-    const current = {
-      ...saved, etsyCustomisedId: '4601679091', etsyCustomisedRawJson: saved.rawJson,
-      productConfig: { ...saved.productConfig, customisePrints: true, customTop: true, customBottom: false },
-      ourCategory: { ...saved.ourCategory, customisePrints: true, customTop: true, customBottom: false,
-        customisedSection: { id: 10, etsyShopSectionId: 456, title: 'Customised prints' } },
-      images: saved.images.map((image) => ({ ...image, etsyCustomisedImageId: '88' })),
-    };
+    const current = customisedListing();
     mocks.listing.mockResolvedValue(current); mocks.reload.mockResolvedValue(current);
     mocks.delivery.mockImplementation(async (_context, variant) => ({
       profileId: variant === 'print' ? 'local-print' : 'local-custom',
@@ -206,6 +213,57 @@ describe('recovering zero variation quantities during Etsy sync', () => {
       expected: expect.objectContaining({ profileId: 'local-print', shippingProfileId: '8888' }),
     });
     expect(mocks.deliverySynced).toHaveBeenCalledWith(expect.anything(), 'customised', '4601679091', expect.anything());
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.execute).toHaveBeenCalledWith(expect.any(Array), expect.stringMatching(/^[a-f0-9]{64}$/), 52, '4601679091');
+    expect(mocks.execute.mock.calls[0][0].join('')).toContain('SET etsyCustomisedPersonalisationFingerprint =');
+    expect(mocks.execute.mock.calls[0][0].join('')).not.toContain('etsyPrintPersonalisationFingerprint');
+    const verifiedIndex = fetchMock.mock.calls.findIndex(([url, init]) => init.method === 'GET' && url.endsWith('/listings/4601679091?legacy=false'));
+    expect(verifiedIndex).toBeGreaterThanOrEqual(0);
+    expect(fetchMock.mock.invocationCallOrder[verifiedIndex]).toBeLessThan(mocks.deliverySynced.mock.invocationCallOrder[1]);
+    expect(mocks.deliverySynced.mock.invocationCallOrder[1]).toBeLessThan(mocks.execute.mock.invocationCallOrder[0]);
+  });
+
+  it('records the print personalisation marker when customisation shares the print listing', async () => {
+    const current = customisedListing(true);
+    mocks.listing.mockResolvedValue(current); mocks.reload.mockResolvedValue(current);
+    const fetchMock = mockEtsy('print', { skipQuantityError: true });
+    await syncListingToEtsy('66615491', '2', '3', '52', ['print']);
+    const personalisation = fetchMock.mock.calls.find(([url, init]) => url.includes('/personalization?') && init.method === 'POST');
+    expect(personalisation?.[0]).toContain('/listings/4601679090/personalization?');
+    expect(JSON.parse(String(personalisation?.[1].body)).personalization_questions.map((question: { question_text: string }) => question.question_text))
+      .toEqual(['Font Style (default: Nunito)', 'Top Text']);
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.execute).toHaveBeenCalledWith(expect.any(Array), expect.stringMatching(/^[a-f0-9]{64}$/), 52, '4601679090');
+    expect(mocks.execute.mock.calls[0][0].join('')).toContain('SET etsyPrintPersonalisationFingerprint =');
+    expect(mocks.execute.mock.calls[0][0].join('')).not.toContain('etsyCustomisedPersonalisationFingerprint');
+    expect(mocks.deliverySynced.mock.invocationCallOrder[0]).toBeLessThan(mocks.execute.mock.invocationCallOrder[0]);
+  });
+
+  it.each(['personalisation', 'delivery profile verification', 'delivery completion'] as const)('retains the Etsy link and leaves personalisation pending if %s fails', async (stage) => {
+    const current = customisedListing();
+    mocks.listing.mockResolvedValue(current); mocks.reload.mockResolvedValue(current);
+    const fetchMock = mockEtsy('print', { skipQuantityError: true });
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url, init) => {
+      if (stage === 'personalisation' && init.method === 'POST' && url.includes('/personalization?')) {
+        return Response.json({ error: 'Personalisation rejected' }, { status: 400 });
+      }
+      const response = await original(url, init);
+      if (stage === 'delivery profile verification' && init.method === 'GET' && url.endsWith('/listings/4601679091?legacy=false')) {
+        return Response.json({ ...await response.json(), shipping_profile_id: 9999 });
+      }
+      return response;
+    });
+    if (stage === 'delivery completion') mocks.deliverySynced.mockRejectedValueOnce(new Error('Delivery settings changed'));
+    const expected = stage === 'personalisation' ? 'Personalisation rejected'
+      : stage === 'delivery profile verification' ? 'different delivery profile than requested' : 'Delivery settings changed';
+    await expect(syncListingToEtsy('66615491', '2', '3', '52', ['customised'])).rejects.toThrow(expected);
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ etsyCustomisedId: '4601679091' }) }));
+    expect(mocks.update.mock.calls.every(([call]) => !('etsyId' in call.data) && (!('etsyCustomisedId' in call.data) || call.data.etsyCustomisedId === '4601679091'))).toBe(true);
+    expect(current.etsyId).toBe('4601679090');
+    expect(current.etsyCustomisedId).toBe('4601679091');
+    if (stage !== 'delivery completion') expect(mocks.deliverySynced).not.toHaveBeenCalled();
   });
 
   it('does not resolve or assign physical profiles or wording for digital Etsy products', async () => {
@@ -215,6 +273,7 @@ describe('recovering zero variation quantities during Etsy sync', () => {
     await syncListingToEtsy('66615491', '2', '3', '52', ['download']);
     expect(mocks.delivery).not.toHaveBeenCalled();
     expect(mocks.deliverySynced).not.toHaveBeenCalled();
+    expect(mocks.execute).not.toHaveBeenCalled();
     for (const [, init] of fetchMock.mock.calls.filter(([, init]) => init.method === 'PATCH')) {
       const body = init.body as URLSearchParams;
       expect(body.has('shipping_profile_id')).toBe(false);

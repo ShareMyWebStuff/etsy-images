@@ -1,0 +1,56 @@
+{
+  "scheduledAt": "2026-11-16T23:09:38.112Z",
+  "timeZone": "Europe/London",
+  "pinsPerBoardPerDay": 2,
+  "boards": [
+    {
+      "boardName": "Bugs Nursery Prints & Wall Art",
+      "campaignId": 3,
+      "pins": 118,
+      "firstScheduledAt": "2026-11-17T09:00:00.000Z",
+      "lastScheduledAt": "2027-01-14T13:00:00.000Z"
+    },
+    {
+      "boardName": "Dinosaurs Nursery Prints & Wall Art",
+      "campaignId": 4,
+      "pins": 96,
+      "firstScheduledAt": "2026-11-17T09:00:00.000Z",
+      "lastScheduledAt": "2027-01-03T13:00:00.000Z"
+    },
+    {
+      "boardName": "Safari Animal Nursery Wall Art",
+      "campaignId": 5,
+      "pins": 111,
+      "firstScheduledAt": "2026-11-17T09:00:00.000Z",
+      "lastScheduledAt": "2027-01-11T09:00:00.000Z"
+    },
+    {
+      "boardName": "Woodland Nursery Prints & Decor",
+      "campaignId": 6,
+      "pins": 99,
+      "firstScheduledAt": "2026-11-17T09:00:00.000Z",
+      "lastScheduledAt": "2027-01-05T09:00:00.000Z"
+    },
+    {
+      "boardName": "Farm Animal Nursery Prints",
+      "campaignId": 7,
+      "pins": 93,
+      "firstScheduledAt": "2026-11-17T09:00:00.000Z",
+      "lastScheduledAt": "2027-01-02T09:00:00.000Z"
+    },
+    {
+      "boardName": "Sea Creature Nursery Wall Art",
+      "campaignId": 8,
+      "pins": 8,
+      "firstScheduledAt": "2026-11-17T09:00:00.000Z",
+      "lastScheduledAt": "2026-11-20T13:00:00.000Z"
+    },
+    {
+      "boardName": "Scarecrow & Autumn Wall Art",
+      "campaignId": 9,
+      "pins": 45,
+      "firstScheduledAt": "2026-11-17T09:00:00.000Z",
+      "lastScheduledAt": "2026-12-09T09:00:00.000Z"
+    }
+  ]
+}

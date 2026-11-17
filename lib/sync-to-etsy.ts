@@ -10,6 +10,7 @@ import { getTemplateDownloadSectionId, getTemplatePrintSection, hasRequiredTempl
 import { getRemoteEtsySectionIds } from '@/lib/local-shop-sections';
 import type { EtsySyncVariant } from '@/lib/etsy-sync-images';
 import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
+import { etsyPersonalisationFingerprint, loadEtsyPersonalisationSyncStates } from '@/lib/etsy-personalisation-sync-state';
 
 const MAX_ETSY_DOWNLOAD_SIZE_BYTES = 20 * 1024 * 1024;
 
@@ -138,6 +139,9 @@ export async function getSyncToEtsyData(
   });
 
   const shopIds = [...new Set(sections.map((section) => section.shop!.etsyShopId.toString()))];
+  const personalisationStates = await loadEtsyPersonalisationSyncStates(sections.flatMap((section) => (
+    section.subSections.flatMap((subSection) => subSection.listings.map((listing) => listing.id))
+  )));
   const savedDigitalPrices = await prisma.adminProductPrice.findMany({
     where: { category: 'digital' },
     select: { productKey: true, amountPence: true },
@@ -359,6 +363,12 @@ export async function getSyncToEtsyData(
             const changed = changedAfter(lastSyncedAt);
             const templateChanged = templateChangedAfter(lastSyncedAt);
             const priceChanged = variant === 'download' && digitalPriceChanged;
+            const personalisesVariant = customisation.customisePrints && (variant === 'customised'
+              || (variant === 'print' && templateSettings.printsFrames
+                && listing.ourCategory!.printFrameSection?.id === listing.ourCategory!.customisedSection?.id));
+            const personalisationChanged = listOnEtsy && enabled && personalisesVariant && remoteId !== null
+              && personalisationStates.get(listing.id)?.[variant as 'print' | 'customised']
+                !== etsyPersonalisationFingerprint(remoteId, customisation);
             const deliveryAssignment = variant === 'download' ? null
               : (listing.deliveryAssignmentSyncs ?? []).find((assignment) => assignment.variant === variant);
             const deliveryProfile = deliveryAssignment?.profile;
@@ -392,7 +402,8 @@ export async function getSyncToEtsyData(
             if (changed && changedAreas.length === 0) changedAreas.push('Local changes');
             if (templateChanged) changedAreas.push('Template');
             if (deliveryChanged) changedAreas.push('Markets & Delivery');
-            const needsSync = enabled && (remoteId === null || !sectionIsCurrent || changed || priceChanged || templateChanged || deliveryChanged);
+            if (personalisationChanged) changedAreas.push('Personalisation');
+            const needsSync = enabled && (remoteId === null || !sectionIsCurrent || changed || priceChanged || templateChanged || deliveryChanged || personalisationChanged);
             const pending = [
               remoteId === null ? `New ${variant === 'download' ? 'digital' : variant} listing` : null,
               ...changedAreas,

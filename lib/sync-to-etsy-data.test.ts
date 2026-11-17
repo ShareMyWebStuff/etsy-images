@@ -1,15 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ sections: vi.fn(), prices: vi.fn(), remoteSections: vi.fn() }));
+const mocks = vi.hoisted(() => ({ sections: vi.fn(), prices: vi.fn(), remoteSections: vi.fn(), personalisationStates: vi.fn() }));
 vi.mock('@/lib/prisma', () => ({ prisma: {
   etsyShopSection: { findMany: mocks.sections },
   adminProductPrice: { findMany: mocks.prices },
 } }));
 vi.mock('@/lib/local-shop-sections', () => ({ getRemoteEtsySectionIds: mocks.remoteSections }));
+vi.mock('@/lib/etsy-personalisation-sync-state', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/etsy-personalisation-sync-state')>(),
+  loadEtsyPersonalisationSyncStates: mocks.personalisationStates,
+}));
 
 import { getSyncToEtsyData } from '@/lib/sync-to-etsy';
 import { createListingPrintCropSettings, defaultNativeListingPrintCropDraft } from '@/lib/listing-print-crops';
 import { PRINTABLE_DOWNLOAD_SPECS } from '@/lib/printable-download-specs';
+import { etsyPersonalisationFingerprint } from '@/lib/etsy-personalisation-sync-state';
+import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
 
 const originalDate = new Date('2026-11-01T12:00:00Z');
 const syncedDate = new Date('2026-11-02T12:00:00Z');
@@ -85,6 +91,13 @@ function syncedListing(id = 518) {
 }
 
 function loadListings(...listings: ReturnType<typeof syncedListing>[]) {
+  mocks.personalisationStates.mockImplementation(async () => new Map(listings.map((listing) => {
+    const settings = effectiveListingTemplateSettings(listing.ourCategory, listing.productConfig);
+    return [listing.id, {
+      print: etsyPersonalisationFingerprint(listing.etsyId, settings),
+      customised: listing.etsyCustomisedId ? etsyPersonalisationFingerprint(listing.etsyCustomisedId, settings) : null,
+    }];
+  })));
   mocks.remoteSections.mockResolvedValue([123, 456, 789]);
   mocks.sections.mockResolvedValue([{
     id: 14, title: 'Scarecrows', shop: { etsyShopId: 66615491n, shopName: 'Test Shop' },
@@ -100,6 +113,83 @@ beforeEach(() => {
     subSections: [],
   }]);
   mocks.prices.mockResolvedValue([]);
+  mocks.personalisationStates.mockResolvedValue(new Map());
+});
+
+describe('free personalisation updates on Sync to Etsy', () => {
+  it.each([true, false])('resyncs previously synced free fields for the optional default font (shared print: %s)', async (shared) => {
+    const listing = syncedListing();
+    listing.ourCategory.customisePrints = true;
+    listing.productConfig.customisePrints = true;
+    if (shared) listing.ourCategory.customisedSection = listing.ourCategory.printFrameSection;
+    else listing.etsyCustomisedId = 'customised-518';
+    loadListings(listing);
+    // Stored fingerprints of the preceding free fields: required Font Style,
+    // No Customisation option, separate optional Top Text and Bottom Text.
+    mocks.personalisationStates.mockResolvedValue(new Map([[listing.id, {
+      print: 'af8518186983a8e2f01461bb842a04d108b3a1284ea410fe157098c438221fe1',
+      customised: '07c5ebcd1d9c42a0196a4344464e41df850af62dd3c29f354c40dbc4e57df08f',
+    }]]));
+    const affectedVariant = shared ? 'print' : 'customised';
+    const data = await getSyncToEtsyData();
+    for (const section of [...data.localSections, ...data.sections]) {
+      for (const row of section.listings) {
+        expect(row).toMatchObject(row.syncVariants.includes(affectedVariant)
+          ? { canSync: true, isSynced: false, pendingChanges: ['Personalisation'] }
+          : { canSync: false, isSynced: true, pendingChanges: [] });
+      }
+    }
+
+    // A successful sync records the new questions and clears just this pending work.
+    loadListings(listing);
+    const updated = await getSyncToEtsyData();
+    expect(updated.localSections[0].listings.every(row => row.isSynced && !row.canSync && row.pendingChanges.length === 0)).toBe(true);
+  });
+
+  it('marks shared customisable physical listings in both views and leaves their digital listing current', async () => {
+    const listing = syncedListing();
+    listing.ourCategory.customisePrints = true;
+    listing.productConfig.customisePrints = true;
+    listing.ourCategory.customisedSection = listing.ourCategory.printFrameSection;
+    loadListings(listing);
+    mocks.personalisationStates.mockResolvedValue(new Map());
+    const data = await getSyncToEtsyData();
+    for (const section of [...data.localSections, ...data.sections]) {
+      for (const row of section.listings) {
+        expect(row).toMatchObject(row.syncVariants.includes('download')
+          ? { canSync: false, isSynced: true, pendingChanges: [] }
+          : { canSync: true, isSynced: false, pendingChanges: ['Personalisation'] });
+      }
+    }
+  });
+
+  it('marks only the separate customised variant and clears the marker after its successful sync', async () => {
+    const listing = syncedListing();
+    listing.ourCategory.customisePrints = true;
+    listing.productConfig.customisePrints = true;
+    listing.etsyCustomisedId = 'customised-518';
+    loadListings(listing);
+    mocks.personalisationStates.mockResolvedValue(new Map());
+    let data = await getSyncToEtsyData();
+    expect(data.localSections[0].listings.filter((row) => row.canSync).map((row) => row.syncVariants)).toEqual([['customised']]);
+    mocks.personalisationStates.mockResolvedValue(new Map([[listing.id, {
+      print: null,
+      customised: etsyPersonalisationFingerprint('customised-518', effectiveListingTemplateSettings(listing.ourCategory, listing.productConfig)),
+    }]]));
+    data = await getSyncToEtsyData();
+    expect(data.localSections[0].listings.every((row) => !row.canSync && !row.pendingChanges.includes('Personalisation'))).toBe(true);
+  });
+
+  it('does not mark disabled customisation or ordinary prints and digital downloads for this change', async () => {
+    const ordinary = syncedListing(518);
+    const disabled = syncedListing(519);
+    disabled.ourCategory.customisePrints = true;
+    disabled.productConfig.customisePrints = false;
+    loadListings(ordinary, disabled);
+    mocks.personalisationStates.mockResolvedValue(new Map());
+    const data = await getSyncToEtsyData();
+    expect(data.localSections[0].listings.every((row) => !row.canSync && row.pendingChanges.length === 0)).toBe(true);
+  });
 });
 
 describe('template changes on Sync to Etsy', () => {

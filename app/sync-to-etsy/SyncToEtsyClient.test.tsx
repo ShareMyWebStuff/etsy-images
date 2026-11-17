@@ -256,6 +256,30 @@ describe('SyncToEtsyClient views', () => {
     await waitFor(() => expect(button.hasAttribute('disabled')).toBe(false));
   });
 
+  it.each(['local', 'etsy'])('shows free personalisation updates on a published listing in %s view', (view) => {
+    const physical: SyncToEtsyListing = {
+      ...listing, hasEtsyListing: true, isPublished: true, hasActiveEtsyListing: true,
+      pendingChanges: ['Personalisation'],
+    };
+    const digital: SyncToEtsyListing = {
+      ...physical, etsyCategory: 'Digital Downloads', etsyProductType: 'digital',
+      etsyListingMode: 'download', syncVariants: ['download'], canSync: false, pendingChanges: [],
+    };
+    const updatedData: SyncToEtsyData = {
+      localSections: [{ ...data.localSections[0], listings: [physical, digital] }],
+      sections: [{ ...data.sections[0], listings: [physical] }],
+    };
+    render(<SyncToEtsyClient initialData={updatedData} shops={shops} />);
+    if (view === 'etsy') fireEvent.click(screen.getByRole('tab', { name: 'Etsy View' }));
+    fireEvent.click(screen.getByRole('button', { name: view === 'local' ? /Dinosaur Wall Art/ : /Kids & Nursery Prints/ }));
+    const physicalRow = screen.getByRole('button', { name: 'Sync Print' }).closest('tr')!;
+    expect(within(physicalRow).getByText('Published')).toBeTruthy();
+    expect(within(physicalRow).getByText('Needs sync: Personalisation')).toBeTruthy();
+    expect(within(physicalRow).getByRole('button', { name: 'Sync Print' }).hasAttribute('disabled')).toBe(false);
+    expect(screen.getAllByText('Needs sync: Personalisation')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Sync Digital' })).toBeNull();
+  });
+
   it('orders listings by listing name and then Etsy section', () => {
     const unorderedData: SyncToEtsyData = {
       ...data,

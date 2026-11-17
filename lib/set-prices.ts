@@ -369,15 +369,6 @@ export async function saveProductPrices(input: unknown): Promise<SavePricesResul
           },
         });
       }
-      if (changed.some((entry) => entry.key === 'customisation_fee')) {
-        await tx.etsyListing.updateMany({
-          where: {
-            OR: [{ etsyId: { not: null } }, { etsyCustomisedId: { not: null } }],
-            productConfig: { is: { OR: [{ customTop: true }, { customBottom: true }] } },
-          },
-          data: { productsChanged: true, lastLocalChangeAt: new Date() },
-        });
-      }
     });
   }
 

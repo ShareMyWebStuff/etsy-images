@@ -41,6 +41,8 @@ model EtsyListing {
   etsyCustomisedRawJson         Json?
   etsyCustomisedShopSectionId   Int?
   etsyCustomisedLastSyncedAt    DateTime?
+  etsyPrintPersonalisationFingerprint      String? @db.Char(64)
+  etsyCustomisedPersonalisationFingerprint String? @db.Char(64)
   shopId                        String
   userId                        String?
   title                         String
@@ -894,6 +896,7 @@ model PinterestPin {
   campaignId     Int?
   pinterestPinId String?            @unique
   creativeType   String             @default("STANDARD") @db.VarChar(20)
+  creativeStorageKey String?         @db.VarChar(512)
   title          String             @db.VarChar(100)
   description    String             @db.Text
   destinationUrl String?            @db.Text

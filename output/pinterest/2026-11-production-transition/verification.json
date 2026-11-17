@@ -1,0 +1,52 @@
+{
+  "verifiedAt": "2026-11-16T19:24:09.766Z",
+  "environment": "production",
+  "username": "davef0498",
+  "standardAccessConfirmedBy": "user",
+  "productionAccountReadVerified": true,
+  "boards": [
+    {
+      "id": 7,
+      "name": "Bugs Nursery Prints & Wall Art",
+      "pinterestBoardId": "856387754082961526",
+      "verifiedInProduction": true
+    },
+    {
+      "id": 8,
+      "name": "Dinosaurs Nursery Prints & Wall Art",
+      "pinterestBoardId": "856387754082962137",
+      "verifiedInProduction": true
+    },
+    {
+      "id": 9,
+      "name": "Safari Animal Nursery Wall Art",
+      "pinterestBoardId": "856387754082986585",
+      "verifiedInProduction": true
+    },
+    {
+      "id": 10,
+      "name": "Woodland Nursery Prints & Decor",
+      "pinterestBoardId": "856387754082986586",
+      "verifiedInProduction": true
+    },
+    {
+      "id": 11,
+      "name": "Farm Animal Nursery Prints",
+      "pinterestBoardId": "856387754082986587",
+      "verifiedInProduction": true
+    }
+  ],
+  "boardIdsPreserved": true,
+  "preparedDrafts": 45,
+  "draftContentsAndCreativesUnchanged": true,
+  "oldSchedulesPaused": 107,
+  "originalScheduleDetailsPreserved": true,
+  "publishing": 0,
+  "publishedDuringTransition": 0,
+  "etsyListingDataUnchanged": true,
+  "runtimeAuthAndBoardGuardsVerified": true,
+  "runtimeDraftReviewRows": 45,
+  "finalVerifiedAt": "2026-11-16T19:28:33.025Z",
+  "automatedTestsPassed": 1019,
+  "typeScriptPassed": true
+}

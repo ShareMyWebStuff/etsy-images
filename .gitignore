@@ -5,5 +5,8 @@ node_modules
 prisma/generated
 npm-debug.log*
 .etsy-tokens.json
+.pinterest-board-environments.json
 .tmp/
 .playwright/
+/output/pinterest/**/sources/
+/output/pinterest/**/images/

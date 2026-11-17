@@ -24,14 +24,29 @@ describe('Set Prices initialisation', () => {
     await ensureDefaultPrices(fakeClient);
     await ensureDefaultPrices(fakeClient);
 
-    expect(stored.size).toBe(44);
+    expect(stored.size).toBe(43);
     expect(stored.get('digital_1')).toBe(777);
     expect(stored.get('framed_24x36')).toBe(10999);
     expect(stored.get('unframed_a1')).toBe(3499);
     expect(stored.get('framed_a1')).toBe(9999);
-    expect(stored.get('customisation_fee')).toBe(499);
+    expect(stored.has('customisation_fee')).toBe(false);
     expect(createMany).toHaveBeenCalledTimes(2);
     expect(createMany.mock.calls.every(([args]) => args.skipDuplicates)).toBe(true);
+  });
+
+  it('preserves a historical customisation fee without including it in active defaults', async () => {
+    const stored = new Map<string, number>([['customisation_fee', 499]]);
+    const createMany = vi.fn(async ({ data }: { data: Array<{ productKey: string; amountPence: number }> }) => {
+      for (const row of data) {
+        if (!stored.has(row.productKey)) stored.set(row.productKey, row.amountPence);
+      }
+      return { count: data.length };
+    });
+
+    await ensureDefaultPrices({ adminProductPrice: { createMany } });
+
+    expect(stored.get('customisation_fee')).toBe(499);
+    expect(createMany.mock.calls[0][0].data.map((row) => row.productKey)).not.toContain('customisation_fee');
   });
 });
 

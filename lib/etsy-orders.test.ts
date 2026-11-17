@@ -76,6 +76,38 @@ describe('Etsy order import helpers', () => {
     })).toMatchObject({ size: '8x10', productType: 'Print', frameColour: null, isCustomised: false });
   });
 
+  it.each(['Font', 'Font Style', 'Font Style (default: Nunito)'])('persists the effective selected font from %s', (fontQuestion) => {
+    expect(parseEtsyOrderTransaction({
+      transaction_id: '1', listing_id: '2',
+      variations: [
+        { formatted_name: fontQuestion, formatted_value: 'Quicksand' },
+        { formatted_name: 'Top Text', formatted_value: 'Oliver' },
+        { formatted_name: 'Bottom Text', formatted_value: 'Bedroom' },
+      ],
+    })).toMatchObject({ topText: 'Oliver', bottomText: 'Bedroom', fontId: 'quicksand-semibold', isCustomised: true });
+  });
+
+  it.each([null, '', '  '])('persists Nunito for wording with a missing or blank font: %s', (font) => {
+    expect(parseEtsyOrderTransaction({
+      transaction_id: '1', listing_id: '2',
+      variations: [
+        ...(font === null ? [] : [{ formatted_name: 'Font Style (default: Nunito)', formatted_value: font }]),
+        { formatted_name: 'Bottom Text', formatted_value: 'Bedroom' },
+      ],
+    })).toMatchObject({ topText: null, bottomText: 'Bedroom', fontId: 'nunito-semibold', isCustomised: true });
+  });
+
+  it('does not add wording when only a font is selected', () => {
+    expect(parseEtsyOrderTransaction({
+      transaction_id: '1', listing_id: '2',
+      variations: [
+        { formatted_name: 'Font Style (default: Nunito)', formatted_value: 'Fredoka' },
+        { formatted_name: 'Top Text', formatted_value: '  ' },
+        { formatted_name: 'Bottom Text', formatted_value: '\n' },
+      ],
+    })).toMatchObject({ topText: null, bottomText: null, fontId: 'fredoka-bold', isCustomised: false });
+  });
+
   it.each([
     { value: 'Top: OLIVER', topText: 'OLIVER', bottomText: null },
     { value: 'Bottom: MY ROOM', topText: null, bottomText: 'MY ROOM' },
