@@ -13,6 +13,7 @@ type Props = {
   sharedPhysicalListing?: boolean;
   baseDescription?: string;
   disabled?: boolean;
+  standalone?: boolean;
 };
 
 const emptySettings: DeliverySettingsInput = {
@@ -31,7 +32,7 @@ function destinationSummary(profile: DeliveryProfile | undefined) {
   }).join(', ') || 'No destinations enabled';
 }
 
-export function MarketsDeliverySettings({ target, printsEnabled, customisedEnabled, sharedPhysicalListing = false, baseDescription, disabled = false }: Props) {
+export function MarketsDeliverySettings({ target, printsEnabled, customisedEnabled, sharedPhysicalListing = false, baseDescription, disabled = false, standalone = false }: Props) {
   const [data, setData] = useState<MarketsDeliverySettingsState | null>(null);
   const [settings, setSettings] = useState<DeliverySettingsInput | null>(null);
   const [loading, setLoading] = useState(true);
@@ -152,10 +153,12 @@ export function MarketsDeliverySettings({ target, printsEnabled, customisedEnabl
     </div>;
   }
 
-  return <section className="grid gap-4 border-t pt-4" aria-label="Markets & Delivery">
+  const Heading = standalone ? 'h2' : 'h3';
+
+  return <section className={standalone ? 'grid gap-4 rounded-lg border bg-card p-5' : 'grid gap-4 border-t pt-4'} aria-label="Markets & Delivery">
     <div className="flex flex-wrap items-start justify-between gap-2">
       <div>
-        <h3 className="font-semibold">Markets &amp; Delivery</h3>
+        <Heading className={standalone ? 'text-lg font-semibold' : 'font-semibold'}>Markets &amp; Delivery</Heading>
         <p className="text-xs text-muted-foreground">Delivery information appears in the Etsy description, separately from artwork Top Text and Bottom Text.</p>
       </div>
       <a href={`/etsy/markets-delivery?shopId=${encodeURIComponent(shopId)}`} className="text-sm font-medium underline underline-offset-4">Manage delivery profiles</a>

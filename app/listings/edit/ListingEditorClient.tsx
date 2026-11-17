@@ -2322,14 +2322,6 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               </label> : null}
             </div>
           </div> : null}
-          <MarketsDeliverySettings
-            target={{ type: 'listing', context: data.context }}
-            printsEnabled={Boolean(data.template?.printsFrames && data.etsyProducts.config.printsFramesOverride !== false)}
-            customisedEnabled={Boolean(data.template?.customisePrints && data.etsyProducts.config.customisePrints)}
-            sharedPhysicalListing={Boolean(data.template?.sharedPhysicalDelivery && data.template.printsFrames && data.etsyProducts.config.printsFramesOverride !== false && data.etsyProducts.config.customisePrints)}
-            baseDescription={data.listing.description}
-            disabled={busyKey !== null}
-          />
         </section>
 
         <section className="grid gap-4 rounded-lg border bg-card p-5">
@@ -2486,6 +2478,16 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
             </div>
           </div>}
         </section>
+
+        <MarketsDeliverySettings
+          standalone
+          target={{ type: 'listing', context: data.context }}
+          printsEnabled={Boolean(data.template?.printsFrames && data.etsyProducts.config.printsFramesOverride !== false)}
+          customisedEnabled={Boolean(data.template?.customisePrints && data.etsyProducts.config.customisePrints)}
+          sharedPhysicalListing={Boolean(data.template?.sharedPhysicalDelivery && data.template.printsFrames && data.etsyProducts.config.printsFramesOverride !== false && data.etsyProducts.config.customisePrints)}
+          baseDescription={data.listing.description}
+          disabled={busyKey !== null}
+        />
 
         <section className="rounded-lg border bg-card p-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
