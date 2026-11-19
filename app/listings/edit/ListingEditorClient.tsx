@@ -40,6 +40,7 @@ import { ListingMockupTesterDialog, type ListingMockupArtworkOption } from './Li
 import { ListingPrintCropDialog } from './ListingPrintCropDialog';
 import { ListingTextAreasDialog } from './ListingTextAreasDialog';
 import { ListingThumbnailChooser } from './ListingThumbnailChooser';
+import { ListingThumbnailGapControl } from './ListingThumbnailGapControl';
 
 type ListingEditorClientProps = {
   initialData: ListingEditorData | null;
@@ -2374,7 +2375,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                   <p>A ratio of 2:3 or 3:2 will be clipped down to the sizes.</p>
                 </div>
               </div>
-              <div className="grid w-40 gap-2">
+              <div className="grid w-64 max-w-full gap-2">
                 <Button type="button" size="sm" variant="outline" onClick={() => setPrintCropsOpen(true)} disabled={busyKey !== null || !data.thumbnail}>
                   Set Size
                 </Button>
@@ -2413,6 +2414,20 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 >
                   Tester
                 </Button>
+                <ListingThumbnailGapControl
+                  context={context}
+                  thumbnail={data.thumbnail}
+                  disabled={busyKey !== null}
+                  onAdjustingChange={(adjusting) => setBusyKey((current) => adjusting
+                    ? 'adjust-thumbnail-gap'
+                    : current === 'adjust-thumbnail-gap' ? null : current)}
+                  onAdjusted={(nextData) => {
+                    setData(nextData);
+                    setPreparedPersonalisationPrompt(null);
+                    personalisationSourceImage.current = null;
+                    personalisationPreparationId.current += 1;
+                  }}
+                />
               </div>
             </div>
             {data.thumbnail ? <div className="flex flex-wrap items-start gap-4">

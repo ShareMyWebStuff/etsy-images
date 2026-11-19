@@ -176,6 +176,34 @@ export async function writeFile(filePath: string, contents: Buffer | Uint8Array 
   await putKey(key, body);
 }
 
+function stagedThumbnailKey(filePath: string) {
+  const key = keyFromPath(filePath);
+  if (!/(?:^|\/)thumbnail\/thumbnail-gap-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.png$/i.test(key)) {
+    throw new Error('Only a newly staged thumbnail gap image can use this storage operation.');
+  }
+  return key;
+}
+
+/** Both writes settle before cleanup can run, including when only one write fails. */
+export async function writeStagedListingThumbnail(filePath: string, contents: Buffer) {
+  const key = stagedThumbnailKey(filePath);
+  const preview = await createAppPreview(contents);
+  const results = await Promise.allSettled([putKey(key, contents), putKey(previewKeyForKey(key), preview)]);
+  const failure = results.find((result) => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
+}
+
+/** Never checks or removes the previous thumbnail; preview-only staging is also cleaned. */
+export async function removeStagedListingThumbnail(filePath: string) {
+  const key = stagedThumbnailKey(filePath);
+  const results = await Promise.allSettled([key, previewKeyForKey(key)].map((objectKey) => runS3Operation(
+    'cleaning a newly staged thumbnail',
+    () => client.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey })),
+  )));
+  const failure = results.find((result) => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
+}
+
 export async function mkdir(directoryPath: string, _options?: { recursive?: boolean }) {
   const key = keyFromPath(directoryPath);
   if (key) await client.send(new PutObjectCommand({ Bucket: bucket, Key: `${key}/`, Body: Buffer.alloc(0) }));

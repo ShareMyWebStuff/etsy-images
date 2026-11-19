@@ -358,7 +358,7 @@ function getMissingUploadFields(listing: {
   ].filter((field): field is string => field !== null);
 }
 
-async function getListingForContext(context: ListingEditorContext) {
+export async function getListingForContext(context: ListingEditorContext) {
   const etsyShopId = BigInt(context.shopId);
   const sectionId = toInt(context.sectionId, 'section id');
   const subSectionId = toInt(context.subSectionId, 'sub section id');
@@ -562,7 +562,7 @@ async function getListingForContext(context: ListingEditorContext) {
   };
 }
 
-async function mapEditorData(
+export async function mapEditorData(
   context: ListingEditorContext,
   data: Awaited<ReturnType<typeof getListingForContext>>,
 ): Promise<ListingEditorData> {
