@@ -64,6 +64,13 @@ beforeEach(() => {
 });
 
 describe('grouped generation source crops', () => {
+  it('does not start generation or record completion when old image cleanup fails', async () => {
+    mocks.deleteImages.mockRejectedValueOnce(new Error('Stored image cleanup failed'));
+    await expect(generateListingOverview(context, 'all')).rejects.toThrow('Stored image cleanup failed');
+    expect(mocks.generateImages).not.toHaveBeenCalled();
+    expect(mocks.saveFingerprint).not.toHaveBeenCalled();
+  });
+
   it.each(['crop', 'text areas'] as const)('regenerates Only Changed when a grouped source changes its %s before downloads are rebuilt', async (change) => {
     await recordCurrentListingOverviewFingerprint(context);
     const unchanged = await generateListingOverview(context, 'changed');
@@ -78,5 +85,22 @@ describe('grouped generation source crops', () => {
     expect(mocks.generateImages).toHaveBeenCalledWith(context);
     expect(mocks.generateDetails).toHaveBeenCalledWith(context);
     expect(mocks.groupedPdf).toHaveBeenCalledWith(context);
+  });
+
+  it('regenerates a pending scene even when a legacy listing has no fingerprint', async () => {
+    const data = await mocks.data();
+    data.listing.imagesNeedRegeneration = true;
+    mocks.generateImages.mockImplementationOnce(async () => { data.listing.imagesNeedRegeneration = false; });
+    const result = await generateListingOverview(context, 'changed');
+    expect(result.generation).toEqual({ regenerated: true, baselineCreated: false });
+    expect(mocks.generateImages).toHaveBeenCalledWith(context);
+    expect(fingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('does not accept a generation baseline while scene outputs are stale', async () => {
+    const data = await mocks.data();
+    data.listing.imagesNeedRegeneration = true;
+    await expect(recordCurrentListingOverviewFingerprint(context)).rejects.toThrow('listing images need regeneration');
+    expect(mocks.saveFingerprint).not.toHaveBeenCalled();
   });
 });

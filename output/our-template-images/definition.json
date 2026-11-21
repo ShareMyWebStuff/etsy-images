@@ -1,0 +1,59 @@
+{
+  "width": 1000,
+  "height": 700,
+  "lightingMode": "paired",
+  "openings": [
+    {
+      "id": "fox",
+      "name": "Fox frame",
+      "corners": {
+        "topLeft": {
+          "x": 180,
+          "y": 80
+        },
+        "topRight": {
+          "x": 400,
+          "y": 130
+        },
+        "bottomRight": {
+          "x": 365,
+          "y": 450
+        },
+        "bottomLeft": {
+          "x": 145,
+          "y": 400
+        }
+      },
+      "imageItemNumber": 1,
+      "ratio": "iso-a1",
+      "orientation": "portrait",
+      "placements": {}
+    },
+    {
+      "id": "rabbit",
+      "name": "Rabbit frame",
+      "corners": {
+        "topLeft": {
+          "x": 570,
+          "y": 130
+        },
+        "topRight": {
+          "x": 810,
+          "y": 85
+        },
+        "bottomRight": {
+          "x": 855,
+          "y": 400
+        },
+        "bottomLeft": {
+          "x": 615,
+          "y": 445
+        }
+      },
+      "imageItemNumber": 2,
+      "ratio": "4x5",
+      "orientation": "portrait",
+      "placements": {}
+    }
+  ]
+}

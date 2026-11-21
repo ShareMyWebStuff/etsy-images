@@ -7,6 +7,7 @@ import { resolveListingCategory, type ListingTemplateProducts } from '@/lib/list
 import { prisma } from '@/lib/prisma';
 import { hasRequiredTemplateDownloadSection } from '@/lib/template-download-section';
 import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
+import { listingsNeedingImageGeneration } from '@/lib/listing-image-generation-state';
 
 export type SubSectionListingsPageData = {
   shop: {
@@ -215,6 +216,7 @@ export async function getSubSectionListingsPageData(
   })]);
 
   const shopName = shop.shopName ?? shop.title ?? `Shop ${shop.etsyShopId}`;
+  const imagesNeedingGeneration = await listingsNeedingImageGeneration(listings.map(({ id }) => id));
   return {
     shop: {
       id: shop.etsyShopId.toString(),
@@ -247,6 +249,7 @@ export async function getSubSectionListingsPageData(
         image.ourCategoryImageTemplateId === null ? [] : [image.ourCategoryImageTemplateId]
       )));
       const hasRequiredImages = (listing.ourCategory?.imageTemplates.length ?? 0) > 0
+        && !imagesNeedingGeneration.has(listing.id)
         && listing.ourCategory!.imageTemplates.every((template) => generatedTemplateIds.has(template.id));
       const hasThumbnail = (listing.thumbnailFileName?.trim().length ?? 0) > 0;
       const listingPath = getListingDirectoryPath(

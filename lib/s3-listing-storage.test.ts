@@ -14,7 +14,7 @@ vi.mock('@aws-sdk/client-s3', () => ({
   PutObjectCommand: class { constructor(readonly input: unknown) {} },
 }));
 
-import { readFile, removeStagedListingThumbnail, writeFile, writeStagedListingThumbnail } from '@/lib/s3-listing-storage';
+import { listGeneratedListingImageFiles, readFile, removeStagedListingThumbnail, rm, unlink, writeFile, writeStagedListingThumbnail } from '@/lib/s3-listing-storage';
 
 beforeEach(() => {
   aws.send.mockReset().mockResolvedValue({});
@@ -92,5 +92,93 @@ describe('listing image app previews', () => {
 
     await expect(readFile('D:/Etsy/EtsyListings/Test Shop/Listing/image_1.png'))
       .rejects.toThrow('S3 timed out while reading the stored file "Test Shop/Listing/image_1.png". Please try again.');
+  });
+});
+
+describe('paired image deletion and generated-file discovery', () => {
+  const directory = 'D:/Etsy/EtsyListings/Test Shop/Listing';
+  const key = 'Test Shop/Listing/template-42.png';
+  const previewKey = `.app-previews/${key}.webp`;
+  const missing = () => Object.assign(new Error('Not found'), { $metadata: { httpStatusCode: 404 } });
+
+  it('removes a preview-only leftover even when its original is already missing', async () => {
+    aws.send.mockImplementation(async (command) => {
+      if (command.constructor.name === 'HeadObjectCommand') {
+        if (command.input.Key === key) throw missing();
+        return { ContentLength: 5 };
+      }
+      return {};
+    });
+    await unlink(`${directory}/template-42.png`);
+    expect(aws.send.mock.calls.filter(([command]) => command.constructor.name === 'DeleteObjectCommand').map(([command]) => command.input.Key))
+      .toEqual([key, previewKey]);
+  });
+
+  it('reports a truly missing original and preview without pretending a storage error was a missing file', async () => {
+    aws.send.mockRejectedValue(missing());
+    await expect(unlink(`${directory}/template-42.png`)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(aws.send.mock.calls.some(([command]) => command.constructor.name === 'DeleteObjectCommand')).toBe(false);
+    aws.send.mockReset().mockRejectedValue(new Error('Access denied'));
+    await expect(unlink(`${directory}/template-42.png`)).rejects.toThrow('Access denied');
+  });
+
+  it('settles both deletion requests before exposing failure to restoration code, and permits cleanup retry', async () => {
+    let finishPreview: () => void = () => undefined;
+    let settled = false;
+    aws.send.mockImplementation(async (command) => {
+      if (command.constructor.name === 'HeadObjectCommand') return { ContentLength: 5 };
+      if (command.input.Key === key) throw new Error('Original delete failed');
+      return new Promise<void>((resolve) => { finishPreview = resolve; });
+    });
+    const outcome = unlink(`${directory}/template-42.png`).then(() => { settled = true; return null; }, (error) => { settled = true; return error; });
+    await vi.waitFor(() => expect(aws.send.mock.calls.filter(([command]) => command.constructor.name === 'DeleteObjectCommand')).toHaveLength(2));
+    expect(settled).toBe(false);
+    finishPreview();
+    expect((await outcome)?.message).toBe('Original delete failed');
+    aws.send.mockReset().mockResolvedValue({ ContentLength: 5 });
+    await expect(unlink(`${directory}/template-42.png`)).resolves.toBeUndefined();
+  });
+
+  it('discovers paginated originals and preview-only generated files without including thumbnails, downloads or neighbours', async () => {
+    const prefix = 'Test Shop/Listing/';
+    const smallPrefix = `.app-previews/${prefix}`;
+    aws.send.mockImplementation(async (command) => {
+      const input = command.input;
+      if (input.Prefix === prefix && !input.ContinuationToken) return { IsTruncated: true, NextContinuationToken: 'second', Contents: [
+        { Key: `${prefix}template-42.png` }, { Key: `${prefix}thumbnail/thumbnail.png` }, { Key: `${prefix}manual-photo.png` },
+        { Key: 'Test Shop/Listing neighbour/template-93.png' }, { Key: `${prefix}template-0.png` },
+      ] };
+      if (input.Prefix === prefix && input.ContinuationToken === 'second') return { Contents: [{ Key: `${prefix}template-43.png` }] };
+      if (input.Prefix === smallPrefix) return { Contents: [
+        { Key: `${smallPrefix}template-42.png.webp` }, { Key: `${smallPrefix}template-44.png.webp` },
+        { Key: `${smallPrefix}downloads/template-99.png.webp` }, { Key: `${smallPrefix}manual-photo.png.webp` }, { Key: `${smallPrefix}template-45.png` },
+      ] };
+      throw new Error(`Unexpected listing prefix: ${input.Prefix}`);
+    });
+    expect(await listGeneratedListingImageFiles(directory)).toEqual(['template-42.png', 'template-43.png', 'template-44.png']);
+    expect(aws.send.mock.calls).toHaveLength(3);
+    expect(aws.send.mock.calls.every(([command]) => command.input.Delimiter === '/')).toBe(true);
+  });
+
+  it('does not claim cleanup success when S3 reports a partial batch deletion failure', async () => {
+    aws.send.mockImplementation(async (command) => {
+      if (command.constructor.name === 'ListObjectsV2Command') return command.input.Prefix === 'Test Shop/Listing/' ? { Contents: [{ Key: key }] } : {};
+      if (command.constructor.name === 'HeadObjectCommand') throw missing();
+      if (command.constructor.name === 'DeleteObjectsCommand') return { Errors: [{ Key: key, Code: 'AccessDenied', Message: 'Access denied' }] };
+      return {};
+    });
+    await expect(rm(directory, { recursive: true })).rejects.toThrow('S3 could not delete 1 stored file');
+  });
+
+  it('waits for a late image upload before allowing a failed write to be cleaned', async () => {
+    const image = await sharp({ create: { width: 8, height: 10, channels: 3, background: '#fff' } }).png().toBuffer();
+    let finishPreview: () => void = () => undefined;
+    let settled = false;
+    aws.send.mockRejectedValueOnce(new Error('Original upload failed')).mockImplementationOnce(() => new Promise<void>((resolve) => { finishPreview = resolve; }));
+    const outcome = writeFile(`${directory}/template-42.png`, image).then(() => { settled = true; return null; }, (error) => { settled = true; return error; });
+    await vi.waitFor(() => expect(aws.send).toHaveBeenCalledTimes(2));
+    expect(settled).toBe(false);
+    finishPreview();
+    expect((await outcome)?.message).toBe('Original upload failed');
   });
 });

@@ -99,6 +99,8 @@ model EtsyListing {
   detailsChanged                Boolean                      @default(false)
   tagsChanged                   Boolean                      @default(false)
   imagesChanged                 Boolean                      @default(false)
+  listingImagesRevision         Int                          @default(0)
+  listingImagesGeneratedRevision Int                         @default(0)
   downloadsChanged              Boolean                      @default(false)
   productsChanged               Boolean                      @default(false)
   numberOfItems                 Int?                         @default(1)
@@ -502,6 +504,8 @@ model DeliveryAssignmentSync {
 model OurCategoryImageTemplate {
   id                          Int                        @id @default(autoincrement())
   categoryId                  Int
+  ourTemplateImageId          String?                    @db.VarChar(36)
+  ourTemplateImageItemMapping Json?
   linkedSourceCategoryId      Int?
   linkedSourceImageTemplateId Int?
   linkedImageItemNumber       Int?
@@ -535,9 +539,48 @@ model OurCategoryImageTemplate {
 
   @@unique([categoryId, name])
   @@index([categoryId])
+  @@index([ourTemplateImageId])
   @@index([linkedSourceCategoryId])
   @@index([linkedSourceImageTemplateId])
   @@map("our_category_image_templates")
+}
+
+model OurTemplateImage {
+  id               String   @id @db.VarChar(36)
+  name             String   @db.VarChar(100)
+  originalFileName String   @db.VarChar(255)
+  imagePath        String   @db.VarChar(500)
+  whiteImagePath   String?  @db.VarChar(500)
+  blackImagePath   String?  @db.VarChar(500)
+  definition       Json
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  tags             OurTemplateImageTagLink[]
+
+  @@index([createdAt, id])
+  @@map("our_template_images")
+}
+
+model OurTemplateImageTag {
+  id             String                    @id @db.VarChar(36)
+  name           String                    @db.VarChar(100)
+  normalizedName String                    @unique @db.VarChar(100)
+  createdAt      DateTime                  @default(now())
+  templateImages OurTemplateImageTagLink[]
+
+  @@map("our_template_image_tags")
+}
+
+model OurTemplateImageTagLink {
+  templateImageId String              @db.VarChar(36)
+  tagId           String              @db.VarChar(36)
+  createdAt       DateTime            @default(now())
+  templateImage   OurTemplateImage    @relation(fields: [templateImageId], references: [id], onDelete: Cascade)
+  tag             OurTemplateImageTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([templateImageId, tagId])
+  @@index([tagId])
+  @@map("our_template_image_tag_links")
 }
 
 enum FinancialEntryType {
@@ -975,6 +1018,7 @@ model EtsyListingImage {
   id                         Int                       @id @default(autoincrement())
   listingId                  Int
   ourCategoryImageTemplateId Int?
+  templateGenerationRevision Int                       @default(0)
   etsyImageId                String?
   etsyDownloadImageId        String?
   etsyCustomisedImageId      String?

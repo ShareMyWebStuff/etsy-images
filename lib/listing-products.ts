@@ -89,6 +89,8 @@ type NormalizedListingProducts = {
 export type ListingProductDefaultsOptions = {
   digitalDownload?: boolean;
   resetToProductType?: 'physical' | 'digital';
+  /** Reassignment keeps the SKUs of product keys supported by the new template. */
+  preserveExistingSkus?: boolean;
 };
 
 type ProductListing = {
@@ -717,7 +719,9 @@ export async function ensureListingProductDefaultsInTransaction(
         downloadSectionId: templateDownloadSectionId,
         returnPolicyId: resetDefaults?.returnPolicyId ?? listing.productConfig?.returnPolicyId ?? null,
         ...templateOptions,
-        skus: {},
+        skus: options?.preserveExistingSkus
+          ? Object.fromEntries(listing.products.map((product) => [product.productKey, product.sku]))
+          : {},
       };
   const expectedProducts = buildListingProductDefinitions(listing, defaults);
   const existingProductsByKey = new Map(listing.products.map((product) => [product.productKey, product]));

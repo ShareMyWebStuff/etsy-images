@@ -167,10 +167,14 @@ export async function writeFile(filePath: string, contents: Buffer | Uint8Array 
   const body = typeof contents === 'string' ? Buffer.from(contents, encoding ?? 'utf8') : contents;
   if (isImageKey(key)) {
     const preview = await createAppPreview(body);
-    await Promise.all([
+    // A caller may clean up after a failed write. Wait for both uploads so a
+    // late success cannot recreate an object after that cleanup has finished.
+    const results = await Promise.allSettled([
       putKey(key, body),
       putKey(previewKeyForKey(key), preview),
     ]);
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
     return;
   }
   await putKey(key, body);
@@ -251,16 +255,45 @@ export async function readdir(directoryPath: string, options?: { withFileTypes?:
 
 export async function unlink(filePath: string) {
   const key = keyFromPath(filePath);
-  if (!await objectExists(key)) throw storageError('ENOENT', `S3 object not found: ${key}`);
+  const keys = [key, ...(isImageKey(key) ? [previewKeyForKey(key)] : [])];
+  const existing = await Promise.all(keys.map((objectKey) => objectExists(objectKey)));
+  if (!existing.some(Boolean)) throw storageError('ENOENT', `S3 object not found: ${key}`);
   await runS3Operation(
     `deleting the stored file "${key}"`,
-    () => Promise.all([
-      client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })),
-      ...(isImageKey(key)
-        ? [client.send(new DeleteObjectCommand({ Bucket: bucket, Key: previewKeyForKey(key) }))]
-        : []),
-    ]),
+    async () => {
+      // Delete both keys even if only the preview remains. Settle all deletes
+      // before an error reaches rollback code that may restore the originals.
+      const results = await Promise.allSettled(keys.map((objectKey) => (
+        client.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey }))
+      )));
+      const failure = results.find((result) => result.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
+    },
   );
+}
+
+/** Discover only this listing's reserved generated PNGs, including preview-only leftovers. */
+export async function listGeneratedListingImageFiles(directoryPath: string): Promise<string[]> {
+  const directory = keyFromPath(directoryPath);
+  const originalPrefix = directory ? `${directory}/` : '';
+  const names = new Set<string>();
+  await Promise.all([originalPrefix, `${APP_PREVIEW_PREFIX}${originalPrefix}`].map(async (prefix, index) => {
+    let continuationToken: string | undefined;
+    do {
+      const page = await runS3Operation(`checking generated images in "${directory}"`, () => client.send(new ListObjectsV2Command({
+        Bucket: bucket, Prefix: prefix, Delimiter: '/', ContinuationToken: continuationToken,
+      })));
+      for (const object of page.Contents ?? []) {
+        const relative = object.Key?.startsWith(prefix) ? object.Key.slice(prefix.length) : '';
+        if (index === 1 && !relative.endsWith('.webp')) continue;
+        const fileName = index === 1 && relative.endsWith('.webp') ? relative.slice(0, -5) : relative;
+        const match = /^template-([1-9]\d*)\.png$/i.exec(fileName);
+        if (match && Number.isSafeInteger(Number(match[1]))) names.add(fileName);
+      }
+      continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (continuationToken);
+  }));
+  return [...names].sort();
 }
 
 export async function copyFile(sourcePath: string, destinationPath: string) {
@@ -326,10 +359,13 @@ export async function rename(sourcePath: string, destinationPath: string) {
 
 async function deleteKeys(keys: string[]) {
   for (let index = 0; index < keys.length; index += 1000) {
-    await client.send(new DeleteObjectsCommand({
+    const result = await client.send(new DeleteObjectsCommand({
       Bucket: bucket,
       Delete: { Quiet: true, Objects: keys.slice(index, index + 1000).map((Key) => ({ Key })) },
     }));
+    if (result.Errors?.length) {
+      throw new Error(`S3 could not delete ${result.Errors.length} stored file(s): ${result.Errors.map((error) => `${error.Key}: ${error.Message ?? error.Code ?? 'Delete failed'}`).join('; ')}`);
+    }
   }
 }
 

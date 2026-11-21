@@ -9,6 +9,7 @@ vi.mock('./ListingPrintCropDialog', () => ({ ListingPrintCropDialog: () => null 
 vi.mock('./ListingTextAreasDialog', () => ({ ListingTextAreasDialog: () => null }));
 vi.mock('./ListingPersonalisationPreviewDialog', () => ({ ListingPersonalisationPreviewDialog: () => null }));
 vi.mock('./ListingMockupTesterDialog', () => ({ ListingMockupTesterDialog: () => null }));
+vi.mock('./ListingTemplateSelector', () => ({ ListingTemplateSelector: () => null }));
 
 import { ListingEditorClient } from './ListingEditorClient';
 

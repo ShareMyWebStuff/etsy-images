@@ -28,6 +28,7 @@ export const NAV_GROUPS = [
     items: [
       { label: 'Shops', href: '/shops' },
       { label: 'Our Templates', href: '/our-templates' },
+      { label: 'Our Template Images', href: '/our-template-images' },
       { label: 'Backdrop Images', href: '/backdrop-images' },
     ],
   },

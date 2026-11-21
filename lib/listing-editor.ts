@@ -35,6 +35,10 @@ import { LISTING_EDITOR_MAX_IMAGES } from '@/lib/listing-image-limits';
 import { LISTING_PAPER_SIZE_SPECS } from '@/lib/listing-paper-size-groups';
 import { removeListingImages } from '@/lib/listing-image-reset';
 import {
+  markListingImageGenerationComplete,
+  recordListingTemplateImageRevision,
+} from '@/lib/listing-image-generation-state';
+import {
   DEFAULT_LISTING_PERSONALISATION_TEXT_AREAS,
   effectiveListingPersonalisationTextAreas,
   parseListingPersonalisationTextAreas,
@@ -54,7 +58,7 @@ import { DEFAULT_PERSONALISATION_FONT_ID, getPersonalisationFont } from '@/lib/p
 import { createHowToPrintGuide, createPrintableDownload } from '@/lib/printable-download-generator';
 import { getPrintableDownloadRole, hasRequiredPrintableDownloads, PRINTABLE_DOWNLOAD_SPECS, type PrintableDownloadRatio, type PrintableDownloadRole } from '@/lib/printable-download-specs';
 import { validateOurCategoryTemplatePersonalisation } from '@/lib/our-category-template-personalisation';
-import { copyFile, mkdir, readFile, readImagePreview, readdir, rename, rm, stat, unlink, writeFile } from '@/lib/s3-listing-storage';
+import { copyFile, listGeneratedListingImageFiles, mkdir, readFile, readImagePreview, readdir, rename, rm, stat, unlink, writeFile } from '@/lib/s3-listing-storage';
 import { PRICE_OPTIONS } from '@/lib/set-prices-core';
 import { getTemplateDownloadSectionId, hasRequiredTemplateDownloadSection } from '@/lib/template-download-section';
 import { effectiveListingCustomisation } from '@/lib/listing-customisation';
@@ -132,6 +136,7 @@ export type ListingEditorData = {
     numberOfItems: number | null;
     includeAllItems: boolean;
     thumbnailUpdatedAt: string | null;
+    imagesNeedRegeneration?: boolean;
   };
   template: {
     id: number;
@@ -510,8 +515,11 @@ export async function getListingForContext(context: ListingEditorContext) {
       personalisationTextAreas: Prisma.JsonValue | null;
       printCropSettings: Prisma.JsonValue | null;
       artworkOrientation: string | null;
+      listingImagesRevision: number;
+      listingImagesGeneratedRevision: number;
     }>>`
-      SELECT personalisationTextAreas, printCropSettings, artworkOrientation
+      SELECT personalisationTextAreas, printCropSettings, artworkOrientation,
+             listingImagesRevision, listingImagesGeneratedRevision
       FROM etsy_listings
       WHERE id = ${listing.id}
     `
@@ -522,6 +530,12 @@ export async function getListingForContext(context: ListingEditorContext) {
     personalisationTextAreas: listingExtraRow?.personalisationTextAreas ?? null,
     printCropSettings: listingExtraRow?.printCropSettings ?? null,
     artworkOrientation: normalizeListingArtworkOrientation(listingExtraRow?.artworkOrientation),
+    imageGenerationState: {
+      revision: Number(listingExtraRow?.listingImagesRevision ?? 0),
+      generatedRevision: Number(listingExtraRow?.listingImagesGeneratedRevision ?? 0),
+      needsRegeneration: Number(listingExtraRow?.listingImagesGeneratedRevision ?? 0)
+        < Number(listingExtraRow?.listingImagesRevision ?? 0),
+    },
   };
 
   const followedTemplateId = listing.ourCategory?.templateType === 'multiple'
@@ -663,6 +677,7 @@ export async function mapEditorData(
     image.ourCategoryImageTemplateId == null ? [] : [image.ourCategoryImageTemplateId]
   )));
   const hasAllTemplateImages = expectedTemplateImageIds.length > 0
+    && !data.listing.imageGenerationState.needsRegeneration
     && expectedTemplateImageIds.every((templateId) => generatedTemplateImageIds.has(templateId));
   const dropboxIsCurrent = Boolean(data.listing.dropboxBundle?.sharedUrl?.trim())
     && data.listing.dropboxSyncedAt !== null
@@ -772,6 +787,7 @@ export async function mapEditorData(
       numberOfItems: data.listing.numberOfItems,
       includeAllItems: data.listing.includeAllItems,
       thumbnailUpdatedAt: data.listing.thumbnailUpdatedAt?.toISOString() ?? null,
+      imagesNeedRegeneration: data.listing.imageGenerationState.needsRegeneration,
     },
     template: data.listing.ourCategory ? {
       id: data.listing.ourCategory.id,
@@ -792,7 +808,8 @@ export async function mapEditorData(
         id: String(template.id),
         name: template.name,
         position: template.position,
-        generated: data.listing.images.some((image) => image.ourCategoryImageTemplateId === template.id),
+        generated: !data.listing.imageGenerationState.needsRegeneration
+          && data.listing.images.some((image) => image.ourCategoryImageTemplateId === template.id),
       })),
     } : null,
     groupCandidates: data.groupCandidates.flatMap((candidate) => candidate.subSectionId && candidate.subSection ? [{
@@ -1352,6 +1369,7 @@ export async function generateListingTemplateImages(
   imageTemplateId?: number,
 ) {
   const { data, listingPath } = await getListingAssetDirectory(context);
+  const generationRevision = data.listing.imageGenerationState.revision;
   const template = data.listing.ourCategory;
   if (!template) throw new Error('Choose a template for this listing before generating images.');
   if (template.imageTemplates.length === 0) throw new Error('The selected template has no image templates.');
@@ -1426,34 +1444,75 @@ export async function generateListingTemplateImages(
     );
     const fileName = `template-${imageTemplate.id}.png`;
     const targetPath = path.join(listingPath, fileName);
-    await writeFile(targetPath, output);
-    const metadata = await sharp(output).metadata();
-    await prisma.etsyListingImage.upsert({
-      where: {
-        listingId_ourCategoryImageTemplateId: {
-          listingId: data.listing.id,
-          ourCategoryImageTemplateId: imageTemplate.id,
-        },
-      },
-      create: {
-        listingId: data.listing.id,
-        ourCategoryImageTemplateId: imageTemplate.id,
-        localFileName: fileName,
-        originalFileName: `${imageTemplate.name}.png`,
-        rank: index + 1,
-        fullWidth: metadata.width ?? null,
-        fullHeight: metadata.height ?? null,
-      },
-      update: {
-        localFileName: fileName,
-        originalFileName: `${imageTemplate.name}.png`,
-        rank: index + 1,
-        fullWidth: metadata.width ?? null,
-        fullHeight: metadata.height ?? null,
-        updatedAt: new Date(),
-      },
-    });
+    try {
+      await writeFile(targetPath, output);
+      const metadata = await sharp(output).metadata();
+      await prisma.$transaction(async (transaction) => {
+        // Assignment updates lock this same parent row before checking its
+        // child images. Never recreate an old template's photo after a switch.
+        const [current] = await transaction.$queryRaw<Array<{ ourCategoryId: number | null; listingImagesRevision: number }>>`
+          SELECT ourCategoryId, listingImagesRevision FROM etsy_listings
+          WHERE id = ${data.listing.id} FOR UPDATE
+        `;
+        if (!current || current.ourCategoryId !== template.id) {
+          throw new Error('The assigned template changed while images were being generated. Reload the listing and generate its images again.');
+        }
+        if (Number(current.listingImagesRevision) !== generationRevision) {
+          throw new Error('The listing images changed while generation was running. Reload the listing and generate its images again.');
+        }
+        await transaction.etsyListingImage.upsert({
+          where: {
+            listingId_ourCategoryImageTemplateId: {
+              listingId: data.listing.id,
+              ourCategoryImageTemplateId: imageTemplate.id,
+            },
+          },
+          create: {
+            listingId: data.listing.id,
+            ourCategoryImageTemplateId: imageTemplate.id,
+            localFileName: fileName,
+            originalFileName: `${imageTemplate.name}.png`,
+            rank: index + 1,
+            fullWidth: metadata.width ?? null,
+            fullHeight: metadata.height ?? null,
+          },
+          update: {
+            localFileName: fileName,
+            originalFileName: `${imageTemplate.name}.png`,
+            rank: index + 1,
+            fullWidth: metadata.width ?? null,
+            fullHeight: metadata.height ?? null,
+            updatedAt: new Date(),
+          },
+        });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30_000 });
+    } catch (error) {
+      // The listing snapshot may be stale: a concurrent deletion can remove an
+      // old reference, or another generation can commit this same filename.
+      // Only clean a failed output after confirming it has no live reference.
+      let currentReference: { id: number } | null;
+      try {
+        currentReference = await prisma.etsyListingImage.findFirst({
+          where: { listingId: data.listing.id, localFileName: fileName }, select: { id: true },
+        });
+      } catch (lookupError) {
+        const message = error instanceof Error ? error.message : 'Listing image generation failed.';
+        throw new Error(`${message} The generated image was preserved because its database reference could not be checked. Run Generate again to retry safe cleanup.`,
+          { cause: new AggregateError([error, lookupError]) });
+      }
+      if (!currentReference) {
+        try { await unlinkIfPresent(targetPath); }
+        catch (cleanupError) {
+          const message = error instanceof Error ? error.message : 'Listing image generation failed.';
+          throw new Error(`${message} The incomplete generated image could not be removed. Run Generate again to retry cleanup.`,
+            { cause: new AggregateError([error, cleanupError]) });
+        }
+      }
+      throw error;
+    }
+    await recordListingTemplateImageRevision(data.listing.id, imageTemplate.id, generationRevision);
   }
+  await markListingImageGenerationComplete(data.listing.id, generationRevision);
   await prisma.etsyListing.update({
     where: { id: data.listing.id },
     data: { imagesChanged: true, lastLocalChangeAt: new Date() },
@@ -1465,8 +1524,12 @@ export async function generateListingTemplateImages(
 
 export async function deleteAllListingImages(context: ListingEditorContext) {
   const { data, listingPath } = await getListingAssetDirectory(context);
-
-  await removeListingImages(listingPath, data.listing.images, async () => {
+  // A deleted template can leave a generated image without a database row.
+  // Include only the storage layer's reserved generated filenames, alongside
+  // the registered images that this action has always removed.
+  const generatedFiles = await listGeneratedListingImageFiles(listingPath);
+  const images = [...data.listing.images, ...generatedFiles.map((localFileName) => ({ localFileName }))];
+  await removeListingImages(listingPath, images, async () => {
     await prisma.$transaction([
       prisma.etsyListingImage.deleteMany({ where: { listingId: data.listing.id } }),
       prisma.etsyListing.update({

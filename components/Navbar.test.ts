@@ -27,6 +27,10 @@ describe('main navigation', () => {
       label: 'Our Templates',
       href: '/our-templates',
     });
+    expect(NAV_GROUPS.find((group) => group.title === 'Local')?.items).toContainEqual({
+      label: 'Our Template Images',
+      href: '/our-template-images',
+    });
     expect(NAV_GROUPS.find((group) => group.title === 'Local')?.items.at(-1)).toEqual({
       label: 'Backdrop Images',
       href: '/backdrop-images',

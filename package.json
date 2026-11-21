@@ -27,6 +27,8 @@
     "db:listing-text-areas": "node scripts/add-listing-personalisation-text-areas.cjs",
     "db:listing-print-crops": "node scripts/add-listing-print-crop-settings.cjs",
     "db:listing-orientation": "node scripts/add-listing-artwork-orientation.cjs",
+    "db:our-template-images": "node scripts/add-our-template-images.cjs",
+    "db:our-template-image-tags": "node scripts/add-our-template-image-tags.cjs",
     "db:listing-template-overrides": "node scripts/add-listing-template-overrides.cjs",
     "db:etsy-personalisation-sync": "node scripts/add-etsy-personalisation-sync.cjs",
     "db:markets-delivery": "node scripts/add-markets-delivery.cjs",

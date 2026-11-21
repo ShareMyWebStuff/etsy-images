@@ -2,12 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   category: vi.fn(), image: vi.fn(), linkedImages: vi.fn(), listingImages: vi.fn(),
-  categoryUpdate: vi.fn(), deleteImages: vi.fn(), deleteImage: vi.fn(), execute: vi.fn(), transaction: vi.fn(),
+  categoryUpdate: vi.fn(), deleteImages: vi.fn(), deleteImage: vi.fn(), execute: vi.fn(), transaction: vi.fn(), listings: vi.fn(),
 }));
 vi.mock('@/lib/prisma', () => ({ prisma: {
   ourCategory: { findUnique: mocks.category },
   ourCategoryImageTemplate: { findUnique: mocks.image, findMany: mocks.linkedImages },
   etsyListingImage: { findMany: mocks.listingImages },
+  etsyListing: { findMany: mocks.listings },
   $transaction: mocks.transaction,
 } }));
 vi.mock('@/lib/listing-image-reset', () => ({
@@ -18,6 +19,7 @@ import { deleteOurCategoryImageTemplate, reorderOurCategoryImageTemplates } from
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.listings.mockResolvedValue([]);
   mocks.transaction.mockImplementation(async (callback) => callback({
     ourCategory: { updateMany: mocks.categoryUpdate },
     ourCategoryImageTemplate: { deleteMany: mocks.deleteImages, delete: mocks.deleteImage },
@@ -41,10 +43,10 @@ describe('template change timestamps', () => {
 
   it('preserves change times for source and linked templates before deleting their images', async () => {
     mocks.image.mockResolvedValue({
-      id: 10, imagePath: 'D:/Templates/source.png', linkedSourceImageTemplateId: null,
+      id: 10, categoryId: 1, imagePath: 'D:/Templates/source.png', linkedSourceImageTemplateId: null,
       category: { templateType: 'single' },
     });
-    mocks.linkedImages.mockResolvedValueOnce([{ id: 20 }]).mockResolvedValue([]);
+    mocks.linkedImages.mockResolvedValueOnce([{ id: 20, categoryId: 2 }]).mockResolvedValue([]);
     mocks.listingImages.mockResolvedValue([]);
     await deleteOurCategoryImageTemplate('10');
     expect(mocks.categoryUpdate).toHaveBeenCalledWith({

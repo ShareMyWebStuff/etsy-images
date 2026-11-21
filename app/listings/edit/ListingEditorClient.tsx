@@ -1,6 +1,7 @@
 'use client';
 
 import { ListingTemplateProductSettings } from './ListingTemplateProductSettings';
+import { ListingTemplateSelector } from './ListingTemplateSelector';
 import { MarketsDeliverySettings } from '@/components/MarketsDeliverySettings';
 
 import { ChangeEvent, FormEvent, MouseEvent, useRef, useState } from 'react';
@@ -63,6 +64,35 @@ type OverviewGenerationStage = {
   status: OverviewGenerationStageStatus;
   message: string;
 };
+
+type OverviewGenerationTask = {
+  key: string;
+  label: string;
+  status: OverviewGenerationStageStatus;
+};
+
+function imageGenerationTasks(imageTemplates: NonNullable<ListingEditorData['template']>['imageTemplates']): OverviewGenerationTask[] {
+  return [
+    { key: 'clear-images', label: 'Removing existing listing images', status: 'pending' },
+    ...imageTemplates.map((image) => ({ key: `image-${image.id}`, label: image.name, status: 'pending' as const })),
+  ];
+}
+
+function completeListingGenerationTasks(template: NonNullable<ListingEditorData['template']>): OverviewGenerationTask[] {
+  return [
+    ...imageGenerationTasks(template.imageTemplates),
+    { key: 'details', label: 'Listing details and tags', status: 'pending' },
+    ...(template.templateType === 'multiple'
+      ? [{ key: 'download-grouped-pdf', label: 'Grouped download instructions', status: 'pending' as const }]
+      : [
+        ...PRINTABLE_DOWNLOAD_SPECS.map((spec) => ({ key: `download-${spec.key}`, label: spec.label, status: 'pending' as const })),
+        { key: 'download-guide', label: 'How to print guide', status: 'pending' as const },
+        { key: 'dropbox', label: 'Dropbox upload', status: 'pending' as const },
+        { key: 'download-instructions', label: 'Download Instructions', status: 'pending' as const },
+      ]),
+    { key: 'mark-current', label: 'Saving generation status', status: 'pending' },
+  ];
+}
 
 const OVERVIEW_GENERATION_STAGES: Array<Pick<OverviewGenerationStage, 'key' | 'label'>> = [
   { key: 'images', label: 'Create Images' },
@@ -273,6 +303,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   // separate generation workflows before the buttons become disabled.
   const overviewActionRunning = useRef(false);
   const [overviewGenerationStages, setOverviewGenerationStages] = useState<OverviewGenerationStage[] | null>(null);
+  const [overviewGenerationTasks, setOverviewGenerationTasks] = useState<OverviewGenerationTask[] | null>(null);
   const [overviewGenerationItem, setOverviewGenerationItem] = useState<string | null>(null);
   const [overviewGenerationError, setOverviewGenerationError] = useState<{ stage: string; message: string } | null>(null);
   const [simpleInputs, setSimpleInputs] = useState({ tag: '', material: '', style: '' });
@@ -727,6 +758,14 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       return;
     }
 
+    // Keep this run's confirmed steps while generation refreshes the listing.
+    // A later edit should display the new server readiness instead.
+    if (!overviewActionRunning.current) {
+      setOverviewGenerationTasks(null);
+      setOverviewGenerationStages(null);
+      setOverviewGenerationItem(null);
+    }
+
     setData(nextData);
     setListingDescription(nextData.listing.listingDescription);
     setListingOrientation(nextData.listing.artworkOrientation);
@@ -988,23 +1027,21 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   }
 
   async function generateOverviewImages() {
-    if (overviewActionRunning.current) return;
+    if (!data?.template || overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
+    startOverviewGenerationTasks(imageGenerationTasks(data.template.imageTemplates));
     setBusyKey('generate-overview-images');
     try {
-      const clearResponse = await fetch('/api/shops/listings/editor/overview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...context, action: 'clear-images' }),
-      });
-      await parseResponse(clearResponse, 'Unable to remove the existing listing images.');
-      const response = await fetch('/api/shops/listings/editor/overview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...context, action: 'images' }),
-      });
-      await parseResponse(response, 'Unable to generate the template images.');
+      const cleared = await runOverviewGenerationTask('clear-images', clearOverviewImages);
+      const imageTemplates = [...(cleared.template?.imageTemplates ?? [])];
+      reconcileOverviewGenerationTasks(imageGenerationTasks(imageTemplates));
+      for (const imageTemplate of imageTemplates) {
+        await runOverviewGenerationTask(`image-${imageTemplate.id}`, () => postOverviewAction(
+          { action: 'images', imageTemplateId: Number(imageTemplate.id) },
+          `Unable to generate ${imageTemplate.name}.`,
+        ));
+      }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to generate the template images.');
     } finally {
@@ -1017,19 +1054,13 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     if (overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
-    setOverviewGenerationItem(`image-${imageTemplateId}`);
+    startOverviewGenerationTasks([{ key: `image-${imageTemplateId}`, label: imageTemplateName, status: 'pending' }]);
     setBusyKey(`generate-overview-image-${imageTemplateId}`);
     try {
-      const response = await fetch('/api/shops/listings/editor/overview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...context,
-          action: 'images',
-          imageTemplateId: Number(imageTemplateId),
-        }),
-      });
-      await parseResponse(response, `Unable to regenerate ${imageTemplateName}.`);
+      await runOverviewGenerationTask(`image-${imageTemplateId}`, () => postOverviewAction(
+        { action: 'images', imageTemplateId: Number(imageTemplateId) },
+        `Unable to regenerate ${imageTemplateName}.`,
+      ));
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : `Unable to regenerate ${imageTemplateName}.`);
     } finally {
@@ -1039,18 +1070,62 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     }
   }
 
+  function startOverviewGenerationTasks(tasks: OverviewGenerationTask[]) {
+    setOverviewGenerationStages(null);
+    setOverviewGenerationError(null);
+    setOverviewGenerationItem(null);
+    setOverviewGenerationTasks(tasks);
+  }
+
+  function reconcileOverviewGenerationTasks(tasks: OverviewGenerationTask[]) {
+    // Deletion in another tab can change the render plan while cleanup runs.
+    // Keep its confirmed completion, but replace stale pending template IDs.
+    setOverviewGenerationTasks((current) => tasks.map((task) => ({
+      ...task,
+      status: current?.find((previous) => previous.key === task.key)?.status ?? task.status,
+    })));
+  }
+
+  async function runOverviewGenerationTask<T>(key: string, action: () => Promise<T>): Promise<T> {
+    setOverviewGenerationItem(key);
+    setOverviewGenerationTasks((current) => current?.map((task) => task.key === key ? { ...task, status: 'running' } : task) ?? current);
+    try {
+      const result = await action();
+      setOverviewGenerationTasks((current) => current?.map((task) => task.key === key ? { ...task, status: 'complete' } : task) ?? current);
+      return result;
+    } catch (error) {
+      setOverviewGenerationTasks((current) => current?.map((task) => task.key === key ? { ...task, status: 'failed' } : task) ?? current);
+      throw error;
+    } finally {
+      setOverviewGenerationItem(null);
+    }
+  }
+
+  async function postOverviewAction(body: Record<string, unknown>, fallbackMessage: string) {
+    const response = await fetch('/api/shops/listings/editor/overview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...context, ...body }),
+    });
+    return parseResponse(response, fallbackMessage);
+  }
+
+  async function clearOverviewImages() {
+    const refreshed = await postOverviewAction({ action: 'clear-images' }, 'Unable to remove the existing listing images.');
+    if (!refreshed) throw new Error('The existing images were removed, but the current listing template could not be reloaded.');
+    return refreshed;
+  }
+
   async function generateOverviewDetails() {
     if (overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
+    startOverviewGenerationTasks([{ key: 'details', label: 'Listing details and tags', status: 'pending' }]);
     setBusyKey('generate-overview-details');
     try {
-      const response = await fetch('/api/shops/listings/editor/overview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...context, action: 'details' }),
-      });
-      const nextData = await parseResponse(response, 'Unable to generate listing details with AWS Bedrock.');
+      const nextData = await runOverviewGenerationTask('details', () => postOverviewAction(
+        { action: 'details' }, 'Unable to generate listing details with AWS Bedrock.',
+      ));
       if (nextData) {
         setForm(createDetailsForm(nextData.listing));
         setTagDraft(nextData.tags.map((tag) => tag.value));
@@ -1067,14 +1142,12 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     if (overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
+    startOverviewGenerationTasks([{ key: 'download-grouped-pdf', label: 'Grouped download instructions', status: 'pending' }]);
     setBusyKey('generate-grouped-instructions');
     try {
-      const response = await fetch('/api/shops/listings/editor/overview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...context, action: 'grouped-pdf' }),
-      });
-      await parseResponse(response, 'Unable to create the grouped download instructions PDF.');
+      await runOverviewGenerationTask('download-grouped-pdf', () => postOverviewAction(
+        { action: 'grouped-pdf' }, 'Unable to create the grouped download instructions PDF.',
+      ));
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to create the grouped download instructions PDF.');
     } finally {
@@ -1088,22 +1161,30 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     if (overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
+    startOverviewGenerationTasks([
+      ...(!data.dropbox.current ? [{ key: 'dropbox', label: 'Dropbox upload', status: 'pending' as const }] : []),
+      { key: 'download-instructions', label: 'Download Instructions', status: 'pending' },
+    ]);
     setBusyKey('generate-download-instructions');
     try {
       if (!data.dropbox.current) {
-        const dropboxResponse = await fetch('/api/shops/listings/dropbox', {
+        await runOverviewGenerationTask('dropbox', async () => {
+          const dropboxResponse = await fetch('/api/shops/listings/dropbox', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...context, action: 'dropbox' }),
+          });
+          return parseResponse(dropboxResponse, 'Unable to create or update Dropbox before generating the instructions.');
+        });
+      }
+      await runOverviewGenerationTask('download-instructions', async () => {
+        const response = await fetch('/api/shops/listings/dropbox', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...context, action: 'dropbox' }),
+          body: JSON.stringify({ ...context, action: 'pdf' }),
         });
-        await parseResponse(dropboxResponse, 'Unable to create or update Dropbox before generating the instructions.');
-      }
-      const response = await fetch('/api/shops/listings/dropbox', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...context, action: 'pdf' }),
+        return parseResponse(response, 'Unable to create the download instructions PDF.');
       });
-      await parseResponse(response, 'Unable to create the download instructions PDF.');
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to create the download instructions PDF.');
     } finally {
@@ -1117,11 +1198,11 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     overviewActionRunning.current = true;
     setError(null);
     setOverviewGenerationError(null);
-    const isMultipleTemplate = data.template.templateType === 'multiple';
-    setOverviewGenerationStages(initialOverviewGenerationStages(!isMultipleTemplate));
+    startOverviewGenerationTasks(completeListingGenerationTasks(data.template));
+    setOverviewGenerationStages(initialOverviewGenerationStages(data.template.templateType !== 'multiple'));
     setOverviewGenerationItem(null);
     setBusyKey('generate-overview-all');
-    let activeStage: OverviewGenerationStageKey = 'images';
+    let activeStage: OverviewGenerationStageKey | 'finalize' = 'images';
 
     const updateStage = (
       key: OverviewGenerationStageKey,
@@ -1133,45 +1214,37 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       )) ?? current);
     };
 
-    const postOverview = async (
-      body: Record<string, unknown>,
-      fallbackMessage: string,
-    ) => {
-      const response = await fetch('/api/shops/listings/editor/overview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...context, ...body }),
-      });
-      return parseResponse(response, fallbackMessage);
-    };
-
     try {
-      if (data.template.imageTemplates.length === 0) {
-        throw new Error('The selected template has no image templates.');
-      }
       updateStage('images', 'running', 'Removing existing listing images');
-      await postOverview(
-        { action: 'clear-images' },
-        'Unable to remove the existing listing images.',
-      );
-      for (const [index, imageTemplate] of data.template.imageTemplates.entries()) {
-        setOverviewGenerationItem(`image-${imageTemplate.id}`);
-        updateStage('images', 'running', `Creating ${imageTemplate.name} (${index + 1} of ${data.template.imageTemplates.length})`);
-        await postOverview(
+      const cleared = await runOverviewGenerationTask('clear-images', clearOverviewImages);
+      const imageTemplates = [...(cleared.template?.imageTemplates ?? [])];
+      if (!cleared.template || imageTemplates.length === 0) {
+        reconcileOverviewGenerationTasks(imageGenerationTasks([]));
+        setOverviewGenerationStages([{ key: 'images', label: 'Create Images', status: 'complete',
+          message: 'Existing listing images removed. No template images remain to generate.' }]);
+        return;
+      }
+      const isMultipleTemplate = cleared.template.templateType === 'multiple';
+      reconcileOverviewGenerationTasks(completeListingGenerationTasks(cleared.template));
+      setOverviewGenerationStages((current) => initialOverviewGenerationStages(!isMultipleTemplate).map((stage) => (
+        current?.find((previous) => previous.key === stage.key) ?? stage
+      )));
+      for (const [index, imageTemplate] of imageTemplates.entries()) {
+        updateStage('images', 'running', `Creating ${imageTemplate.name} (${index + 1} of ${imageTemplates.length})`);
+        await runOverviewGenerationTask(`image-${imageTemplate.id}`, () => postOverviewAction(
           { action: 'images', imageTemplateId: Number(imageTemplate.id) },
           `Unable to generate ${imageTemplate.name}.`,
-        );
+        ));
       }
       setOverviewGenerationItem(null);
-      updateStage('images', 'complete', `${data.template.imageTemplates.length} ${data.template.imageTemplates.length === 1 ? 'image' : 'images'} created`);
+      updateStage('images', 'complete', `${imageTemplates.length} ${imageTemplates.length === 1 ? 'image' : 'images'} created`);
 
       activeStage = 'details';
-      setOverviewGenerationItem('details');
       updateStage('details', 'running', 'Creating listing details and tags with AWS Bedrock');
-      const detailsData = await postOverview(
+      const detailsData = await runOverviewGenerationTask('details', () => postOverviewAction(
         { action: 'details' },
         'Unable to generate listing details and tags with AWS Bedrock.',
-      );
+      ));
       if (detailsData) {
         setForm(createDetailsForm(detailsData.listing));
         setTagDraft(detailsData.tags.map((tag) => tag.value));
@@ -1180,35 +1253,36 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       updateStage('details', 'complete', 'Listing details and tags created');
 
       activeStage = 'downloads';
-      updateStage('downloads', 'running', data.template.templateType === 'multiple'
+      updateStage('downloads', 'running', isMultipleTemplate
         ? 'Preparing source Dropbox links and the grouped instruction PDF'
         : 'Preparing digital downloads');
-      if (data.template.templateType === 'multiple') {
-        setOverviewGenerationItem('download-grouped-pdf');
-        await postOverview(
+      if (isMultipleTemplate) {
+        await runOverviewGenerationTask('download-grouped-pdf', () => postOverviewAction(
           { action: 'grouped-pdf' },
           'Unable to create the grouped download instructions PDF.',
-        );
+        ));
         updateStage('downloads', 'complete', 'Grouped instruction PDF created with all source Dropbox links');
       } else {
         for (const [index, spec] of PRINTABLE_DOWNLOAD_SPECS.entries()) {
-          setOverviewGenerationItem(`download-${spec.key}`);
           updateStage('downloads', 'running', `Creating ${spec.label} (${index + 1} of ${PRINTABLE_DOWNLOAD_SPECS.length + 1})`);
-          const response = await fetch('/api/shops/listings/editor/downloads/generate', {
+          await runOverviewGenerationTask(`download-${spec.key}`, async () => {
+            const response = await fetch('/api/shops/listings/editor/downloads/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...context, ratio: spec.key }),
+            });
+            return parseResponse(response, `Unable to generate ${spec.label}.`);
+          });
+        }
+        updateStage('downloads', 'running', `Creating the How to Print guide (${PRINTABLE_DOWNLOAD_SPECS.length + 1} of ${PRINTABLE_DOWNLOAD_SPECS.length + 1})`);
+        await runOverviewGenerationTask('download-guide', async () => {
+          const guideResponse = await fetch('/api/shops/listings/editor/downloads/generate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...context, ratio: spec.key }),
+            body: JSON.stringify({ ...context, ratio: 'guide' }),
           });
-          await parseResponse(response, `Unable to generate ${spec.label}.`);
-        }
-        setOverviewGenerationItem('download-guide');
-        updateStage('downloads', 'running', `Creating the How to Print guide (${PRINTABLE_DOWNLOAD_SPECS.length + 1} of ${PRINTABLE_DOWNLOAD_SPECS.length + 1})`);
-        const guideResponse = await fetch('/api/shops/listings/editor/downloads/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...context, ratio: 'guide' }),
+          return parseResponse(guideResponse, 'Unable to generate the How to Print guide.');
         });
-        await parseResponse(guideResponse, 'Unable to generate the How to Print guide.');
         updateStage('downloads', 'complete', `${PRINTABLE_DOWNLOAD_SPECS.length} artwork files and the How to Print guide created`);
       }
       setOverviewGenerationItem(null);
@@ -1216,33 +1290,37 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       if (!isMultipleTemplate) {
         activeStage = 'dropbox';
         updateStage('dropbox', 'running', 'Uploading files and creating the download instructions');
-        setOverviewGenerationItem('dropbox');
-        const response = await fetch('/api/shops/listings/dropbox', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...context, action: 'dropbox' }),
+        await runOverviewGenerationTask('dropbox', async () => {
+          const response = await fetch('/api/shops/listings/dropbox', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...context, action: 'dropbox' }),
+          });
+          return parseResponse(response, 'Unable to update Dropbox.');
         });
-        await parseResponse(response, 'Unable to update Dropbox.');
-        setOverviewGenerationItem('download-instructions');
         updateStage('dropbox', 'running', 'Creating the Download Instructions PDF');
-        const instructionsResponse = await fetch('/api/shops/listings/dropbox', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...context, action: 'pdf' }),
+        await runOverviewGenerationTask('download-instructions', async () => {
+          const instructionsResponse = await fetch('/api/shops/listings/dropbox', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...context, action: 'pdf' }),
+          });
+          return parseResponse(instructionsResponse, 'Unable to create the Download Instructions PDF.');
         });
-        await parseResponse(instructionsResponse, 'Unable to create the Download Instructions PDF.');
         updateStage('dropbox', 'complete', 'Dropbox and the Download Instructions PDF created');
       }
-      await postOverview(
+      activeStage = 'finalize';
+      await runOverviewGenerationTask('mark-current', () => postOverviewAction(
         { action: 'mark-current' },
         'The listing was generated, but its change-tracking state could not be saved.',
-      );
+      ));
       setOverviewGenerationItem(null);
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : 'Unable to generate the complete listing.';
-      const stageLabel = OVERVIEW_GENERATION_STAGES.find((stage) => stage.key === activeStage)?.label ?? 'Generate Listing';
+      const stageLabel = activeStage === 'finalize' ? 'Saving generation status'
+        : OVERVIEW_GENERATION_STAGES.find((stage) => stage.key === activeStage)?.label ?? 'Generate Listing';
       setOverviewGenerationItem(null);
-      updateStage(activeStage, 'failed', 'Stopped because an error occurred');
+      if (activeStage !== 'finalize') updateStage(activeStage, 'failed', 'Stopped because an error occurred');
       setOverviewGenerationError({ stage: stageLabel, message });
     } finally {
       overviewActionRunning.current = false;
@@ -1275,16 +1353,19 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     if (overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
+    startOverviewGenerationTasks([{ key: `download-${ratio}`, label: ratio === 'guide' ? 'How to print guide' : PRINTABLE_DOWNLOAD_SPECS.find((spec) => spec.key === ratio)?.label ?? 'Printable download', status: 'pending' }]);
     setBusyKey(`generate-download-${ratio}`);
     try {
-      const response = await fetch('/api/shops/listings/editor/downloads/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...context, ratio }),
+      await runOverviewGenerationTask(`download-${ratio}`, async () => {
+        const response = await fetch('/api/shops/listings/editor/downloads/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...context, ratio }),
+        });
+        return parseResponse(response, ratio === 'guide'
+          ? 'Unable to generate the How to Print guide.'
+          : 'Unable to generate the printable download.');
       });
-      await parseResponse(response, ratio === 'guide'
-        ? 'Unable to generate the How to Print guide.'
-        : 'Unable to generate the printable download.');
     } catch (caughtError) {
       setError(caughtError instanceof Error
         ? caughtError.message
@@ -1301,15 +1382,18 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     if (!data?.dropbox.action || overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
+    startOverviewGenerationTasks([{ key: 'dropbox', label: 'Dropbox upload', status: 'pending' }]);
     setBusyKey('dropbox');
 
     try {
-      const response = await fetch('/api/shops/listings/dropbox', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...context, action: 'dropbox' }),
+      await runOverviewGenerationTask('dropbox', async () => {
+        const response = await fetch('/api/shops/listings/dropbox', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...context, action: 'dropbox' }),
+        });
+        return parseResponse(response, 'Unable to update Dropbox.');
       });
-      await parseResponse(response, 'Unable to update Dropbox.');
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to update Dropbox.');
     } finally {
@@ -2230,12 +2314,24 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       ['Primary Colour', Boolean(data.listing.primaryColour.trim())],
       ['Secondary Colour', Boolean(data.listing.secondaryColour.trim())],
     ] as const;
-    const stageStatus = (key: OverviewGenerationStageKey) => overviewGenerationStages?.find((stage) => stage.key === key)?.status;
-    const status = (created: boolean, working = false) => working
-      ? <RefreshCw className="h-5 w-5 animate-spin text-blue-700" aria-label="Working" />
-      : created
+    const taskStatus = (key: string) => overviewGenerationTasks?.find((task) => task.key === key)?.status;
+    const failedTask = overviewGenerationTasks?.find((task) => task.status === 'failed');
+    const runningTask = overviewGenerationTasks?.find((task) => task.status === 'running');
+    const completedTasks = overviewGenerationTasks?.filter((task) => task.status === 'complete').length ?? 0;
+    const generationRowProps = (key: string) => ({
+      'aria-busy': overviewGenerationItem === key,
+      className: overviewGenerationItem === key ? 'bg-blue-50/70' : undefined,
+    });
+    const status = (created: boolean, key: string) => {
+      const current = taskStatus(key);
+      if (overviewGenerationItem === key || current === 'running') return <span className="inline-flex items-center gap-2 whitespace-nowrap text-blue-700"><RefreshCw className="h-5 w-5 animate-spin" aria-hidden="true" />Running</span>;
+      if (current === 'failed') return <span className="inline-flex items-center gap-2 whitespace-nowrap text-red-700"><XCircle className="h-5 w-5" aria-hidden="true" />Failed</span>;
+      if (current === 'pending') return <span className="text-muted-foreground">{failedTask ? 'Not run' : 'Waiting'}</span>;
+      if (current === 'complete') return <span className="inline-flex items-center gap-2 whitespace-nowrap text-green-700"><CheckCircle2 className="h-5 w-5" aria-label="Created" />Completed</span>;
+      return created
         ? <CheckCircle2 className="h-5 w-5 text-green-700" aria-label="Created" />
         : <XCircle className="h-5 w-5 text-red-700" aria-label="Not created" />;
+    };
     const sourceReady = multiple
       ? data.groupItems.length === requiredItems && data.groupItems.every((item) => item.thumbnailFileName)
       : Boolean(data.thumbnail);
@@ -2323,6 +2419,18 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               </label> : null}
             </div>
           </div> : null}
+          <ListingTemplateSelector context={context} currentTemplate={data.template} disabled={busyKey !== null || saving}
+            onSavingChange={(changing) => {
+              overviewActionRunning.current = changing;
+              setBusyKey((current) => changing ? 'change-listing-template' : current === 'change-listing-template' ? null : current);
+            }}
+            onSaved={(nextData) => {
+              overviewActionRunning.current = false;
+              applyFreshData(nextData);
+              setForm(createDetailsForm(nextData.listing));
+              setTagDraft(nextData.tags.map((tag) => tag.value));
+              setPreviewImage(null); setOverviewGenerationError(null);
+            }} />
         </section>
 
         <section className="grid gap-4 rounded-lg border bg-card p-5">
@@ -2525,6 +2633,15 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               </Button>
             </div>
           </div>
+          {overviewGenerationTasks?.length ? (
+            <div className="mt-5 grid gap-2 rounded-md border bg-muted/30 p-4">
+              <div role="status" aria-live="polite" aria-atomic="true" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm">
+                <span className={`font-medium ${failedTask ? 'text-red-700' : ''}`}>{runningTask ? `Running: ${runningTask.label}` : failedTask ? `Stopped: ${failedTask.label}` : completedTasks === overviewGenerationTasks.length ? 'Generation complete' : 'Preparing generation…'}</span>
+                <span>{completedTasks} of {overviewGenerationTasks.length} steps completed ({Math.round(completedTasks / overviewGenerationTasks.length * 100)}%)</span>
+              </div>
+              <progress aria-label="Generation progress" value={completedTasks} max={overviewGenerationTasks.length} className="h-2 w-full accent-blue-700" />
+            </div>
+          ) : null}
           {overviewGenerationStages ? (
             <ol className="mt-5 grid gap-2 rounded-md border bg-muted/30 p-4 sm:grid-cols-2" aria-label="Listing generation progress" aria-live="polite">
               {overviewGenerationStages.map((stage) => (
@@ -2543,29 +2660,29 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           ) : null}
           <div className="mt-5 overflow-x-auto rounded-md border">
             <Table>
-              <TableHeader><TableRow><TableHead>Details</TableHead><TableHead className="w-24">Status</TableHead><TableHead className="w-28 text-right">Run</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Details</TableHead><TableHead className="w-32">Status</TableHead><TableHead className="w-28 text-right">Run</TableHead></TableRow></TableHeader>
               <TableBody>
-                <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Images</TableCell></TableRow>
-                {(data.template?.imageTemplates ?? []).map((imageTemplate) => <TableRow key={imageTemplate.id}>
-                  <TableCell>{imageTemplate.name}</TableCell><TableCell>{status(imageTemplate.generated, overviewGenerationItem === `image-${imageTemplate.id}`)}</TableCell>
+                <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Images{data.listing.imagesNeedRegeneration ? <p role="status" className="mt-1 text-sm font-normal text-amber-800">A template image changed. Regenerate the listing images to use the latest scene.</p> : null}</TableCell></TableRow>
+                {(data.template?.imageTemplates ?? []).map((imageTemplate) => <TableRow key={imageTemplate.id} {...generationRowProps(`image-${imageTemplate.id}`)}>
+                  <TableCell>{imageTemplate.name}</TableCell><TableCell>{status(imageTemplate.generated, `image-${imageTemplate.id}`)}</TableCell>
                   <TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generateOverviewImage(imageTemplate.id, imageTemplate.name)} disabled={busyKey !== null || !sourceReady || (!multiple && !thumbnailWorkflowReady)}>{busyKey === `generate-overview-image-${imageTemplate.id}` ? 'Running...' : 'Run'}</Button></TableCell>
                 </TableRow>)}
                 {(data.template?.imageTemplates.length ?? 0) === 0 ? <TableRow><TableCell colSpan={3} className="text-muted-foreground">No image templates configured.</TableCell></TableRow> : null}
 
                 <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Details</TableCell></TableRow>
-                {detailsRows.map(([label, created], index) => <TableRow key={label}><TableCell>{label}</TableCell><TableCell>{status(created, stageStatus('details') === 'running')}</TableCell><TableCell className="text-right">{index === 0 ? <Button type="button" size="sm" variant="outline" onClick={generateOverviewDetails} disabled={busyKey !== null || (multiple ? data.groupItems.length !== requiredItems : !data.thumbnail)}>{busyKey === 'generate-overview-details' ? 'Running...' : 'Run'}</Button> : null}</TableCell></TableRow>)}
+                {detailsRows.map(([label, created], index) => <TableRow key={label} {...generationRowProps('details')}><TableCell>{label}</TableCell><TableCell>{status(created, 'details')}</TableCell><TableCell className="text-right">{index === 0 ? <Button type="button" size="sm" variant="outline" onClick={generateOverviewDetails} disabled={busyKey !== null || (multiple ? data.groupItems.length !== requiredItems : !data.thumbnail)}>{busyKey === 'generate-overview-details' ? 'Running...' : 'Run'}</Button> : null}</TableCell></TableRow>)}
 
                 <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Tags</TableCell></TableRow>
-                <TableRow><TableCell>Add tags</TableCell><TableCell>{status(data.tags.length > 0, stageStatus('details') === 'running')}</TableCell><TableCell /></TableRow>
+                <TableRow {...generationRowProps('details')}><TableCell>Add tags</TableCell><TableCell>{status(data.tags.length > 0, 'details')}</TableCell><TableCell /></TableRow>
 
                 <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Digital Downloads</TableCell></TableRow>
-                {!multiple ? <>{printableStatus.items.map((item) => <TableRow key={item.key}><TableCell>{item.label}</TableCell><TableCell>{status(item.created, overviewGenerationItem === `download-${item.key}`)}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generatePrintableDownload(item.key)} disabled={busyKey !== null || !data.thumbnail}>Run</Button></TableCell></TableRow>)}
-                  <TableRow><TableCell>How to print guide</TableCell><TableCell>{status(printableStatus.guideCreated, overviewGenerationItem === 'download-guide')}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generatePrintableDownload('guide')} disabled={busyKey !== null}>Run</Button></TableCell></TableRow></> : null}
-                <TableRow>
+                {!multiple ? <>{printableStatus.items.map((item) => <TableRow key={item.key} {...generationRowProps(`download-${item.key}`)}><TableCell>{item.label}</TableCell><TableCell>{status(item.created, `download-${item.key}`)}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generatePrintableDownload(item.key)} disabled={busyKey !== null || !data.thumbnail}>Run</Button></TableCell></TableRow>)}
+                  <TableRow {...generationRowProps('download-guide')}><TableCell>How to print guide</TableCell><TableCell>{status(printableStatus.guideCreated, 'download-guide')}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generatePrintableDownload('guide')} disabled={busyKey !== null}>Run</Button></TableCell></TableRow></> : null}
+                <TableRow {...generationRowProps(multiple ? 'download-grouped-pdf' : 'download-instructions')}>
                   <TableCell>Download Instructions</TableCell>
                   <TableCell>{status(
                     data.files.some((file) => /instruction/i.test(file.originalFileName ?? file.fileName)),
-                    overviewGenerationItem === 'download-grouped-pdf' || overviewGenerationItem === 'download-instructions',
+                    multiple ? 'download-grouped-pdf' : 'download-instructions',
                   )}</TableCell>
                   <TableCell className="text-right">
                     {multiple ? (
@@ -2581,7 +2698,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 </TableRow>
 
                 {!multiple ? <><TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Dropbox</TableCell></TableRow>
-                  <TableRow><TableCell>Create Dropbox / Upload files / Create download instructions PDF</TableCell><TableCell>{status(data.dropbox.current, overviewGenerationItem === 'dropbox')}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={runDropboxAction} disabled={busyKey !== null || !data.dropbox.action}>Run</Button></TableCell></TableRow></> : null}
+                  <TableRow {...generationRowProps('dropbox')}><TableCell>Create Dropbox / Upload files / Create download instructions PDF</TableCell><TableCell>{status(data.dropbox.current, 'dropbox')}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={runDropboxAction} disabled={busyKey !== null || !data.dropbox.action}>Run</Button></TableCell></TableRow></> : null}
               </TableBody>
             </Table>
           </div>

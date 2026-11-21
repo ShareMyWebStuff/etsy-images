@@ -260,6 +260,7 @@ async function loadGenerationSnapshot(context: ListingEditorContext) {
   });
   const hasInstructions = listing.files.some(isDropboxInstructionPdfFile);
   const incompleteItems: string[] = [];
+  if (data.listing.imagesNeedRegeneration) incompleteItems.push('listing images need regeneration');
   if (!data.template) {
     incompleteItems.push('listing template');
   } else {

@@ -31,6 +31,7 @@ import {
 } from '@/lib/printshrimp/custom-fonts';
 import { TemplateCornerPicker } from './TemplateCornerPicker';
 import { MarketsDeliverySettings } from '@/components/MarketsDeliverySettings';
+import { SavedTemplateImagePicker } from './SavedTemplateImagePicker';
 
 export type OurCategoryEditorTab = 'details' | 'print-details' | 'image-templates';
 type PendingNavigation = { type: 'href'; href: string } | { type: 'back' };
@@ -136,6 +137,7 @@ function SortableImageTemplateRow({
   onCopy,
   onEdit,
   gridEditHref,
+  sceneEditHref,
 }: {
   template: OurCategoryImageTemplateView;
   disabled: boolean;
@@ -144,6 +146,7 @@ function SortableImageTemplateRow({
   onCopy: () => void;
   onEdit: () => void;
   gridEditHref?: string;
+  sceneEditHref?: string;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: template.id,
@@ -191,7 +194,7 @@ function SortableImageTemplateRow({
           <Button type="button" variant="outline" size="icon" onClick={onCopy} disabled={disabled} aria-label={`Make copy of ${template.name}`} title="Make a copy">
             <Copy className="h-4 w-4" aria-hidden="true" />
           </Button>
-          {gridEditHref ? <Button type="button" variant="outline" size="icon" asChild>
+          {sceneEditHref ? <Button type="button" variant="outline" size="icon" asChild><a href={sceneEditHref} aria-label={`Edit ${template.name}`} title="Edit shared room scene"><Pencil className="h-4 w-4" aria-hidden="true" /></a></Button> : gridEditHref ? <Button type="button" variant="outline" size="icon" asChild>
             <a href={gridEditHref} aria-label={`Edit ${template.name} in grid editor`} title="Edit in the new grid editor">
               <LayoutGrid className="h-4 w-4" aria-hidden="true" />
             </a>
@@ -218,6 +221,7 @@ export function OurCategoryEditorClient({
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation | null>(null);
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [savedSceneOpen, setSavedSceneOpen] = useState(false);
   const [reorderingTemplates, setReorderingTemplates] = useState(false);
   const [editTemplate, setEditTemplate] = useState<OurCategoryImageTemplateView | null>(null);
   const [templateSaving, setTemplateSaving] = useState(false);
@@ -1009,6 +1013,7 @@ export function OurCategoryEditorClient({
             <CardDescription>Reusable images stored in the EtsyListingTemplates S3 directory. Click and drag a row to change its order.</CardDescription>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="outline" disabled={!data.categoryId || reorderingTemplates} onClick={() => setSavedSceneOpen(true)}>Add Our Template Image</Button>
             {isMultiple ? (
               <Button
                 type="button"
@@ -1064,6 +1069,7 @@ export function OurCategoryEditorClient({
                           onTest={() => setTestTemplate(template)}
                           onCopy={() => { void makeTemplateCopy(template); }}
                           onEdit={() => openEditTemplate(template)}
+                          sceneEditHref={template.ourTemplateImageId ? `/our-template-images?edit=${encodeURIComponent(template.ourTemplateImageId)}` : undefined}
                           gridEditHref={!template.isLinked && template.openingRegions.some((region) => region.grid)
                             ? `/our-templates/${encodeURIComponent(data.categoryId!)}/edit/image/${encodeURIComponent(template.id)}`
                             : undefined}
@@ -1096,6 +1102,7 @@ export function OurCategoryEditorClient({
       {activeTab === 'details' ? renderDetails() : null}
       {activeTab === 'print-details' ? renderPrintDetails() : null}
       {activeTab === 'image-templates' ? renderImageTemplates() : null}
+      {savedSceneOpen && data.categoryId ? <SavedTemplateImagePicker categoryId={data.categoryId} values={values} onClose={() => setSavedSceneOpen(false)} onAttached={(template) => { setData((current) => ({ ...current, imageTemplates: [...current.imageTemplates, template] })); setSavedSceneOpen(false); toast.success('Room scene added to template.'); }} /> : null}
 
       <div className="sticky bottom-4 flex items-center justify-between gap-3 rounded-lg border border-border bg-card/95 p-4 shadow-lg backdrop-blur">
         <Button type="button" variant="outline" onClick={requestBack}><ArrowLeft className="h-4 w-4" aria-hidden="true" />Back</Button>
