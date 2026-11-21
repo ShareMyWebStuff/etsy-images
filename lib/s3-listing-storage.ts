@@ -7,6 +7,7 @@ import {
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
+  type PutObjectCommandInput,
 } from '@aws-sdk/client-s3';
 import { NodeHttpHandler } from '@smithy/node-http-handler';
 import sharp from 'sharp';
@@ -294,6 +295,139 @@ export async function listGeneratedListingImageFiles(directoryPath: string): Pro
     } while (continuationToken);
   }));
   return [...names].sort();
+}
+
+const LISTING_DELETE_MAX_OBJECTS = 10_000;
+const LISTING_DELETE_MAX_BYTES = 1024 * 1024 * 1024;
+type ListingDeleteObject = { key: string; etag: string; size: number };
+type ListingDeleteHeaders = Pick<PutObjectCommandInput,
+  'ContentType' | 'CacheControl' | 'ContentEncoding' | 'ContentDisposition' | 'ContentLanguage' | 'Expires' | 'Metadata'>;
+
+function listingDirectoryKey(directoryPath: string) {
+  const key = keyFromPath(directoryPath), parts = key.split('/');
+  // A listing lives at root/shop/section/listing. Never permit a shop,
+  // section, preview namespace, nested child, or traversal as the target.
+  if (parts.length !== 3 || parts.some((part) => !part || part === '.' || part === '..' || /[\x00-\x1f]/.test(part))
+    || parts[0] === APP_PREVIEW_PREFIX.slice(0, -1)) {
+    throw new Error('Only an exact listing directory inside the configured storage root can be deleted.');
+  }
+  return key;
+}
+
+async function listingDeleteInventory(directory: string, protectedKey: (key: string) => boolean) {
+  const objects = new Map<string, ListingDeleteObject>();
+  let bytes = 0;
+  const add = (key: string, etag: string | undefined, size: number | undefined) => {
+    if (protectedKey(key) || objects.has(key)) return;
+    if (!etag || !Number.isSafeInteger(size) || size! < 0) throw new Error(`The listing storage inventory could not be verified: ${key}.`);
+    bytes += size!;
+    if (objects.size >= LISTING_DELETE_MAX_OBJECTS || bytes > LISTING_DELETE_MAX_BYTES) {
+      throw new Error('The listing is too large for safe deletion: at most 10,000 objects and 1 GiB can be backed up. No database rows were deleted.');
+    }
+    objects.set(key, { key, etag, size: size! });
+  };
+  for (const root of [directory, `${APP_PREVIEW_PREFIX}${directory}`]) {
+    const prefix = `${root}/`, tokens = new Set<string>();
+    let token: string | undefined;
+    do {
+      const page = await runS3Operation(`checking listing files in "${directory}"`, () => client.send(new ListObjectsV2Command({
+        Bucket: bucket, Prefix: prefix, ContinuationToken: token,
+      })));
+      for (const object of page.Contents ?? []) {
+        // Check the boundary even though S3 ordinarily enforces its Prefix.
+        if (object.Key?.startsWith(prefix)) add(object.Key, object.ETag, object.Size);
+      }
+      if (!page.IsTruncated) break;
+      if (!page.NextContinuationToken || tokens.has(page.NextContinuationToken)) throw new Error('The listing storage inventory could not be completed. No database rows were deleted.');
+      token = page.NextContinuationToken; tokens.add(token);
+    } while (true);
+    // Some old folder markers use the exact directory key without '/'.
+    if (!protectedKey(root)) {
+      const marker = await objectExists(root);
+      if (marker) add(root, marker.ETag, marker.ContentLength);
+    }
+  }
+  return [...objects.values()];
+}
+
+/**
+ * Remove one listing's inventoried originals and exact preview bytes, then
+ * commit its database deletion. The callback must resolve a lost database
+ * commit acknowledgement itself before deciding whether rollback is needed.
+ */
+export async function removeListingStorage(
+  directoryPath: string,
+  excludedPaths: readonly string[],
+  deleteDatabaseRows: () => Promise<void>,
+): Promise<void> {
+  const directory = listingDirectoryKey(directoryPath);
+  const exclusions = excludedPaths.map((value) => {
+    const key = keyFromPath(value);
+    if (key.split('/').some((part) => !part || part === '.' || part === '..' || /[\x00-\x1f]/.test(part))) {
+      throw new Error('A preserved listing source has an unsafe storage path.');
+    }
+    return key;
+  });
+  const protectedKey = (key: string) => exclusions.some((source) => key === source || key.startsWith(`${source}/`)
+    || !source.startsWith(APP_PREVIEW_PREFIX) && (key === previewKeyForKey(source)
+      || key === `${APP_PREVIEW_PREFIX}${source}` || key.startsWith(`${APP_PREVIEW_PREFIX}${source}/`)));
+  const inventory = await listingDeleteInventory(directory, protectedKey);
+  const backups = new Map<string, { contents: Buffer; etag: string; headers: ListingDeleteHeaders }>();
+  // Complete every backup before issuing the first mutation, even when a
+  // listing contains files that the database never registered.
+  for (const object of inventory) {
+    const response = await runS3Operation(`backing up the listing file "${object.key}"`, () => client.send(new GetObjectCommand({
+      Bucket: bucket, Key: object.key, IfMatch: object.etag,
+    })));
+    if (!response.Body || response.ETag !== object.etag) throw new Error('The listing files changed while preparing deletion. Reload and try again. No files were deleted.');
+    const contents = Buffer.from(await runS3Operation(`backing up the listing file "${object.key}"`, () => response.Body!.transformToByteArray()));
+    if (contents.length !== object.size) throw new Error('The listing file sizes changed while preparing deletion. No files were deleted.');
+    backups.set(object.key, { contents, etag: object.etag, headers: {
+      ContentType: response.ContentType,
+      CacheControl: response.CacheControl,
+      ContentEncoding: response.ContentEncoding,
+      ContentDisposition: response.ContentDisposition,
+      ContentLanguage: response.ContentLanguage,
+      Expires: response.Expires,
+      Metadata: response.Metadata ? { ...response.Metadata } : undefined,
+    } });
+  }
+  const attempted: string[] = [];
+  try {
+    for (const object of inventory) {
+      attempted.push(object.key);
+      // A concurrent upload of this filename must survive deletion.
+      await runS3Operation(`deleting the listing file "${object.key}"`, () => client.send(new DeleteObjectCommand({
+        Bucket: bucket, Key: object.key, IfMatch: object.etag,
+      })));
+    }
+    if ((await listingDeleteInventory(directory, protectedKey)).length) {
+      throw new Error('The listing files changed while deletion was running. No database rows were deleted. Reload and try again.');
+    }
+    await deleteDatabaseRows();
+  } catch (error) {
+    const failures: unknown[] = [];
+    for (const key of attempted) {
+      const backup = backups.get(key)!;
+      try {
+        await runS3Operation(`restoring the listing file "${key}"`, () => client.send(new PutObjectCommand({
+          ...backup.headers, Bucket: bucket, Key: key, Body: backup.contents, IfNoneMatch: '*',
+        })));
+      } catch (restoreError) {
+        const status = (restoreError as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+        if (status === 412) {
+          try {
+            const existing = await objectExists(key);
+            if (existing?.ETag === backup.etag) continue; // The failed delete left the original intact.
+            failures.push(new Error(`A newer listing file was preserved instead of overwriting it during rollback: ${key}.`, { cause: restoreError }));
+          } catch (lookupError) { failures.push(lookupError); }
+        } else failures.push(restoreError);
+      }
+    }
+    if (failures.length) throw new Error('The listing could not be deleted, and some files could not be restored safely. Reload before retrying deletion.',
+      { cause: new AggregateError([error, ...failures]) });
+    throw error;
+  }
 }
 
 export async function copyFile(sourcePath: string, destinationPath: string) {

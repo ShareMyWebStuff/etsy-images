@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
-import { readFile, rename } from '@/lib/s3-listing-storage';
+import { readFile, removeListingStorage, rename } from '@/lib/s3-listing-storage';
 import path from 'node:path';
+import { ETSY_LISTINGS_DIRECTORY } from '@/lib/config';
 import {
   createListingDirectory,
   createSubSectionDirectory,
@@ -68,7 +69,7 @@ function isString(value: string | null): value is string {
   return value !== null;
 }
 
-async function getListingContext(shopId: string, sectionId: string, subSectionId: string) {
+export async function getListingContext(shopId: string, sectionId: string, subSectionId: string) {
   let etsyShopId: bigint;
   const numericSectionId = Number(sectionId);
   const numericSubSectionId = Number(subSectionId);
@@ -259,7 +260,9 @@ async function getInitialListingPriceAmount(
   return Math.min(...applicablePrices);
 }
 
-async function createLocalListingRow(
+/** Shared local defaults, kept inside the caller's transaction for atomic batch imports. */
+export async function createLocalListingRowInTransaction(
+  tx: Prisma.TransactionClient,
   context: Awaited<ReturnType<typeof getListingContext>>,
   listingName: string,
   requestedConfiguration?: NewListingConfiguration
@@ -268,7 +271,6 @@ async function createLocalListingRow(
     context.section.etsyShopSectionId === null ? null : Number(context.section.etsyShopSectionId);
   const configuration = resolveNewListingConfiguration(context, requestedConfiguration);
 
-  const created = await prisma.$transaction(async (tx) => {
     const template = configuration.ourCategoryId === null ? null : await tx.ourCategory.findFirst({
       where: { id: configuration.ourCategoryId, shopId: context.shop.id },
       select: {
@@ -333,7 +335,17 @@ async function createLocalListingRow(
 
     await ensureListingProductDefaultsInTransaction(tx, listing.id);
     return { listing, template };
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+async function createLocalListingRow(
+  context: Awaited<ReturnType<typeof getListingContext>>,
+  listingName: string,
+  requestedConfiguration?: NewListingConfiguration,
+) {
+  const created = await prisma.$transaction(
+    (tx) => createLocalListingRowInTransaction(tx, context, listingName, requestedConfiguration),
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+  );
 
   const booleanOptions = (value: Prisma.JsonValue, keys: readonly string[]) => {
     const record = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -887,6 +899,9 @@ async function loadListingForAction(subSectionId: number, listingId: string) {
     },
     select: {
       id: true,
+      shopId: true,
+      localDirectoryName: true,
+      updatedAt: true,
       etsyId: true,
       etsyCustomisedId: true,
       etsyCustomisedState: true,
@@ -1036,9 +1051,53 @@ export async function updateLocalListing(
   }
 }
 
+function referencedListingStoragePath(value: string): string | null {
+  const normalized = value.replace(/\\/g, '/');
+  const root = ETSY_LISTINGS_DIRECTORY.replace(/\\/g, '/').replace(/\/$/, '');
+  if (normalized.toLowerCase().startsWith(`${root.toLowerCase()}/`)) return path.resolve(normalized);
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      const bucket = process.env.ETSY_LISTINGS_S3_BUCKET ?? 'etsy-listings-216211142709-eu-west-2';
+      const pathname = decodeURIComponent(url.pathname).replace(/^\//, '');
+      if (url.hostname.startsWith(`${bucket}.s3`) && url.hostname.endsWith('.amazonaws.com')) return path.join(ETSY_LISTINGS_DIRECTORY, pathname);
+      if (/^s3[.-]/.test(url.hostname) && url.hostname.endsWith('.amazonaws.com') && pathname.startsWith(`${bucket}/`)) {
+        return path.join(ETSY_LISTINGS_DIRECTORY, pathname.slice(bucket.length + 1));
+      }
+    } catch { /* An unrelated external artwork URL is not a listing-storage reference. */ }
+    return null;
+  }
+  // Pinterest stores its S3 object key relative to the listing-storage root.
+  if (!/^(?:[A-Za-z]:|\/)/.test(normalized) && !normalized.split('/').includes('..')) return path.join(ETSY_LISTINGS_DIRECTORY, normalized);
+  return null;
+}
+
+async function listingStorageReferences(directory: string) {
+  const [templates, scenes, pins, orders] = await Promise.all([
+    prisma.ourCategoryImageTemplate.findMany({ select: { imagePath: true } }),
+    prisma.$queryRaw<Array<{ imagePath: string; whiteImagePath: string | null; blackImagePath: string | null }>>`
+      SELECT imagePath, whiteImagePath, blackImagePath FROM our_template_images`,
+    prisma.pinterestPin.findMany({ where: { creativeStorageKey: { not: null } }, select: { creativeStorageKey: true } }),
+    prisma.etsyOrderItem.findMany({ where: { artworkUrl: { not: null } }, select: { artworkUrl: true } }),
+  ]);
+  const root = directory.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+  return [...new Set([
+    ...templates.map((template) => template.imagePath),
+    ...scenes.flatMap((scene) => [scene.imagePath, scene.whiteImagePath, scene.blackImagePath]),
+    ...pins.map((pin) => pin.creativeStorageKey), ...orders.map((order) => order.artworkUrl),
+  ].flatMap((value) => {
+    if (!value) return [];
+    const reference = referencedListingStoragePath(value);
+    if (!reference) return [];
+    const normalized = reference.replace(/\\/g, '/').toLowerCase();
+    return normalized === root || normalized.startsWith(`${root}/`) ? [reference] : [];
+  }))];
+}
+
 export async function deleteListing(shopId: string, sectionId: string, subSectionId: string, listingId: string) {
   const context = await getListingContext(shopId, sectionId, subSectionId);
   const listing = await loadListingForAction(context.subSection.id, listingId);
+  if (listing.shopId !== context.shop.etsyShopId.toString()) throw new Error('Listing not found in this shop.');
 
   if (listing.etsyId !== null || listing.etsyCustomisedId !== null || listing.etsyDownloadId !== null) {
     throw new Error(`Cannot delete "${listing.title}" because it exists on Etsy.`);
@@ -1048,14 +1107,49 @@ export async function deleteListing(shopId: string, sectionId: string, subSectio
     throw new Error(`Cannot delete "${listing.title}" because it is published.`);
   }
 
+  const directory = getListingDirectoryPath(context.shop.displayName, context.section.title, context.subSection.name,
+    listing.localDirectoryName ?? `Listing-${listing.id}`);
+  const otherListings = await prisma.etsyListing.findMany({ where: {
+    id: { not: listing.id }, shopId: context.shop.etsyShopId.toString(), OR: [
+      { subSection: { is: { shopSectionId: context.section.id } } },
+      ...(context.section.etsyShopSectionId === null ? [] : [{ subSectionId: null, shopSectionId: Number(context.section.etsyShopSectionId) }]),
+    ],
+  }, select: { id: true, localDirectoryName: true } });
+  if (otherListings.some((other) => getListingDirectoryPath(context.shop.displayName, context.section.title, context.subSection.name,
+    other.localDirectoryName ?? `Listing-${other.id}`).toLowerCase() === directory.toLowerCase())) {
+    throw new Error('This listing shares its storage folder with another listing. Separate the listings before deleting either one.');
+  }
+  const preservedPaths = await listingStorageReferences(directory);
+
   if (listing.dropboxBundle) {
     await deleteDropboxBundleFolder(listing.dropboxBundle.folderPath);
   }
 
-  await prisma.etsyListing.delete({
-    where: {
-      id: listing.id,
-    },
+  await removeListingStorage(directory, preservedPaths, async () => {
+    try {
+      await prisma.$transaction(async (transaction) => {
+        const currentShop = await transaction.etsyShop.findUnique({ where: { id: context.shop.id }, select: { etsyShopId: true, shopName: true, title: true } });
+        const currentSubSection = await transaction.etsyShopSubSection.findFirst({ where: { id: context.subSection.id, shopSectionId: context.section.id },
+          select: { name: true, shopSection: { select: { title: true } } } });
+        if (!currentShop || currentShop.etsyShopId !== context.shop.etsyShopId
+          || currentShop.shopName !== context.shop.shopName || currentShop.title !== context.shop.title
+          || !currentSubSection || currentSubSection.name !== context.subSection.name || currentSubSection.shopSection.title !== context.section.title) {
+          throw new Error('The listing storage location changed. Reload it before deleting.');
+        }
+        const removed = await transaction.etsyListing.deleteMany({ where: {
+          id: listing.id, shopId: context.shop.etsyShopId.toString(), subSectionId: context.subSection.id,
+          localDirectoryName: listing.localDirectoryName, updatedAt: listing.updatedAt,
+          etsyId: null, etsyDownloadId: null, etsyCustomisedId: null, OR: [{ state: null }, { state: { notIn: ['active', 'published'] } }],
+          subSection: { is: { name: context.subSection.name, shopSectionId: context.section.id,
+            shopSection: { is: { title: context.section.title } } } },
+        } });
+        if (removed.count !== 1) throw new Error('The listing changed before it could be deleted. Reload it and try again.');
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30_000 });
+    } catch (error) {
+      // A committed deletion must not be turned into unreferenced restored objects by a lost acknowledgement.
+      const current = await prisma.etsyListing.findUnique({ where: { id: listing.id }, select: { id: true } });
+      if (current) throw error;
+    }
   });
 }
 

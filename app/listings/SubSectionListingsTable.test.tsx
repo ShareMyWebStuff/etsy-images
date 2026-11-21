@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SubSectionListingsTable } from '@/app/listings/SubSectionListingsTable';
@@ -34,6 +34,51 @@ const data: SubSectionListingsPageData = {
 };
 
 describe('SubSectionListingsTable categories', () => {
+  it('imports into an empty section and refreshes the table with an accessible result count', async () => {
+    const emptyData: SubSectionListingsPageData = { ...data, subSection: { ...data.subSection, numberOfDownloads: 1 }, listings: [] };
+    const importedData: SubSectionListingsPageData = { ...emptyData, listings: [{ ...data.listings[0], listingName: 'Imported Otter' }] };
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ templates: [
+      { id: '15', name: 'Woodland print', templateType: 'single', itemCount: 1 },
+    ] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ data: importedData, importedCount: 1, listingIds: ['500'] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SubSectionListingsTable data={emptyData} shopId="66615491" sectionId="3" subSectionId="8" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    await screen.findByRole('option', { name: 'Woodland print' });
+    fireEvent.change(screen.getByLabelText('Import template'), { target: { value: '15' } });
+    fireEvent.change(screen.getByLabelText('ZIP archive'), { target: { files: [new File(['ZIP'], 'otter.zip')] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import listings' }));
+    expect(await screen.findByText('Imported Otter')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('1 listing imported successfully.');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('disables table mutation buttons while importing and releases them on a server error', async () => {
+    const singleData: SubSectionListingsPageData = { ...data, subSection: { ...data.subSection, numberOfDownloads: 1 } };
+    let respond!: (response: unknown) => void;
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ templates: [
+      { id: '15', name: 'Woodland print', templateType: 'single', itemCount: 1 },
+    ] }) }).mockImplementationOnce(() => new Promise((resolve) => { respond = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SubSectionListingsTable data={singleData} shopId="66615491" sectionId="3" subSectionId="8" />);
+    const generate = screen.getByRole('button', { name: 'Generate' }) as HTMLButtonElement;
+    const add = screen.getByRole('button', { name: 'Add listing' }) as HTMLButtonElement;
+    const remove = screen.getByRole('button', { name: 'Delete Sea Creatures Set' }) as HTMLButtonElement;
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    await screen.findByRole('option', { name: 'Woodland print' });
+    fireEvent.change(screen.getByLabelText('Import template'), { target: { value: '15' } });
+    fireEvent.change(screen.getByLabelText('ZIP archive'), { target: { files: [new File(['ZIP'], 'otter.zip')] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import listings' }));
+    expect(generate.disabled).toBe(true); expect(add.disabled).toBe(true); expect(remove.disabled).toBe(true);
+    fireEvent.click(generate); fireEvent.click(add); fireEvent.click(remove);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => respond({ ok: false, json: async () => ({ error: 'CSV row 2: image missing.' }) }));
+    expect(screen.getByRole('alert').textContent).toContain('CSV row 2');
+    expect(generate.disabled).toBe(false); expect(add.disabled).toBe(false); expect(remove.disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('loads newly created templates when opening Create Listing without losing the draft', async () => {
     const initialData: SubSectionListingsPageData = {
       ...data,

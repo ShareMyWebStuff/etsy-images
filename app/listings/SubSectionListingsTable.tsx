@@ -4,13 +4,14 @@ import Link from 'next/link';
 import type { Route } from 'next';
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Fragment } from 'react';
-import { Check, ChevronDown, ChevronRight, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { SubSectionListingsPageData } from '@/lib/listing-table';
+import { ListingZipImportDialog } from '@/app/listings/ListingZipImportDialog';
 
 type SubSectionListingsTableProps = {
   data: SubSectionListingsPageData | null;
@@ -98,6 +99,10 @@ export function SubSectionListingsTable({
   const [actingListingId, setActingListingId] = useState<string | null>(null);
   const [listingToDelete, setListingToDelete] = useState<{ id: string; name: string } | null>(null);
   const [listingToRestore, setListingToRestore] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const importingRef = useRef(false);
   const listingsScrollRef = useRef<HTMLDivElement>(null);
   const isSingleListings = data?.subSection.numberOfDownloads === 1 && !data.subSection.includeAllDownloads;
   const hasCollapsibleGroups = data?.subSection.numberOfDownloads !== null
@@ -108,6 +113,11 @@ export function SubSectionListingsTable({
   useEffect(() => {
     setData(initialData);
   }, [initialData]);
+
+  useEffect(() => {
+    setImportOpen(false);
+    setImportMessage(null);
+  }, [shopId, sectionId, subSectionId]);
 
   useEffect(() => {
     if (!createOpen || !shopId || !sectionId || !subSectionId) return;
@@ -201,6 +211,7 @@ export function SubSectionListingsTable({
 
   async function createListing(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (importingRef.current) return;
 
     if (!shopId || !sectionId || !subSectionId) {
       setError('Missing listing context.');
@@ -258,6 +269,7 @@ export function SubSectionListingsTable({
   }
 
   async function deleteListing(listingId: string) {
+    if (importingRef.current) return;
     if (!shopId || !sectionId || !subSectionId) {
       setError('Missing listing context.');
       return;
@@ -290,6 +302,7 @@ export function SubSectionListingsTable({
   }
 
   async function generateListings(mode: 'changed' | 'all') {
+    if (importingRef.current) return;
     if (!shopId || !sectionId || !subSectionId || !data) {
       setGenerateError('Missing listing context.');
       return;
@@ -369,7 +382,12 @@ export function SubSectionListingsTable({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4 pb-4">
           <CardTitle>{data ? `${data.section.sectionName} Listings` : 'Listings'}</CardTitle>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button type="button" variant="outline" disabled={!shopId || !sectionId || !subSectionId || !data || generateLoading || createLoading || actingListingId !== null || importLoading}
+              onClick={() => { setImportMessage(null); setError(null); setImportOpen(true); }}>
+              <Upload className="h-4 w-4" aria-hidden="true" />
+              Import
+            </Button>
             <Button
               type="button"
               variant="outline"
@@ -380,7 +398,7 @@ export function SubSectionListingsTable({
                 setGenerationProgress(null);
                 setGenerateOpen(true);
               }}
-              disabled={!subSectionId || !data || data.listings.length === 0 || generateLoading}
+              disabled={!subSectionId || !data || data.listings.length === 0 || generateLoading || importLoading}
             >
               <Sparkles className="h-4 w-4" aria-hidden="true" />
               Generate
@@ -391,7 +409,7 @@ export function SubSectionListingsTable({
               variant="outline"
               aria-label="Edit listing"
               title="Edit listing"
-              disabled={!data?.listings.length || generateLoading}
+              disabled={!data?.listings.length || generateLoading || importLoading}
               onClick={() => {
                 if (data?.listings[0]) selectListingToEdit(data.listings[0].id);
                 setCreateOpen(true);
@@ -413,13 +431,14 @@ export function SubSectionListingsTable({
                 setOurCategoryId('');
                 setCreateOpen(true);
               }}
-              disabled={!subSectionId}
+              disabled={!subSectionId || importLoading}
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
             </Button>
           </div>
         </CardHeader>
         <CardContent>
+          {importMessage ? <p role="status" className="mb-4 text-sm font-medium text-green-700">{importMessage}</p> : null}
           {generateMessage ? <p className="mb-4 text-sm font-medium text-green-700">{generateMessage}</p> : null}
           {error ? <p className="mb-4 text-sm font-medium text-destructive">{error}</p> : null}
           <div ref={listingsScrollRef} className="max-h-[70vh] overflow-y-auto rounded-md border">
@@ -439,7 +458,7 @@ export function SubSectionListingsTable({
               {data && data.listings.length > 0 ? (
                 data.listings.map((listing, listingIndex) => {
                   const isPublished = listing.status === 'active' || listing.status === 'published';
-                  const isBusy = actingListingId !== null;
+                  const isBusy = actingListingId !== null || importLoading;
                   const sourceSectionName = listingCategoryLabel(listing);
                   const previousSourceSectionName = listingIndex === 0
                     ? null
@@ -519,6 +538,22 @@ export function SubSectionListingsTable({
         </CardContent>
       </Card>
 
+      {shopId && sectionId && subSectionId && data ? <ListingZipImportDialog
+        key={`${shopId}:${sectionId}:${subSectionId}`}
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        shopId={shopId}
+        sectionId={sectionId}
+        subSectionId={subSectionId}
+        destinationName={`${data.shop.shopName} / ${data.section.sectionName} / ${data.subSection.name}`}
+        onImportingChange={(importing) => { importingRef.current = importing; setImportLoading(importing); }}
+        onImported={(next, count) => {
+          setData(next);
+          setImportMessage(`${count} ${count === 1 ? 'listing' : 'listings'} imported successfully.`);
+          setImportOpen(false);
+        }}
+      /> : null}
+
       <Dialog
         open={generateOpen}
         onOpenChange={(open) => {
@@ -550,14 +585,14 @@ export function SubSectionListingsTable({
               type="button"
               variant="outline"
               onClick={() => setGenerateOpen(false)}
-              disabled={generateLoading}
+              disabled={generateLoading || importLoading}
             >
               Cancel
             </Button>
-            <Button type="button" variant="outline" onClick={() => generateListings('changed')} disabled={generateLoading}>
+            <Button type="button" variant="outline" onClick={() => generateListings('changed')} disabled={generateLoading || importLoading}>
               {generateLoading ? 'Working...' : 'Only Changed'}
             </Button>
-            <Button type="button" onClick={() => generateListings('all')} disabled={generateLoading}>
+            <Button type="button" onClick={() => generateListings('all')} disabled={generateLoading || importLoading}>
               {generateLoading ? 'Working...' : 'All'}
             </Button>
           </DialogFooter>
@@ -637,7 +672,7 @@ export function SubSectionListingsTable({
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={createLoading}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={createLoading || templatesLoading || Boolean(templatesError) || !ourCategoryId}>
+              <Button type="submit" disabled={createLoading || templatesLoading || Boolean(templatesError) || !ourCategoryId || importLoading}>
                 {createLoading ? (editingListingId ? 'Saving...' : 'Creating...') : (editingListingId ? 'Save' : 'Create')}
               </Button>
             </DialogFooter>
@@ -664,7 +699,7 @@ export function SubSectionListingsTable({
               type="button"
               variant="outline"
               onClick={() => setListingToDelete(null)}
-              disabled={actingListingId !== null}
+              disabled={actingListingId !== null || importLoading}
             >
               Cancel
             </Button>
@@ -672,7 +707,7 @@ export function SubSectionListingsTable({
               type="button"
               variant="destructive"
               onClick={() => listingToDelete && deleteListing(listingToDelete.id)}
-              disabled={actingListingId !== null}
+              disabled={actingListingId !== null || importLoading}
             >
               {actingListingId !== null ? 'Deleting...' : 'Delete'}
             </Button>
