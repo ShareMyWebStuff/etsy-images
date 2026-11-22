@@ -51,18 +51,21 @@ export default async function EditListingPage({ searchParams }: EditListingPageP
 
   return (
     <div>
-      <Navbar />
-      <main className="py-5 sm:py-6 lg:py-8">
-        <AppContainer>
-          <div className="mb-4">
+      <div className="sticky top-0 z-40 bg-background">
+        <Navbar />
+        <AppContainer className="pb-4 pt-5 sm:pt-6 lg:pt-8">
+          <nav aria-label="Listing navigation">
             <Button asChild variant="outline">
               <Link href={backHref as Route}>
                 <ArrowLeft className="h-4 w-4" aria-hidden="true" />
                 Back to Listings
               </Link>
             </Button>
-          </div>
-
+          </nav>
+        </AppContainer>
+      </div>
+      <main className="pb-5 sm:pb-6 lg:pb-8">
+        <AppContainer>
           <ListingEditorClient initialData={data} initialTab={initialTab} />
         </AppContainer>
       </main>
