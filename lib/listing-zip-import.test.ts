@@ -12,7 +12,7 @@ vi.mock('@/lib/prisma', () => ({ prisma: {
 vi.mock('@/lib/listing-table', () => ({ getSubSectionListingsPageData: mocks.page }));
 vi.mock('@/lib/s3-listing-storage', () => ({ readFile: mocks.read, writeFile: mocks.write, unlink: mocks.unlink, readdir: mocks.readdir,
   rename: vi.fn(), mkdir: vi.fn(), stat: vi.fn(), rm: vi.fn(), copyFile: vi.fn() }));
-import { getListingZipImportTemplates, importListingZip, prepareListingZipArtwork } from './listing-zip-import';
+import { getListingZipImportTemplates, importListingZip, insertListingZipReviewRow, prepareListingZipArtwork, prepareListingZipReview } from './listing-zip-import';
 
 const context = { shopId: '66615491', sectionId: '2', subSectionId: '3' };
 const now = new Date('2026-11-21T12:00:00.000Z');
@@ -72,8 +72,10 @@ beforeEach(() => {
   });
   mocks.listings.mockImplementation(async ({ where }) => {
     if (where.thumbnailFileName) {
-      if (unconfirmed) throw new Error('Unable to confirm transaction');
-      return rows.filter(row => where.thumbnailFileName.in.includes(row.thumbnailFileName)).map(row => ({ id: row.id, thumbnailFileName: row.thumbnailFileName }));
+      const owners = rows.filter(row => where.thumbnailFileName.in.includes(row.thumbnailFileName));
+      if (unconfirmed && owners.length) throw new Error('Unable to confirm transaction');
+      return owners.map(row => ({ id: row.id, shopId: row.shopId, subSectionId: row.subSectionId,
+        localDirectoryName: row.localDirectoryName, thumbnailFileName: row.thumbnailFileName }));
     }
     return rows.map(row => ({ title: row.title, localDirectoryName: row.localDirectoryName }));
   });
@@ -159,8 +161,8 @@ describe('ZIP import preflight', () => {
   it('rejects filename/content mismatches and oversized input before writes', async () => {
     const png = await sharp({ create: { width: 40, height: 50, channels: 3, background: '#ff0000' } }).png().toBuffer();
     await expect(importListingZip(context, '10', await archive('Title,Description,Filename\nFox,one,art.jpg', png, 'art.jpg'))).rejects.toThrow('filename extension');
-    const file = await archive(); Object.defineProperty(file, 'size', { value: 400 * 1024 * 1024 + 1 });
-    await expect(importListingZip(context, '10', file)).rejects.toThrow('400 MB'); expect(mocks.write).not.toHaveBeenCalled();
+    const file = await archive(); Object.defineProperty(file, 'size', { value: 500 * 1024 * 1024 + 1 });
+    await expect(importListingZip(context, '10', file)).rejects.toThrow('500 MB'); expect(mocks.write).not.toHaveBeenCalled();
   });
 
   it('reports unreadable image headers separately from an actual pixel limit', async () => {
@@ -279,5 +281,110 @@ describe('atomic ZIP import and storage ownership', () => {
     if (failure instanceof Error) mocks.page.mockRejectedValue(failure); else mocks.page.mockResolvedValue(null);
     await expect(importListingZip(context, '10', await archive())).rejects.toMatchObject({ status: 503, message: expect.stringContaining('were imported') });
     expect(rows).toHaveLength(1); expect(objects.size).toBe(2); expect(mocks.unlink).not.toHaveBeenCalled();
+  });
+});
+
+describe('sequential ZIP review preparation and insertion', () => {
+  it('prepares row metadata, previews and skippable collision/decode/text errors without creating listings or storage', async () => {
+    rows = [{ title: 'FOX', localDirectoryName: 'Existing fox' }];
+    const valid = await sharp({ create: { width: 40, height: 50, channels: 3, background: '#ff3300' } }).png().toBuffer();
+    const file = zip([
+      ['overview.csv', `Title,Description,Filename\nFox,Existing listing,art.png\nOwl,Invalid image,broken.png\nDeer,${'x'.repeat(1001)},art.png\nRabbit,Ready to insert,art.png`],
+      ['art.png', valid], ['broken.png', 'invalid image'],
+    ]);
+    const plan = await prepareListingZipReview(context, '10', file);
+    expect(plan.target).toMatchObject({ id: 10, name: 'Living Room' }); expect(plan.input).toEqual(context);
+    expect(plan.rows.map(({ title, rowNumber }) => ({ title, rowNumber }))).toEqual([
+      { title: 'Fox', rowNumber: 2 }, { title: 'Owl', rowNumber: 3 }, { title: 'Deer', rowNumber: 4 }, { title: 'Rabbit', rowNumber: 5 },
+    ]);
+    expect(plan.rows[0]).toMatchObject({ width: 40, height: 50, orientation: 'portrait', error: expect.stringContaining('already exists'), contents: expect.any(Buffer) });
+    expect(plan.rows[1]).toMatchObject({ width: null, height: null, orientation: null, error: expect.stringContaining('headers') }); expect(plan.rows[1].contents).toBeUndefined();
+    expect(plan.rows[2].error).toContain('1000 characters'); expect(plan.rows[2].contents).toBeInstanceOf(Buffer);
+    expect(plan.rows[3]).toMatchObject({ error: null, title: 'Rabbit', description: 'Ready to insert', relativeFilename: 'art.png', originalFileName: 'art.png', contents: expect.any(Buffer) });
+    for (const row of plan.rows) expect(row).not.toHaveProperty('image');
+    expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.transaction).not.toHaveBeenCalled(); expect(mocks.page).not.toHaveBeenCalled();
+    expect(rows).toHaveLength(1);
+  });
+
+  it('inserts only the chosen row with inherited defaults, and returns IDs without a table reload', async () => {
+    const plan = await prepareListingZipReview(context, '10', await archive('Title,Description,Filename\nFox,First row,art.png\nOwl,Reviewed row,art.png'));
+    mocks.page.mockRejectedValue(new Error('Table reload should belong to the session layer'));
+    expect(await insertListingZipReviewRow(plan, 1)).toEqual({ listingIds: ['100'] });
+    expect(rows).toHaveLength(1); expect(rows[0]).toMatchObject({ title: 'Owl', description: 'Reviewed row', listingDescription: 'Reviewed row', ourCategoryId: 10, backgroundColour: '#F5F0E8' });
+    expect(rows[0].productConfig).toMatchObject({ printsFrames: true, digitalDownload: false, customisePrints: false, sku: 'SKU_000100' });
+    expect(mocks.write).toHaveBeenCalledOnce(); expect(mocks.write.mock.calls[0][0]).toBe(plan.rows[1].filePath); expect(mocks.page).not.toHaveBeenCalled();
+    expect(plan.rows[0].contents).toBeInstanceOf(Buffer);
+  });
+
+  it('rejects a blocked or released row without uploading it', async () => {
+    rows = [{ title: 'FOX', localDirectoryName: 'Fox' }];
+    const blocked = await prepareListingZipReview(context, '10', await archive());
+    await expect(insertListingZipReviewRow(blocked, 0)).rejects.toMatchObject({ status: 409 });
+    rows = [];
+    const released = await prepareListingZipReview(context, '10', await archive()); delete released.rows[0].contents;
+    await expect(insertListingZipReviewRow(released, 0)).rejects.toMatchObject({ status: 410 });
+    expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each(['database', 'storage'])('rechecks new %s name collisions when Insert is clicked', async (collision) => {
+    const plan = await prepareListingZipReview(context, '10', await archive());
+    if (collision === 'database') rows = [{ title: 'FOX', localDirectoryName: 'Fox' }]; else mocks.readdir.mockResolvedValue(['Fox']);
+    await expect(insertListingZipReviewRow(plan, 0)).rejects.toMatchObject({ status: 409 }); expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each(['shop', 'section', 'template'])('revalidates live %s settings before inserting a reviewed row', async (change) => {
+    const plan = await prepareListingZipReview(context, '10', await archive());
+    if (change === 'shop') mocks.shop.mockResolvedValue({ id: 1, etsyShopId: 66615491n, shopName: 'Renamed Shop', title: 'Shop title' });
+    else if (change === 'section') mocks.section.mockResolvedValue({ id: 2, title: 'Prints', etsyShopSectionId: '9999' });
+    else target.updatedAt = new Date(now.getTime() + 1000);
+    await expect(insertListingZipReviewRow(plan, 0)).rejects.toMatchObject({ status: 409 }); expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it('rolls back a failed later Insert while retaining the previously inserted row and its artwork', async () => {
+    const plan = await prepareListingZipReview(context, '10', await archive('Title,Description,Filename\nFox,First row,art.png\nOwl,Second row,art.png'));
+    await insertListingZipReviewRow(plan, 0);
+    const firstObjects = new Map(objects); createFailure = 2;
+    await expect(insertListingZipReviewRow(plan, 1)).rejects.toThrow('Database creation failed');
+    expect(rows).toHaveLength(1); expect(rows[0].title).toBe('Fox'); expect(objects).toEqual(firstObjects); expect(mocks.page).not.toHaveBeenCalled();
+  });
+
+  it('returns a committed row ID on lost acknowledgement without a page read or removal of owned artwork', async () => {
+    const plan = await prepareListingZipReview(context, '10', await archive()); loseAcknowledgement = true;
+    expect(await insertListingZipReviewRow(plan, 0)).toEqual({ listingIds: ['100'] }); expect(objects.size).toBe(2);
+    expect(mocks.unlink).not.toHaveBeenCalled(); expect(mocks.page).not.toHaveBeenCalled();
+  });
+
+  it('recovers a retry after both the commit acknowledgement and immediate ownership confirmation were lost', async () => {
+    const plan = await prepareListingZipReview({ ...context, shopId: '00066615491' }, '10', await archive());
+    loseAcknowledgement = true; unconfirmed = true;
+    await expect(insertListingZipReviewRow(plan, 0)).rejects.toMatchObject({ status: 503 });
+    expect(rows).toHaveLength(1); const committedObjects = new Map(objects);
+    expect(mocks.write).toHaveBeenCalledOnce(); expect(mocks.transaction).toHaveBeenCalledOnce(); expect(mocks.unlink).not.toHaveBeenCalled();
+    unconfirmed = false; loseAcknowledgement = false; target.updatedAt = new Date(now.getTime() + 1000);
+    expect(await insertListingZipReviewRow(plan, 0)).toEqual({ listingIds: ['100'] });
+    expect(rows).toHaveLength(1); expect(objects).toEqual(committedObjects);
+    expect(mocks.write).toHaveBeenCalledOnce(); expect(mocks.transaction).toHaveBeenCalledOnce(); expect(mocks.unlink).not.toHaveBeenCalled();
+    expect(mocks.listings).toHaveBeenLastCalledWith({ where: { shopId: '66615491', thumbnailFileName: { in: [plan.rows[0].fileName] } },
+      select: { id: true, shopId: true, subSectionId: true, localDirectoryName: true, thumbnailFileName: true } });
+    expect(mocks.page).not.toHaveBeenCalled();
+  });
+
+  it.each(['multiple', 'shop', 'subsection', 'folder', 'filename'])('refuses ambiguous or changed UUID ownership without touching artwork: %s', async (mismatch) => {
+    const plan = await prepareListingZipReview(context, '10', await archive());
+    const owner = { id: 100, shopId: '66615491', subSectionId: 3, localDirectoryName: 'Fox', thumbnailFileName: plan.rows[0].fileName };
+    if (mismatch === 'shop') owner.shopId = 'another-shop';
+    if (mismatch === 'subsection') owner.subSectionId = 4;
+    if (mismatch === 'folder') owner.localDirectoryName = 'Changed folder';
+    if (mismatch === 'filename') owner.thumbnailFileName = plan.rows[0].fileName!.toUpperCase();
+    mocks.listings.mockResolvedValueOnce(mismatch === 'multiple' ? [owner, { ...owner, id: 101 }] : [owner]);
+    await expect(insertListingZipReviewRow(plan, 0)).rejects.toMatchObject({ status: 503, message: expect.stringContaining('ambiguous') });
+    expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.unlink).not.toHaveBeenCalled(); expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it('does not guess or upload when the retry ownership lookup is unavailable', async () => {
+    const plan = await prepareListingZipReview(context, '10', await archive());
+    mocks.listings.mockRejectedValueOnce(new Error('Database unavailable'));
+    await expect(insertListingZipReviewRow(plan, 0)).rejects.toMatchObject({ status: 503, message: expect.stringContaining('Retry Insert') });
+    expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.unlink).not.toHaveBeenCalled(); expect(mocks.transaction).not.toHaveBeenCalled();
   });
 });

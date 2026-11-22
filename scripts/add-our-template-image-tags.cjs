@@ -8,7 +8,7 @@ const DEFAULT_TEMPLATE_IMAGE_TAGS = [
   'Minimalist Room', 'Modern Room', 'Dark Room',
   'Kitchen', 'Bathroom', 'Toilet', 'Hallway', 'Plant(s)', 'Spot Light', 'Photo Border',
   'Candle(s)', 'Book(s)', 'Light Room', 'Coffee Table', 'Frame Black', 'Frame White', 'Frame Oak', 'Art',
-  'Bedroom', 'Study',
+  'Bedroom', 'Study', 'Traditional',
 ];
 
 async function migrateTemplateImageTags(prisma) {

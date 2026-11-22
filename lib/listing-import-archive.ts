@@ -7,11 +7,11 @@ import { fromBufferPromise, type Entry, type ZipFile } from 'yauzl';
 const MIB = 1024 * 1024;
 
 export const LISTING_IMPORT_ARCHIVE_LIMITS = Object.freeze({
-  zipBytes: 400 * MIB,
+  zipBytes: 500 * MIB,
   expandedBytes: 500 * MIB,
   entries: 2000,
   listings: 100,
-  imageBytes: 25 * MIB,
+  imageBytes: 35 * MIB,
   csvBytes: 2 * MIB,
 });
 
@@ -77,7 +77,7 @@ async function entriesInArchive(zip: ZipFile): Promise<StoredEntry[]> {
 }
 
 async function readEntry(zip: ZipFile, stored: StoredEntry, limit: number, retain: boolean): Promise<Buffer> {
-  if (stored.entry.uncompressedSize > limit) invalid(`${stored.name} exceeds the allowed ${limit === LISTING_IMPORT_ARCHIVE_LIMITS.csvBytes ? '2 MB CSV' : '25 MB image'} size.`);
+  if (stored.entry.uncompressedSize > limit) invalid(`${stored.name} exceeds the allowed ${limit === LISTING_IMPORT_ARCHIVE_LIMITS.csvBytes ? '2 MB CSV' : '35 MB image'} size.`);
   const header = await zip.readLocalFileHeaderPromise(stored.entry);
   if (header.generalPurposeBitFlag & 0x41) invalid('Encrypted ZIP entries are not supported.');
   if (header.compressionMethod !== stored.entry.compressionMethod) invalid(`The ZIP contains a corrupt entry: ${stored.name}.`);
@@ -139,7 +139,7 @@ function csvRows(contents: Buffer, csvName: string): CsvRow[] {
 /** Read and verify the complete archive without extracting anything to disk. */
 export async function parseListingImportArchive(buffer: Buffer): Promise<{ rows: ListingImportArchiveRow[] }> {
   if (!Buffer.isBuffer(buffer) || !buffer.length) invalid('Choose a nonempty ZIP archive.');
-  if (buffer.length > LISTING_IMPORT_ARCHIVE_LIMITS.zipBytes) invalid('The ZIP must be 400 MB or smaller.');
+  if (buffer.length > LISTING_IMPORT_ARCHIVE_LIMITS.zipBytes) invalid('The ZIP must be 500 MB or smaller.');
   let zip: ZipFile | undefined;
   try {
     zip = await fromBufferPromise(buffer, { lazyEntries: true, autoClose: false, validateEntrySizes: true, strictFileNames: false });
@@ -156,7 +156,7 @@ export async function parseListingImportArchive(buffer: Buffer): Promise<{ rows:
     for (const row of rows) {
       const image = byName.get(row.imageKey);
       if (!image || image === csv) invalid(`The image for overview.csv row ${row.rowNumber} was not found: ${row.relativeFilename}.`);
-      if (image.entry.uncompressedSize > LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes) invalid(`The image on overview.csv row ${row.rowNumber} must be 25 MB or smaller: ${row.relativeFilename}.`);
+      if (image.entry.uncompressedSize > LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes) invalid(`The image on overview.csv row ${row.rowNumber} must be 35 MB or smaller: ${row.relativeFilename}.`);
     }
     const images = new Map<string, Buffer>();
     for (const file of entries) {

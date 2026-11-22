@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { Route } from 'next';
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Fragment } from 'react';
-import { Check, ChevronDown, ChevronRight, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ImageIcon, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -12,6 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { SubSectionListingsPageData } from '@/lib/listing-table';
 import { ListingZipImportDialog } from '@/app/listings/ListingZipImportDialog';
+import { ListingThumbnailPreviewDialog } from '@/app/listings/ListingThumbnailPreviewDialog';
+import { SectionListingImageGallery } from '@/app/listings/SectionListingImageGallery';
 
 type SubSectionListingsTableProps = {
   data: SubSectionListingsPageData | null;
@@ -102,6 +104,18 @@ export function SubSectionListingsTable({
   const [importOpen, setImportOpen] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [thumbnailPreview, setThumbnailPreview] = useState<{ id: string; context: string } | null>(null);
+  const [galleryScope, setGalleryScope] = useState<string | null>(null);
+  const galleryButtonRef = useRef<HTMLButtonElement | null>(null);
+  const galleryContext = `${shopId}:${sectionId}`;
+  const thumbnailButtonRef = useRef<HTMLButtonElement | null>(null);
+  const thumbnailContext = `${shopId}:${sectionId}:${subSectionId}`;
+  const currentListingContext = useRef(thumbnailContext);
+  currentListingContext.current = thumbnailContext;
+  const importRefreshRequest = useRef(0);
+  const previewListing = thumbnailPreview?.context === thumbnailContext
+    ? data?.listings.find((listing) => listing.id === thumbnailPreview.id && listing.hasThumbnail === true) ?? null
+    : null;
   const importingRef = useRef(false);
   const listingsScrollRef = useRef<HTMLDivElement>(null);
   const isSingleListings = data?.subSection.numberOfDownloads === 1 && !data.subSection.includeAllDownloads;
@@ -115,9 +129,19 @@ export function SubSectionListingsTable({
   }, [initialData]);
 
   useEffect(() => {
+    setThumbnailPreview((current) => current && !data?.listings.some((listing) => listing.id === current.id && listing.hasThumbnail === true)
+      ? null : current);
+  }, [data]);
+
+  useEffect(() => {
     setImportOpen(false);
     setImportMessage(null);
+    setThumbnailPreview(null);
   }, [shopId, sectionId, subSectionId]);
+
+  useEffect(() => {
+    setGalleryScope(null);
+  }, [shopId, sectionId]);
 
   useEffect(() => {
     if (!createOpen || !shopId || !sectionId || !subSectionId) return;
@@ -404,6 +428,18 @@ export function SubSectionListingsTable({
               Generate
             </Button>
             <Button
+              ref={galleryButtonRef}
+              type="button"
+              size="icon"
+              variant="outline"
+              aria-label="View section images"
+              title="View section images"
+              disabled={!shopId || !sectionId || !data || generateLoading || importLoading}
+              onClick={() => setGalleryScope(galleryContext)}
+            >
+              <ImageIcon className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <Button
               type="button"
               size="icon"
               variant="outline"
@@ -498,6 +534,20 @@ export function SubSectionListingsTable({
                             type="button"
                             size="icon"
                             variant="outline"
+                            aria-label={`Preview thumbnail for ${listing.listingName}`}
+                            title={listing.hasThumbnail ? 'View thumbnail' : 'No artwork thumbnail uploaded'}
+                            disabled={listing.hasThumbnail !== true || !shopId || !sectionId || !subSectionId || importLoading || actingListingId === listing.id}
+                            onClick={(event) => {
+                              thumbnailButtonRef.current = event.currentTarget;
+                              setThumbnailPreview({ id: listing.id, context: thumbnailContext });
+                            }}
+                          >
+                            <ImageIcon className="h-4 w-4" aria-hidden="true" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="outline"
                             aria-label={`Delete ${listing.listingName}`}
                             title={listing.hasEtsyListingId ? 'Listings on Etsy cannot be deleted here' : 'Delete listing'}
                             onClick={() => {
@@ -538,6 +588,21 @@ export function SubSectionListingsTable({
         </CardContent>
       </Card>
 
+      {shopId && sectionId && data ? <SectionListingImageGallery
+        key={galleryContext}
+        open={galleryScope === galleryContext}
+        onOpenChange={(open) => setGalleryScope(open ? galleryContext : null)}
+        shopId={shopId} sectionId={sectionId} sectionName={data.section.sectionName}
+        onRestoreFocus={() => { if (galleryButtonRef.current?.isConnected) galleryButtonRef.current.focus(); }}
+      /> : null}
+
+      {shopId && sectionId && subSectionId ? <ListingThumbnailPreviewDialog
+        key={`${thumbnailContext}:${previewListing?.id ?? ''}:${previewListing?.thumbnailUpdatedAt ?? ''}`}
+        shopId={shopId} sectionId={sectionId} subSectionId={subSectionId} listing={previewListing}
+        onClose={() => setThumbnailPreview(null)}
+        onRestoreFocus={() => { if (thumbnailButtonRef.current?.isConnected) thumbnailButtonRef.current.focus(); }}
+      /> : null}
+
       {shopId && sectionId && subSectionId && data ? <ListingZipImportDialog
         key={`${shopId}:${sectionId}:${subSectionId}`}
         open={importOpen}
@@ -547,10 +612,31 @@ export function SubSectionListingsTable({
         subSectionId={subSectionId}
         destinationName={`${data.shop.shopName} / ${data.section.sectionName} / ${data.subSection.name}`}
         onImportingChange={(importing) => { importingRef.current = importing; setImportLoading(importing); }}
-        onImported={(next, count) => {
+        onInserted={(next) => {
           setData(next);
-          setImportMessage(`${count} ${count === 1 ? 'listing' : 'listings'} imported successfully.`);
+        }}
+        onFinished={({ insertedCount, skippedCount, unconfirmed }) => {
+          setImportMessage(unconfirmed ? 'Review closed. Checking the listings for completed inserts.'
+            : `${insertedCount} ${insertedCount === 1 ? 'listing' : 'listings'} inserted. ${skippedCount} skipped.`);
           setImportOpen(false);
+          if (!insertedCount && !unconfirmed) return;
+          const identity = thumbnailContext, request = ++importRefreshRequest.current;
+          const query = new URLSearchParams({ shopId, sectionId, subSectionId });
+          void (async () => {
+            try {
+              const response = await fetch(`/api/shops/listings?${query}`, { cache: 'no-store' });
+              const payload = await response.json() as ListingActionResponse;
+              if (!response.ok || !payload.data) throw new Error(payload.error ?? 'Unable to refresh the inserted listings. Reload this section.');
+              if (currentListingContext.current === identity && importRefreshRequest.current === request) {
+                setData(payload.data);
+                if (unconfirmed) setImportMessage('Review closed. Listings refreshed; check the table for completed inserts.');
+              }
+            } catch (caught) {
+              if (currentListingContext.current === identity && importRefreshRequest.current === request) {
+                setError(caught instanceof Error ? caught.message : 'Unable to refresh the inserted listings. Reload this section.');
+              }
+            }
+          })();
         }}
       /> : null}
 

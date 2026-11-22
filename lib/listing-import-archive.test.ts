@@ -173,10 +173,11 @@ describe('parseListingImportArchive', () => {
     await expect(parseListingImportArchive(archive)).rejects.toThrow(/size|byte|corrupt/i);
   });
 
-  it('rejects a CSV larger than 2 MB and referenced images larger than 25 MB before inflating', async () => {
+  it('rejects a CSV larger than 2 MB and referenced images larger than 35 MB before inflating', async () => {
+    expect(LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes).toBe(35 * 1024 * 1024);
     for (const [name, limit, message] of [
       ['overview.csv', LISTING_IMPORT_ARCHIVE_LIMITS.csvBytes, /2 MB CSV/],
-      ['ear.png', LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes, /25 MB/],
+      ['ear.png', LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes, /35 MB/],
     ] as const) {
       const archive = await zip(files(), false), offset = central(archive, name);
       archive.writeUInt32LE(limit + 1, offset + 24);

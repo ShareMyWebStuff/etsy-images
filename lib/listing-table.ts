@@ -33,6 +33,8 @@ export type SubSectionListingsPageData = {
   listings: Array<{
     id: string;
     listingName: string;
+    hasThumbnail?: boolean;
+    thumbnailUpdatedAt?: string | null;
     artworkOrientation: ListingArtworkOrientation | null;
     numberOfItems?: number | null;
     ourCategoryId?: number | null;
@@ -298,6 +300,8 @@ export async function getSubSectionListingsPageData(
       return {
         id: String(listing.id),
         listingName: listing.localDirectoryName ?? listing.title,
+        hasThumbnail,
+        thumbnailUpdatedAt: listing.thumbnailUpdatedAt?.toISOString() ?? null,
         artworkOrientation: hasThumbnail ? normalizeListingArtworkOrientation(listing.artworkOrientation) : null,
         numberOfItems: listing.numberOfItems,
         ourCategoryId: listing.ourCategoryId,

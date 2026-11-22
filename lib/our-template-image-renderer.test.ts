@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { crc32 } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import type { ListingPrintCropSettings } from '@/lib/listing-print-crops';
 import { renderOurTemplateImage, validateOurTemplateImagePair } from '@/lib/our-template-image-renderer';
@@ -13,12 +14,47 @@ async function pixels(contents:Buffer){return sharp(contents).ensureAlpha().raw(
 function at(data:Buffer,x:number,y:number){return [...data.subarray((y*width+x)*4,(y*width+x)*4+4)];}
 const inside=(x:number,y:number)=>x>=20&&x<=79&&y>=10&&y<=89;
 
+function declaredPngDimensions(contents:Buffer,width:number,height:number){
+  const result=Buffer.from(contents);
+  result.writeUInt32BE(width,16);result.writeUInt32BE(height,20);
+  result.writeUInt32BE(crc32(result.subarray(12,29)),29);
+  return result;
+}
+
 describe('Our Template Images shared compositor',()=>{
   it('replaces opaque print pixels and preserves every pixel outside the configured opening',async()=>{
     const scene=await png(()=>[230,220,210,255]);
     const rendered=await pixels(await renderOurTemplateImage({scene,definition:definition(),artworks:new Map([[1,{contents:await solid([200,100,50,255])}]])}));
     expect(at(rendered,50,50)).toEqual([200,100,50,255]);expect(at(rendered,19,50)).toEqual([230,220,210,255]);
     expect(at(rendered,80,50)).toEqual([230,220,210,255]);
+  });
+
+  it('renders accepted 7200 × 9000 artwork with upright cropping and bounded scene output',async()=>{
+    const artwork=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="7200" height="9000"><rect width="7200" height="4500" fill="#c86432"/><rect y="4500" width="7200" height="4500" fill="#3264c8"/></svg>')).removeAlpha().png().toBuffer();
+    const scene=await png(()=>[230,220,210,255]);
+    expect(await sharp(artwork).metadata()).toMatchObject({width:7200,height:9000,format:'png'});
+    for(const landscape of [false,true]){
+      const chosen={...opening(),orientation:landscape?'landscape' as const:'portrait' as const};
+      // A portrait saved crop cannot be reused for landscape paper. Both this
+      // path and a plain Test upload therefore decode the original artwork.
+      const cropSettings=landscape?{orientation:'portrait',regions:{'4x5':{x:0,y:0,width:1,height:1}}} as ListingPrintCropSettings:undefined;
+      const output=await renderOurTemplateImage({scene,definition:definition([chosen]),artworks:new Map([[1,{contents:artwork,cropSettings}]])});
+      expect(await sharp(output).metadata()).toMatchObject({width,height,format:'png'});
+      const rendered=await pixels(output);
+      expect(at(rendered,50,25)).toEqual([200,100,50,255]);
+      expect(at(rendered,50,75)).toEqual([50,100,200,255]);
+      expect(at(rendered,19,50)).toEqual([230,220,210,255]);
+    }
+  });
+
+  it('retains Sharp default safety for artwork above its supported input-pixel limit',async()=>{
+    const oversized=declaredPngDimensions(await solid([200,100,50,255]),20_000,20_000);
+    await expect(renderOurTemplateImage({scene:await png(()=>[230,220,210,255]),definition:definition(),artworks:new Map([[1,{contents:oversized}]])})).rejects.toThrow(/input image exceeds pixel limit/i);
+  });
+
+  it('keeps the separate 64-megapixel limit for decoded room scenes',async()=>{
+    const oversizedScene=declaredPngDimensions(await png(()=>[230,220,210,255]),7200,9000);
+    await expect(renderOurTemplateImage({scene:oversizedScene,definition:definition(),artworks:new Map([[1,{contents:await solid([200,100,50,255])}]])})).rejects.toThrow(/input image exceeds pixel limit/i);
   });
 
   it('draws artwork under the original translucent shadow and opaque foreground objects',async()=>{

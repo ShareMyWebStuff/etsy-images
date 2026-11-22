@@ -34,23 +34,165 @@ const data: SubSectionListingsPageData = {
 };
 
 describe('SubSectionListingsTable categories', () => {
-  it('imports into an empty section and refreshes the table with an accessible result count', async () => {
+  it('opens the whole-section gallery between Generate and Edit even when the displayed subsection is empty', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ sectionName: data.section.sectionName,
+      listings: [{ id: '701', listingName: 'Artwork from another subsection', hasThumbnail: true,
+        thumbnailUpdatedAt: '2026-11-22T09:00:00.000Z', subSectionId: '9' }] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<SubSectionListingsTable data={{ ...data, listings: [] }} shopId="66615491" sectionId="3" subSectionId="8" />);
+    const gallery = screen.getByRole('button', { name: 'View section images' });
+    const generate = screen.getByRole('button', { name: 'Generate' });
+    const edit = screen.getByRole('button', { name: 'Edit listing' });
+    expect(generate.parentElement).toBe(gallery.parentElement);
+    expect(gallery.nextElementSibling).toBe(edit);
+    expect(generate.nextElementSibling).toBe(gallery);
+    expect((gallery as HTMLButtonElement).disabled).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(gallery);
+    const dialog = await screen.findByRole('dialog', { name: `Images: ${data.section.sectionName}` });
+    expect(await screen.findByText('Artwork from another subsection')).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith('/api/shops/listings/gallery?shopId=66615491&sectionId=3', expect.objectContaining({ cache: 'no-store' }));
+    const image = screen.getByRole('img', { name: 'Artwork from another subsection artwork thumbnail' }) as HTMLImageElement;
+    const source = new URL(image.src);
+    expect(source.searchParams.get('subSectionId')).toBe('9');
+    expect(source.searchParams.get('preview')).toBe('1');
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(gallery));
+  });
+
+  it('places thumbnail preview before Delete and opens the selected row original with scoped/versioned URL', async () => {
+    const thumbnailData: SubSectionListingsPageData = {
+      ...data, subSection: { ...data.subSection, numberOfDownloads: 1 },
+      listings: [
+        { ...data.listings[0], hasThumbnail: true, thumbnailUpdatedAt: '2026-11-21T16:00:00.000Z' },
+        { ...data.listings[0], id: '501', listingName: 'Fox print', hasThumbnail: true, thumbnailUpdatedAt: '2026-11-21T16:05:00.000Z' },
+      ],
+    };
+    render(<SubSectionListingsTable data={thumbnailData} shopId="66615491" sectionId="3" subSectionId="8" />);
+    const preview = screen.getByRole('button', { name: 'Preview thumbnail for Fox print' });
+    const remove = screen.getByRole('button', { name: 'Delete Fox print' });
+    expect(preview.parentElement).toBe(remove.parentElement);
+    expect(preview.compareDocumentPosition(remove) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole('img')).toBeNull();
+    fireEvent.click(preview);
+    expect(screen.getByRole('dialog', { name: 'Thumbnail: Fox print' })).toBeTruthy();
+    const image = screen.getByRole('img', { name: 'Fox print artwork thumbnail' }) as HTMLImageElement;
+    const url = new URL(image.src);
+    expect(url.pathname).toBe('/api/shops/listings/thumbnail');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      shopId: '66615491', sectionId: '3', subSectionId: '8', listingId: '501', v: '2026-11-21T16:05:00.000Z',
+    });
+    expect(url.searchParams.has('preview')).toBe(false);
+    expect(screen.getByRole('status').textContent).toBe('Loading thumbnail...');
+    fireEvent.load(image);
+    expect(screen.queryByText('Loading thumbnail...')).toBeNull();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(preview));
+    fireEvent.click(preview);
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('disables previews for missing or unknown thumbnails without rendering an image or fetching', () => {
+    const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+    const missingData: SubSectionListingsPageData = {
+      ...data, subSection: { ...data.subSection, numberOfDownloads: 1 },
+      listings: [
+        { ...data.listings[0], hasThumbnail: false },
+        { ...data.listings[0], id: '501', listingName: 'Unknown thumbnail' },
+      ],
+    };
+    render(<SubSectionListingsTable data={missingData} shopId="66615491" sectionId="3" subSectionId="8" />);
+    for (const name of ['Sea Creatures Set', 'Unknown thumbnail']) {
+      const preview = screen.getByRole('button', { name: `Preview thumbnail for ${name}` }) as HTMLButtonElement;
+      expect(preview.disabled).toBe(true);
+      fireEvent.click(preview);
+    }
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('shows a recoverable image error and retries the same original with a fresh URL', () => {
+    const thumbnailData: SubSectionListingsPageData = {
+      ...data, subSection: { ...data.subSection, numberOfDownloads: 1 }, listings: [{ ...data.listings[0], hasThumbnail: true }],
+    };
+    render(<SubSectionListingsTable data={thumbnailData} shopId="66615491" sectionId="3" subSectionId="8" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Preview thumbnail for Sea Creatures Set' }));
+    const image = screen.getByRole('img', { name: 'Sea Creatures Set artwork thumbnail' }) as HTMLImageElement;
+    const original = new URL(image.src);
+    fireEvent.error(image);
+    expect(screen.getByRole('alert').textContent).toContain('Unable to load');
+    expect(screen.queryByText('Loading thumbnail...')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry image' }));
+    const retried = screen.getByRole('img', { name: 'Sea Creatures Set artwork thumbnail' }) as HTMLImageElement;
+    const retryUrl = new URL(retried.src);
+    expect(retryUrl.pathname).toBe(original.pathname);
+    expect(retryUrl.searchParams.get('listingId')).toBe('500');
+    expect(retryUrl.searchParams.get('retry')).toBe('1');
+    expect(retryUrl.searchParams.has('preview')).toBe(false);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('Loading thumbnail...');
+    fireEvent.load(retried);
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('closes the preview when its destination changes or the selected listing disappears', async () => {
+    const thumbnailData: SubSectionListingsPageData = {
+      ...data, subSection: { ...data.subSection, numberOfDownloads: 1 }, listings: [{ ...data.listings[0], hasThumbnail: true }],
+    };
+    const { rerender } = render(<SubSectionListingsTable data={thumbnailData} shopId="66615491" sectionId="3" subSectionId="8" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Preview thumbnail for Sea Creatures Set' }));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    const movedData: SubSectionListingsPageData = {
+      ...thumbnailData, section: { id: '4', sectionName: 'New section' }, subSection: { ...thumbnailData.subSection, id: '9' },
+    };
+    rerender(<SubSectionListingsTable data={movedData} shopId="66615491" sectionId="4" subSectionId="9" />);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.queryByRole('img')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Preview thumbnail for Sea Creatures Set' }));
+    const image = screen.getByRole('img') as HTMLImageElement;
+    expect(new URL(image.src).searchParams.get('sectionId')).toBe('4');
+    expect(new URL(image.src).searchParams.get('subSectionId')).toBe('9');
+    rerender(<SubSectionListingsTable data={{ ...movedData, listings: [] }} shopId="66615491" sectionId="4" subSectionId="9" />);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.queryByRole('img')).toBeNull();
+  });
+
+  it('reviews a ZIP before inserting and refreshes the table without closing the review', async () => {
     const emptyData: SubSectionListingsPageData = { ...data, subSection: { ...data.subSection, numberOfDownloads: 1 }, listings: [] };
     const importedData: SubSectionListingsPageData = { ...emptyData, listings: [{ ...data.listings[0], listingName: 'Imported Otter' }] };
-    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => ({ templates: [
-      { id: '15', name: 'Woodland print', templateType: 'single', itemCount: 1 },
-    ] }) }).mockResolvedValueOnce({ ok: true, json: async () => ({ data: importedData, importedCount: 1, listingIds: ['500'] }) });
+    const review = { sessionId: '10000000-0000-4000-8000-000000000001', templateName: 'Woodland print', total: 1, cursor: 0,
+      insertedCount: 0, skippedCount: 0, expiresAt: new Date(Date.now() + 1_800_000).toISOString(), current: {
+        index: 0, rowNumber: 2, title: 'Imported Otter', description: 'Otter beside the river.', relativeFilename: 'otter.png',
+        originalFileName: 'otter.png', width: 80, height: 100, orientation: 'portrait', error: null,
+      } };
+    const fetchMock = vi.fn().mockImplementation(async (url: string, options?: RequestInit) => {
+      if (options?.method === 'DELETE') return { ok: true, json: async () => ({ closed: true }) };
+      if (options?.body instanceof FormData) return { ok: true, json: async () => ({ review }) };
+      if (options?.method === 'POST') return { ok: true, json: async () => ({ data: importedData,
+        review: { ...review, cursor: 1, insertedCount: 1, current: null } }) };
+      if (url.startsWith('/api/shops/listings?')) return { ok: true, json: async () => ({ data: importedData }) };
+      return { ok: true, json: async () => ({ templates: [{ id: '15', name: 'Woodland print', templateType: 'single', itemCount: 1 }] }) };
+    });
     vi.stubGlobal('fetch', fetchMock);
-    render(<SubSectionListingsTable data={emptyData} shopId="66615491" sectionId="3" subSectionId="8" />);
+    const { container } = render(<SubSectionListingsTable data={emptyData} shopId="66615491" sectionId="3" subSectionId="8" />);
     fireEvent.click(screen.getByRole('button', { name: 'Import' }));
     await screen.findByRole('option', { name: 'Woodland print' });
     fireEvent.change(screen.getByLabelText('Import template'), { target: { value: '15' } });
     fireEvent.change(screen.getByLabelText('ZIP archive'), { target: { files: [new File(['ZIP'], 'otter.zip')] } });
     fireEvent.click(screen.getByRole('button', { name: 'Import listings' }));
-    expect(await screen.findByText('Imported Otter')).toBeTruthy();
-    expect(screen.getByRole('status').textContent).toBe('1 listing imported successfully.');
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(await screen.findByText('Otter beside the river.')).toBeTruthy();
+    expect(container.querySelector('[data-listing-id="500"]')).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    await waitFor(() => expect(container.querySelector('[data-listing-id="500"]')?.textContent).toContain('Imported Otter'));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByRole('status').textContent).toBe('1 listing inserted. 0 skipped.');
   });
 
   it('disables table mutation buttons while importing and releases them on a server error', async () => {

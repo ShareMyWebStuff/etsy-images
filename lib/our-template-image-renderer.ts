@@ -142,7 +142,9 @@ async function artworkPlane(artwork:OurTemplateImageArtwork,opening:OurTemplateI
       settings.regions[opening.ratio],settings.placements?.[opening.ratio],artwork.backgroundColour);
     source=paper.buffer;
   }
-  const raster=await sharp(source,{failOn:'error',limitInputPixels:64000000}).rotate().resize({width,height,fit:'cover',position:'centre',kernel:sharp.kernel.lanczos3})
+  // Artwork uses the same default input-pixel guard as uploads and printable
+  // downloads. The scene and bounded paper raster have their own limits.
+  const raster=await sharp(source,{failOn:'error'}).rotate().resize({width,height,fit:'cover',position:'centre',kernel:sharp.kernel.lanczos3})
     .flatten({background:'#ffffff'}).toColourspace('srgb').ensureAlpha().raw().toBuffer();
   return {raster,width,height,placement:p,placementHeight:paperPlacementHeight(p,physicalAspect,opening.ratio,opening.orientation)};
 }
