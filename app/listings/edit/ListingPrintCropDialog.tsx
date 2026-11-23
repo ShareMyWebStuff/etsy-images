@@ -203,7 +203,7 @@ export function ListingPrintCropDialog({
           <DialogTitle>Set Size</DialogTitle>
           <DialogDescription>
             {sourceRatio === '4x5'
-              ? 'Choose the area of the thumbnail used for each paper aspect ratio. Each crop uses the full thumbnail height; drag its border left or right.'
+              ? 'Choose the area of the thumbnail used for each paper aspect ratio. Each crop uses the full thumbnail height; drag its border left or right. The area outside the crop border is blacked out.'
               : 'Position the complete thumbnail on each paper aspect ratio. Portrait artwork moves vertically and landscape artwork moves horizontally.'}
           </DialogDescription>
           {continuationLabel ? <p className="text-sm font-medium">Save these sizes to continue {continuationLabel}.</p> : null}
@@ -235,9 +235,9 @@ export function ListingPrintCropDialog({
             ))}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto rounded-md border bg-neutral-900 p-3">
+        <div className={`min-h-0 flex-1 overflow-auto rounded-md border p-3 ${cropSelection ? 'bg-black' : 'bg-neutral-900'}`}>
           <div
-            className="relative mx-auto touch-none select-none"
+            className={`relative mx-auto touch-none select-none ${cropSelection ? 'overflow-hidden bg-white' : ''}`}
             style={{ width: `min(100%, calc(62vh * ${canvasAspect}))`, aspectRatio: String(canvasAspect) }}
           >
             <div
@@ -256,9 +256,9 @@ export function ListingPrintCropDialog({
                 onLoad={() => setPreviewLoaded(true)}
               />
               {loadError ? (
-                <div className="absolute inset-0 grid place-items-center bg-black/75 p-6 text-center text-sm text-white">{loadError}</div>
+                <div className="absolute inset-0 z-10 grid place-items-center bg-black/75 p-6 text-center text-sm text-white">{loadError}</div>
               ) : !draft ? (
-                <div className="absolute inset-0 grid place-items-center bg-black/50 text-sm font-medium text-white">Loading crop editor...</div>
+                <div className="absolute inset-0 z-10 grid place-items-center bg-black/50 text-sm font-medium text-white">Loading crop editor...</div>
               ) : null}
               {activeSelection ? (
                 <div
@@ -272,7 +272,8 @@ export function ListingPrintCropDialog({
                   aria-valuenow={cropSelection ? activeSelection.x : undefined}
                   aria-disabled={cropSelection ? saving || !canMoveCrop : undefined}
                   className={`absolute border-2 border-primary shadow-[0_0_0_1px_rgba(255,255,255,0.85)] ${cropSelection ? canMoveCrop ? 'cursor-ew-resize' : 'cursor-default' : orientation === 'landscape' ? 'cursor-ew-resize' : 'cursor-ns-resize'}`}
-                  style={placementStyle(activeSelection)}
+                  style={{ ...placementStyle(activeSelection), ...(cropSelection
+                    ? { boxShadow: '0 0 0 1px rgba(255,255,255,0.85), 0 0 0 100vmax #000' } : {}) }}
                   onPointerDown={(event) => startInteraction(event, activeRatio, activeSelection)}
                   onPointerMove={updateInteraction}
                   onPointerUp={finishInteraction}
