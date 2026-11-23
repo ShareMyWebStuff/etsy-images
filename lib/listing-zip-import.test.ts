@@ -13,6 +13,8 @@ vi.mock('@/lib/listing-table', () => ({ getSubSectionListingsPageData: mocks.pag
 vi.mock('@/lib/s3-listing-storage', () => ({ readFile: mocks.read, writeFile: mocks.write, unlink: mocks.unlink, readdir: mocks.readdir,
   rename: vi.fn(), mkdir: vi.fn(), stat: vi.fn(), rm: vi.fn(), copyFile: vi.fn() }));
 import { getListingZipImportTemplates, importListingZip, insertListingZipReviewRow, prepareListingZipArtwork, prepareListingZipReview } from './listing-zip-import';
+import { createListingPrintCropSettings, defaultNativeListingPrintCropDraft, listingPrintCropDraftForSave,
+  parseCurrentListingPrintCropSettings, PRINT_CROP_RATIOS } from '@/lib/listing-print-crops';
 
 const context = { shopId: '66615491', sectionId: '2', subSectionId: '3' };
 const now = new Date('2026-11-21T12:00:00.000Z');
@@ -375,6 +377,104 @@ describe('sequential ZIP review preparation and insertion', () => {
     expect(rows[0].productConfig).toMatchObject({ printsFrames: true, digitalDownload: false, customisePrints: false, sku: 'SKU_000100' });
     expect(mocks.write).toHaveBeenCalledOnce(); expect(mocks.write.mock.calls[0][0]).toBe(plan.rows[1].filePath); expect(mocks.page).not.toHaveBeenCalled();
     expect(plan.rows[0].contents).toBeInstanceOf(Buffer);
+  });
+
+  it('prepares nonpersisted Set Size defaults without creating artwork, crop records or listings', async () => {
+    const plan = await prepareListingZipReview(context, '10', await archive());
+    expect(plan.rows[0].initialCropSettings).toEqual(listingPrintCropDraftForSave(defaultNativeListingPrintCropDraft(40, 50)));
+    expect(plan.rows[0].cropError).toBeUndefined(); expect(plan.rows[0].insertion).toBeUndefined();
+    expect(rows).toEqual([]); expect(objects.size).toBe(0); expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([[300, 300], [202, 300], [300, 202]])('retains unsupported or near-native %i × %i artwork for Skip without exposing invalid crop defaults', async (width, height) => {
+    const source = await sharp({ create: { width, height, channels: 3, background: '#aa3311' } }).png().toBuffer();
+    const plan = await prepareListingZipReview(context, '10', await archive(undefined, source));
+    expect(plan.rows[0]).toMatchObject({ contents: source, width, height, error: null,
+      cropError: expect.stringMatching(/Set Size supports 2:3 or 4:5.*Choose Skip/) });
+    expect(plan.rows[0].initialCropSettings).toBeUndefined();
+    await expect(insertListingZipReviewRow(plan, 0, { requireCropSettings: true, cropSettings: {} })).rejects.toMatchObject({ status: 400 });
+    expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each(['portrait', 'landscape'] as const)('atomically persists all six individually chosen %s 4:5 crops with exact thumbnail identity', async (orientation) => {
+    const [width, height] = orientation === 'portrait' ? [80, 100] : [100, 80];
+    const source = await sharp({ create: { width, height, channels: 3, background: '#ff3300' } }).png().toBuffer();
+    const plan = await prepareListingZipReview(context, '10', await archive(undefined, source));
+    const draft = structuredClone(plan.rows[0].initialCropSettings!);
+    for (const [index, { key }] of PRINT_CROP_RATIOS.entries()) {
+      const region = draft.regions[key];
+      region.x = index % 2 ? Math.max(0, 1 - region.width) : Math.min(0, 1 - region.width);
+    }
+    expect(await insertListingZipReviewRow(plan, 0, { requireCropSettings: true, cropSettings: draft })).toEqual({ listingIds: ['100'] });
+    const inserted = rows[0];
+    const expected = createListingPrintCropSettings(draft, { width, height, fileName: inserted.thumbnailFileName,
+      updatedAt: inserted.thumbnailUpdatedAt.toISOString() }, orientation);
+    expect(inserted.printCropSettings).toEqual(expected);
+    expect(inserted.printCropSettings.version).toBe(4);
+    expect(inserted.printCropSettings.source.updatedAt).toBe(inserted.thumbnailUpdatedAt.toISOString());
+    expect(parseCurrentListingPrintCropSettings(inserted.printCropSettings, { fileName: inserted.thumbnailFileName,
+      updatedAt: inserted.thumbnailUpdatedAt.toISOString(), orientation })).toEqual(expected);
+    expect(mocks.transaction).toHaveBeenCalledOnce(); expect(mocks.write).toHaveBeenCalledOnce();
+    expect(objects.get(plan.rows[0].filePath!)!.equals(source)).toBe(true);
+    if (orientation === 'landscape') {
+      expect(expected.regions['2x3'].x).toBeLessThan(0);
+      expect(expected.placements['2x3'].width).toBeLessThan(1);
+    }
+  });
+
+  it('persists native 2:3 crop selections without coupling the six ratio placements', async () => {
+    const source = await sharp({ create: { width: 60, height: 90, channels: 3, background: '#ff3300' } }).png().toBuffer();
+    const plan = await prepareListingZipReview(context, '10', await archive(undefined, source));
+    const draft = structuredClone(plan.rows[0].initialCropSettings!);
+    draft.regions['5x7'].y = 0;
+    draft.placements!['5x7'].y = 0;
+    await insertListingZipReviewRow(plan, 0, { requireCropSettings: true, cropSettings: draft });
+    expect(rows[0].printCropSettings).toMatchObject({ version: 3, orientation: 'portrait', regions: draft.regions, placements: draft.placements });
+  });
+
+  it.each([undefined, null, {}, { regions: {} }])('rejects missing or malformed reviewed crops before writes and allows correction: %j', async (cropSettings) => {
+    const plan = await prepareListingZipReview(context, '10', await archive());
+    await expect(insertListingZipReviewRow(plan, 0, { requireCropSettings: true, cropSettings })).rejects.toMatchObject({ status: 400,
+      message: expect.stringMatching(/CSV row 2:.*Set Size/) });
+    expect(plan.rows[0].insertion).toBeUndefined(); expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.transaction).not.toHaveBeenCalled();
+    await insertListingZipReviewRow(plan, 0, { requireCropSettings: true, cropSettings: plan.rows[0].initialCropSettings });
+    expect(rows).toHaveLength(1); expect(rows[0].printCropSettings.version).toBe(4);
+  });
+
+  it('rolls back crop persistence and artwork together, retaining the first validated payload for retry', async () => {
+    const plan = await prepareListingZipReview(context, '10', await archive());
+    const chosen = structuredClone(plan.rows[0].initialCropSettings!);
+    chosen.regions['2x3'].x = 0;
+    let failedCropUpdate = false;
+    mocks.update.mockImplementation(async ({ where, data }) => {
+      Object.assign(rows.find((row) => row.id === where.id)!, data);
+      if (data.printCropSettings && !failedCropUpdate) {
+        failedCropUpdate = true;
+        throw new Error('Crop persistence failed');
+      }
+    });
+    await expect(insertListingZipReviewRow(plan, 0, { requireCropSettings: true, cropSettings: chosen })).rejects.toThrow('Crop persistence failed');
+    const frozen = structuredClone(plan.rows[0].insertion);
+    expect(rows).toEqual([]); expect(objects.size).toBe(0);
+    expect(mocks.update.mock.calls.find(([value]) => value.data.printCropSettings)![0].data.printCropSettings).toEqual(frozen!.cropSettings);
+    const changed = structuredClone(chosen); changed.regions['2x3'].x = 1 - changed.regions['2x3'].width;
+    await insertListingZipReviewRow(plan, 0, { requireCropSettings: true, cropSettings: changed });
+    expect(rows[0].printCropSettings).toEqual(frozen!.cropSettings);
+    expect(rows[0].thumbnailUpdatedAt.toISOString()).toBe(frozen!.thumbnailUpdatedAt);
+  });
+
+  it.each(['missing', 'changed'])('recovers committed crop identity before inspecting a %s retry payload', async (retry) => {
+    const plan = await prepareListingZipReview(context, '10', await archive());
+    const chosen = structuredClone(plan.rows[0].initialCropSettings!); chosen.regions['2x3'].x = 0;
+    loseAcknowledgement = true; unconfirmed = true;
+    await expect(insertListingZipReviewRow(plan, 0, { requireCropSettings: true, cropSettings: chosen })).rejects.toMatchObject({ status: 503 });
+    const saved = structuredClone(rows[0].printCropSettings), savedTimestamp = rows[0].thumbnailUpdatedAt.toISOString();
+    const assets = new Map(objects); unconfirmed = false; loseAcknowledgement = false;
+    expect(await insertListingZipReviewRow(plan, 0, { requireCropSettings: true,
+      ...(retry === 'changed' ? { cropSettings: { invalid: 'Changed after commit' } } : {}) })).toEqual({ listingIds: ['100'] });
+    expect(rows[0].printCropSettings).toEqual(saved); expect(rows[0].thumbnailUpdatedAt.toISOString()).toBe(savedTimestamp);
+    expect(objects).toEqual(assets); expect(mocks.write).toHaveBeenCalledOnce(); expect(mocks.transaction).toHaveBeenCalledOnce();
+    expect(mocks.unlink).not.toHaveBeenCalled();
   });
 
   it('rejects a blocked or released row without uploading it', async () => {

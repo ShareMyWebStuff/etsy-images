@@ -4,7 +4,9 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { SubSectionListingsPageData } from '@/lib/listing-table';
-import type { ListingZipReviewState, ListingZipReviewSummary } from '@/lib/listing-zip-review-types';
+import type { ListingZipReviewItem, ListingZipReviewState, ListingZipReviewSummary } from '@/lib/listing-zip-review-types';
+import { defaultNativeListingPrintCropDraft, type ListingPrintCropDraft } from '@/lib/listing-print-crops';
+import { ListingPrintCropEditor } from './edit/ListingPrintCropEditor';
 
 type ImportTemplate = { id: string; name: string; templateType: 'single' | 'multiple'; itemCount: number };
 type ZipPickerOptions = {
@@ -31,6 +33,19 @@ const MAX_ZIP_BYTES = 500 * 1024 * 1024;
 
 type ImportContext = { shopId: string; sectionId: string; subSectionId: string };
 type ReviewSession = { review: ListingZipReviewState; context: ImportContext };
+type ReviewCrop = { key: string; initialDraft: ListingPrintCropDraft | null; draft: ListingPrintCropDraft | null; attemptedDraft: ListingPrintCropDraft | null };
+
+function cropRowKey(review: ListingZipReviewState, context: ImportContext) {
+  return `${context.shopId}:${context.sectionId}:${context.subSectionId}:${review.sessionId}:${review.current?.index ?? 'complete'}`;
+}
+
+function initialRowCrop(row: ListingZipReviewItem | null): ListingPrintCropDraft | null {
+  if (!row || row.error || !row.width || !row.height || !row.orientation) return null;
+  try {
+    const draft = row.initialCropSettings ?? defaultNativeListingPrintCropDraft(row.width, row.height, row.orientation);
+    return { regions: draft.regions, placements: draft.placements };
+  } catch { return null; }
+}
 
 function readReview(value: unknown): ListingZipReviewState {
   const review = value as ListingZipReviewState | undefined;
@@ -76,6 +91,8 @@ export function ListingZipImportDialog({ open, onOpenChange, shopId, sectionId, 
   const [warning, setWarning] = useState('');
   const [busyAction, setBusyAction] = useState<'start' | 'insert' | 'skip' | 'refresh' | 'finish' | null>(null);
   const [imageState, setImageState] = useState<{ source: string; status: 'loaded' | 'error' } | null>(null);
+  const [crop, setCrop] = useState<ReviewCrop | null>(null);
+  const cropRef = useRef<ReviewCrop | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const mounted = useRef(false);
   const locked = useRef(false);
@@ -106,6 +123,7 @@ export function ListingZipImportDialog({ open, onOpenChange, shopId, sectionId, 
     pickerRequest.current++;
     setFile(null); setTemplateId(''); setError(''); setShowFileInput(false); setChoosing(false);
     setReview(null); setWarning(''); setImageState(null); setBusyAction(null); setImporting(false);
+    cropRef.current = null; setCrop(null);
     locked.current = false; uncertainAction.current = false; operationVersion.current++; notifyImporting(false);
     return () => {
       operationVersion.current++;
@@ -172,9 +190,22 @@ export function ListingZipImportDialog({ open, onOpenChange, shopId, sectionId, 
   const canImport = !review && !loading && !loadError && !importing && !choosing && file !== null && templates.some((template) => template.id === templateId);
 
   function updateReview(next: ListingZipReviewState, context: ImportContext) {
+    const key = cropRowKey(next, context);
+    if (cropRef.current?.key !== key) {
+      const initialDraft = initialRowCrop(next.current);
+      const value = next.current ? { key, initialDraft, draft: initialDraft, attemptedDraft: null } : null;
+      cropRef.current = value; setCrop(value);
+    }
     session.current = { review: next, context };
     uncertainAction.current = false;
     setReview(next);
+  }
+
+  function changeCrop(key: string, draft: ListingPrintCropDraft | null) {
+    const current = cropRef.current;
+    if (!current || current.key !== key || current.attemptedDraft || locked.current) return;
+    const next = { ...current, draft };
+    cropRef.current = next; setCrop(next);
   }
 
   function closeReview(current: ReviewSession | null, unconfirmed = false) {
@@ -243,6 +274,20 @@ export function ListingZipImportDialog({ open, onOpenChange, shopId, sectionId, 
   async function reviewAction(action: 'insert' | 'skip' | 'refresh') {
     const active = session.current;
     if (!active || locked.current || action !== 'refresh' && !active.review.current || action === 'insert' && active.review.current?.error) return;
+    let cropSettings: ListingPrintCropDraft | undefined;
+    if (action === 'insert') {
+      const current = cropRef.current;
+      if (!current || current.key !== cropRowKey(active.review, active.context) || !current.draft) {
+        setError('Set the image sizes before choosing Insert.'); return;
+      }
+      // A lost response may follow a committed Insert. Keep the exact first
+      // crop intent for all retries until this review moves to another row.
+      cropSettings = current.attemptedDraft ?? structuredClone(current.draft);
+      if (!current.attemptedDraft) {
+        const frozen = { ...current, attemptedDraft: cropSettings };
+        cropRef.current = frozen; setCrop(frozen);
+      }
+    }
     locked.current = true; setImporting(true); setBusyAction(action); notifyImporting(true); setError('');
     if (action !== 'refresh') uncertainAction.current = true;
     const identity = query, operation = ++operationVersion.current;
@@ -250,7 +295,8 @@ export function ListingZipImportDialog({ open, onOpenChange, shopId, sectionId, 
     try {
       const url = action === 'refresh' ? `${endpoint}?${new URLSearchParams({ ...active.context, action: 'review', sessionId: active.review.sessionId })}` : endpoint;
       const response = await fetch(url, action === 'refresh' ? { cache: 'no-store' } : { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...active.context, sessionId: active.review.sessionId, rowIndex: active.review.cursor, action }) });
+        body: JSON.stringify({ ...active.context, sessionId: active.review.sessionId, rowIndex: active.review.cursor, action,
+          ...(action === 'insert' ? { cropSettings } : {}) }) });
       const payload = await response.json().catch(() => null);
       if (!current()) return;
       if (!response.ok) throw new Error(typeof payload?.error === 'string' ? payload.error : 'The review could not be updated. Retry your choice or refresh the review.');
@@ -279,13 +325,16 @@ export function ListingZipImportDialog({ open, onOpenChange, shopId, sectionId, 
   const imageSource = review?.current ? `${endpoint}?${new URLSearchParams({ shopId, sectionId, subSectionId,
     action: 'image', sessionId: review.sessionId, rowIndex: String(review.current.index) })}` : '';
   const imageStatus = imageState?.source === imageSource ? imageState.status : 'loading';
+  const currentCropKey = review ? cropRowKey(review, { shopId, sectionId, subSectionId }) : '';
+  const currentCrop = crop?.key === currentCropKey ? crop : null;
+  const canEditSizes = !!(review?.current && !review.current.error && review.current.width && review.current.height && review.current.orientation);
 
   return <Dialog open={open} onOpenChange={(next) => { if (!next) finishReview(); else if (!locked.current) onOpenChange(next); }}>
-    <DialogContent className={`max-h-[90vh] overflow-y-auto${review ? ' max-w-5xl' : ''}`}>
-      <div className="grid gap-4" aria-busy={importing}>
-        <DialogHeader>
+    <DialogContent className={review ? 'flex max-h-[94vh] w-[min(96vw,1400px)] max-w-none flex-col overflow-hidden' : 'max-h-[90vh] overflow-y-auto'}>
+      <div className={review ? 'flex min-h-0 flex-1 flex-col gap-4' : 'grid gap-4'} aria-busy={importing}>
+        <DialogHeader className="shrink-0">
           <DialogTitle>Import listings from ZIP</DialogTitle>
-          <DialogDescription>Review one listing at a time for {destinationName}. A listing is created only when you choose Insert.</DialogDescription>
+          <DialogDescription>Review the title, description and image sizes for each listing in {destinationName}. Insert saves the listing and its sizes; Skip moves to the next image.</DialogDescription>
         </DialogHeader>
         {!review ? <form onSubmit={importListings} className="grid gap-4">
         <div className="rounded-md border bg-muted/30 p-3 text-sm">
@@ -323,7 +372,7 @@ export function ListingZipImportDialog({ open, onOpenChange, shopId, sectionId, 
           <Button type="submit" disabled={!canImport}>{importing ? 'Reading ZIP…' : 'Import listings'}</Button>
         </DialogFooter>
       </form> : <>
-        <div className="grid gap-2 rounded-md border bg-muted/30 p-3 text-sm">
+        <div className="grid shrink-0 gap-2 rounded-md border bg-muted/30 p-3 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="font-medium">{review.current ? `Item ${review.cursor + 1} of ${review.total}` : 'Review complete'}</p>
             <p>Template: {review.templateName}</p>
@@ -331,8 +380,16 @@ export function ListingZipImportDialog({ open, onOpenChange, shopId, sectionId, 
           <progress aria-label="Import progress" className="h-2 w-full" value={review.cursor} max={review.total} />
           <p role="status">{review.cursor} of {review.total} reviewed · {review.insertedCount} inserted · {review.skippedCount} skipped</p>
         </div>
-        {review.current ? <div className="grid min-w-0 gap-5 md:grid-cols-2">
-          <div className="relative flex min-h-64 items-center justify-center rounded-md border bg-muted/20">
+        {review.current ? <div className="grid min-h-0 min-w-0 flex-1 gap-5 overflow-y-auto md:grid-cols-[minmax(0,2fr)_minmax(16rem,1fr)] md:grid-rows-[minmax(0,1fr)] md:overflow-hidden">
+          {canEditSizes ? <div className="flex min-h-0 min-w-0 flex-col gap-3">
+            <h3 className="font-semibold">Set Size</h3>
+            <ListingPrintCropEditor key={currentCropKey} imageUrl={imageSource} imageAlt={`${review.current.title} import artwork`}
+              sourceDimensions={{ width: review.current.width!, height: review.current.height! }} orientation={review.current.orientation!}
+              initialDraft={currentCrop?.initialDraft} onChange={(draft) => changeCrop(currentCropKey, draft)}
+              saving={importing || !!currentCrop?.attemptedDraft}
+              onImageLoad={() => setImageState({ source: imageSource, status: 'loaded' })}
+              onImageError={() => setImageState({ source: imageSource, status: 'error' })} />
+          </div> : <div className="relative flex min-h-64 items-center justify-center rounded-md border bg-muted/20">
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img key={imageSource} src={imageSource} alt={`${review.current.title} import artwork`} className={`max-h-[52vh] w-full object-contain${imageStatus === 'error' ? ' invisible' : ''}`}
@@ -340,23 +397,26 @@ export function ListingZipImportDialog({ open, onOpenChange, shopId, sectionId, 
               {imageStatus === 'loading' ? <p className="absolute inset-0 flex items-center justify-center bg-background/70 text-sm text-muted-foreground">Loading artwork…</p> : null}
               {imageStatus === 'error' ? <p className="absolute inset-0 flex items-center justify-center p-4 text-center text-sm text-muted-foreground">{review.current.error ? 'Artwork preview unavailable for this item.' : 'The preview could not be loaded. You can still choose Insert; the original artwork will be validated.'}</p> : null}
             </>
-          </div>
-          <div className="min-w-0 space-y-4">
+          </div>}
+          <div className="min-w-0 space-y-4 md:overflow-y-auto">
             <div><h3 className="text-xs font-medium text-muted-foreground">Title</h3><p className="break-words text-xl font-semibold">{review.current.title}</p></div>
             <div><h3 className="text-xs font-medium text-muted-foreground">Description</h3><p className="whitespace-pre-wrap break-words text-sm">{review.current.description || 'No description.'}</p></div>
             <p className="break-all text-xs text-muted-foreground">CSV row {review.current.rowNumber} · {review.current.relativeFilename}</p>
             {review.current.width && review.current.height ? <p className="text-xs text-muted-foreground">{review.current.width} × {review.current.height} pixels · {review.current.orientation === 'landscape' ? 'Landscape' : 'Portrait'}</p> : null}
             {review.current.error ? <p role="alert" className="text-sm font-medium text-destructive">{review.current.error}</p> : null}
+            {canEditSizes ? <p className="text-sm text-muted-foreground">Choose each paper ratio and adjust its crop. Insert saves all six size settings with this image.</p> : null}
+            {canEditSizes && imageStatus === 'error' ? <p className="text-sm text-muted-foreground">The preview could not be loaded. You can still choose Insert; the original artwork will be validated.</p> : null}
+            {currentCrop?.attemptedDraft && !importing ? <p className="text-sm text-muted-foreground">The selected sizes are kept for this Insert attempt. Retry Insert or refresh the review to confirm its result.</p> : null}
           </div>
         </div> : <p className="py-4 text-center text-lg font-medium">{review.insertedCount} {review.insertedCount === 1 ? 'listing' : 'listings'} inserted. {review.skippedCount} skipped.</p>}
         {warning ? <p role="alert" className="text-sm text-amber-700">{warning}</p> : null}
         {busyAction === 'finish' ? <p role="status" className="text-sm text-muted-foreground">Checking the latest review progress…</p> : null}
         {error ? <div className="grid justify-items-start gap-2"><p role="alert" className="text-sm font-medium text-destructive">{error}</p><Button type="button" variant="outline" disabled={importing} onClick={() => { void reviewAction('refresh'); }}>Refresh review</Button></div> : null}
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button type="button" variant="outline" disabled={importing} onClick={finishReview}>{busyAction === 'finish' ? 'Finishing…' : review.current ? 'Finish' : 'Done'}</Button>
           {review.current ? <>
             <Button type="button" variant="outline" disabled={importing} onClick={() => { void reviewAction('skip'); }}>{busyAction === 'skip' ? 'Skipping…' : 'Skip'}</Button>
-            <Button type="button" disabled={importing || !!review.current.error} onClick={() => { void reviewAction('insert'); }}>{busyAction === 'insert' ? 'Inserting…' : 'Insert'}</Button>
+            <Button type="button" disabled={importing || !!review.current.error || !currentCrop?.draft} onClick={() => { void reviewAction('insert'); }}>{busyAction === 'insert' ? 'Inserting…' : 'Insert'}</Button>
           </> : null}
         </DialogFooter>
       </>}

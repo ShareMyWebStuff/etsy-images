@@ -5,9 +5,11 @@ vi.mock('@/lib/listing-zip-review', () => ({ startListingZipReview: mocks.start,
   getListingZipReviewImage: mocks.image, actOnListingZipReview: mocks.action, closeListingZipReview: mocks.close }));
 import { ListingZipImportError } from '@/lib/listing-zip-import';
 import { DELETE, GET, POST } from './route';
+import { defaultNativeListingPrintCropDraft, listingPrintCropDraftForSave } from '@/lib/listing-print-crops';
 const url = 'http://localhost/api/shops/listings/import';
 const context = { shopId: '66615491', sectionId: '2', subSectionId: '3' };
 const sessionId = '21ea628a-8038-4b91-870b-7f0910c03137';
+const cropSettings = listingPrintCropDraftForSave(defaultNativeListingPrintCropDraft(800, 1000));
 const review = { sessionId, templateName: 'Frames', cursor: 0, total: 2, insertedCount: 0, skippedCount: 0,
   expiresAt: '2026-11-21T10:30:00Z', current: { index: 0, rowNumber: 2, title: 'Bunny', description: 'Rabbit',
     relativeFilename: 'bunny.png', originalFileName: 'bunny.png', width: 800, height: 1000, orientation: 'portrait', error: null } };
@@ -57,7 +59,19 @@ describe('ZIP listings review API', () => {
   });
   it.each(['insert', 'skip'])('passes an explicit sequential %s action without uploading the ZIP again', async (rowAction) => {
     const response = await POST(action({ action: rowAction })); expect(response.status).toBe(200);
-    expect(mocks.action).toHaveBeenCalledWith(context, sessionId, 0, rowAction); expect(mocks.start).not.toHaveBeenCalled(); expect(mocks.bulkImport).not.toHaveBeenCalled();
+    if (rowAction === 'insert') expect(mocks.action).toHaveBeenCalledWith(context, sessionId, 0, rowAction, undefined);
+    else expect(mocks.action).toHaveBeenCalledWith(context, sessionId, 0, rowAction);
+    expect(mocks.start).not.toHaveBeenCalled(); expect(mocks.bulkImport).not.toHaveBeenCalled();
+  });
+  it('forwards the selected Set Size draft unchanged for transactional Insert validation', async () => {
+    expect((await POST(action({ cropSettings }))).status).toBe(200);
+    expect(mocks.action).toHaveBeenCalledWith(context, sessionId, 0, 'insert', JSON.parse(JSON.stringify(cropSettings)));
+  });
+  it('delegates invalid or missing retry crops to the session so committed Inserts remain recoverable', async () => {
+    mocks.action.mockRejectedValueOnce(new ListingZipImportError('CSV row 2: The Set Size crops are invalid.', 400));
+    const response = await POST(action({ cropSettings: null }));
+    expect(response.status).toBe(400); expect(await response.json()).toMatchObject({ error: expect.stringContaining('Set Size') });
+    expect(mocks.action).toHaveBeenCalledWith(context, sessionId, 0, 'insert', null);
   });
   it('returns a completed review despite an optional table refresh failure', async () => {
     mocks.action.mockResolvedValue({ review: { ...review, cursor: 1, insertedCount: 1 }, data: null, refreshError: 'Refresh the page to see the inserted listing.' });

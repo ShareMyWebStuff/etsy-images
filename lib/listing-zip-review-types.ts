@@ -1,4 +1,5 @@
 import type { SubSectionListingsPageData } from '@/lib/listing-table';
+import type { ListingPrintCropDraft } from '@/lib/listing-print-crops';
 
 export type ListingZipReviewItem = {
   index: number;
@@ -11,6 +12,7 @@ export type ListingZipReviewItem = {
   height: number | null;
   orientation: 'portrait' | 'landscape' | null;
   error: string | null;
+  initialCropSettings?: ListingPrintCropDraft;
 };
 
 export type ListingZipReviewState = {

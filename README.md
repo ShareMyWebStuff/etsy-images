@@ -32,6 +32,8 @@ On a shop section's **Listings** page, the image button between **Generate** and
 
 ## Import listings from ZIP
 
+Each review entry shows its title and description beside the same Set Size editor used on the listing page. Select a paper ratio and position its crop; black outside the border shows what will be excluded. **Insert** saves the artwork and all six size settings together, so they are ready when the listing is opened. **Skip** ignores the entry, and **Finish** ends the review while retaining listings already inserted. The size editor accepts 2:3 and 4:5 source artwork in portrait or landscape; other dimensions are flagged for skipping. Crops are kept for the original Insert attempt if its result needs to be retried or confirmed.
+
 On a shop section's **Listings** page, choose **Import**, select a template and choose a ZIP archive. Supported browsers start the file chooser in Downloads. Click **Import listings** to review the title, description and artwork for each CSV row. **Insert** creates that one listing in the current shop, section and subsection; **Skip** ignores the row. Progress shows how many entries have been inserted and skipped. Closing the review keeps listings already inserted and leaves the remaining entries unimported. The ZIP must contain one `overview.csv`, either at the archive root or inside an enclosing folder, and its referenced PNG, JPG or WebP artwork. The first CSV record is skipped as a header; the remaining records use these three columns in order:
 
 ```csv

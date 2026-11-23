@@ -6,6 +6,7 @@ vi.mock('@/lib/listing-zip-import', async (original) => ({ ...await original<typ
   prepareListingZipReview: mocks.prepare, insertListingZipReviewRow: mocks.insert }));
 vi.mock('@/lib/listing-table', () => ({ getSubSectionListingsPageData: mocks.page }));
 import { ListingZipImportError, type ListingZipReviewPlan } from '@/lib/listing-zip-import';
+import { defaultNativeListingPrintCropDraft, listingPrintCropDraftForSave } from '@/lib/listing-print-crops';
 import { actOnListingZipReview, closeListingZipReview, getListingZipReview, getListingZipReviewImage,
   LISTING_ZIP_REVIEW_LIMITS, startListingZipReview } from '@/lib/listing-zip-review';
 
@@ -15,6 +16,7 @@ function plan() {
   return { input: context, context: {}, target: { name: 'Nursery Frames' }, productType: 'physical', rows: Array.from({ length: 3 }, (_, index) => ({
     rowNumber: index + 2, title: `Artwork ${index + 1}`, description: 'Description', relativeFilename: `${index}.png`, originalFileName: `${index}.png`,
     width: 80, height: 100, orientation: 'portrait', error: null, contents: Buffer.from(`image ${index}`), fileName: `import-${index}.png`, filePath: `listing/${index}.png`,
+    initialCropSettings: listingPrintCropDraftForSave(defaultNativeListingPrintCropDraft(80, 100)),
   })) } as unknown as ListingZipReviewPlan;
 }
 async function start() {
@@ -42,6 +44,30 @@ describe('ZIP listing review sessions', () => {
     expect(review.sessionId).toMatch(/^[a-f0-9-]{36}$/);
     expect(JSON.stringify(review)).not.toMatch(/image 0|filePath|contents/);
     expect(mocks.insert).not.toHaveBeenCalled(); expect(mocks.page).not.toHaveBeenCalled();
+  });
+
+  it('exposes only the draft crop defaults and requires those explicit selections on Insert', async () => {
+    const review = await start();
+    expect(review.current?.initialCropSettings).toEqual(plans[0].rows[0].initialCropSettings);
+    const chosen = structuredClone(review.current!.initialCropSettings!);
+    chosen.regions['2x3'].x = 0;
+    await actOnListingZipReview(context, review.sessionId, 0, 'insert', chosen);
+    expect(mocks.insert).toHaveBeenCalledWith(plans[0], 0, { cropSettings: chosen, requireCropSettings: true });
+    const replay = await actOnListingZipReview(context, review.sessionId, 0, 'insert', { changed: 'after commit' });
+    expect(replay.review.insertedCount).toBe(1); expect(mocks.insert).toHaveBeenCalledOnce();
+  });
+
+  it('keeps unsupported crop dimensions previewable and Skip-only without calling the insert service', async () => {
+    const value = plan(); value.rows[0].cropError = 'CSV row 2: Set Size supports 2:3 or 4:5 artwork. Choose Skip to continue.';
+    value.rows[0].initialCropSettings = undefined;
+    plans.push(value); mocks.prepare.mockResolvedValueOnce(value);
+    const review = await start();
+    expect(review.current).toMatchObject({ error: value.rows[0].cropError });
+    expect(value.rows[0].contents).toBeDefined();
+    await expect(actOnListingZipReview(context, review.sessionId, 0, 'insert', {})).rejects.toMatchObject({ status: 400 });
+    expect(mocks.insert).not.toHaveBeenCalled();
+    expect((await actOnListingZipReview(context, review.sessionId, 0, 'skip')).review).toMatchObject({ cursor: 1, skippedCount: 1 });
+    expect(value.rows[0].contents).toBeUndefined();
   });
 
   it('requires the complete original shop/section/subsection scope', async () => {
@@ -87,7 +113,7 @@ describe('ZIP listing review sessions', () => {
     await vi.waitFor(() => expect(mocks.insert).toHaveBeenCalledOnce());
     pending.resolve({ listingIds: ['100'] });
     const results = await Promise.all([first, second]);
-    expect(mocks.insert).toHaveBeenCalledOnce(); expect(mocks.insert).toHaveBeenCalledWith(plans[0], 0);
+    expect(mocks.insert).toHaveBeenCalledOnce(); expect(mocks.insert).toHaveBeenCalledWith(plans[0], 0, { cropSettings: undefined, requireCropSettings: true });
     expect(results.every((result) => result.review.cursor === 1 && result.review.insertedCount === 1)).toBe(true);
   });
 

@@ -11,6 +11,8 @@ import { buildListingProductDefinitions, getTemplateProductOptions } from '@/lib
 import { effectiveListingCustomisation } from '@/lib/listing-customisation';
 import { ETSY_LISTINGS_DIRECTORY } from '@/lib/config';
 import { readdir, unlink, writeFile } from '@/lib/s3-listing-storage';
+import { createListingPrintCropSettings, defaultNativeListingPrintCropDraft, listingPrintCropDraftForSave,
+  type ListingPrintCropDraft, type ListingPrintCropSettings } from '@/lib/listing-print-crops';
 
 const DESCRIPTION_LIMIT = 1000;
 const nameCollator = new Intl.Collator('en', { sensitivity: 'base', usage: 'search' });
@@ -29,6 +31,10 @@ export type ListingZipReviewRow = Omit<ArchiveRow, 'image'> & {
   previewContents?: Buffer;
   fileName?: string;
   filePath?: string;
+  initialCropSettings?: ListingPrintCropDraft;
+  /** Review-only gate; compatibility bulk callers can still import other image ratios. */
+  cropError?: string;
+  insertion?: { thumbnailUpdatedAt: string; cropSettings: ListingPrintCropSettings };
 };
 export type ListingZipReviewPlan = {
   input: Context;
@@ -241,6 +247,16 @@ export async function prepareListingZipReview(input: Context, templateId: unknow
       Object.assign(value, artwork);
       value.fileName = `import-${randomUUID()}.png`;
       if (!value.error) value.filePath = path.join(getListingDirectoryPath(context.shop.displayName, context.section.title, context.subSection.name, row.title), 'thumbnail', value.fileName);
+      try {
+        const draft = defaultNativeListingPrintCropDraft(artwork.width, artwork.height, artwork.orientation);
+        // Validate the full roundtrip too: near-native rounded dimensions can
+        // be recognised as 2:3 while still failing exact crop validation.
+        const settings = createListingPrintCropSettings(draft, { width: artwork.width, height: artwork.height,
+          fileName: value.fileName, updatedAt: new Date(0).toISOString() }, artwork.orientation);
+        value.initialCropSettings = listingPrintCropDraftForSave(settings);
+      } catch {
+        value.cropError = rowError(row, `Set Size supports 2:3 or 4:5 artwork in portrait or landscape. These ${artwork.width} × ${artwork.height} dimensions cannot be configured. Choose Skip to continue.`).message;
+      }
     } catch (error) { value.error ??= error instanceof Error ? error.message : `CSV row ${row.rowNumber}: The artwork is invalid.`; }
     try { assertNoCollisions([row], [...databaseNames, ...storedNames]); }
     catch (error) { value.error ??= error instanceof Error ? error.message : `CSV row ${row.rowNumber}: The listing already exists.`; }
@@ -288,11 +304,12 @@ async function persistReviewRows(plan: ListingZipReviewPlan, prepared: PreparedR
       for (const row of prepared) {
         const created = await createLocalListingRowInTransaction(transaction, context, row.title,
           { numberOfItems: 1, includeAllItems: false, etsyProductType: productType, ourCategoryId: target.id });
-        const now = new Date();
+        const now = row.insertion ? new Date(row.insertion.thumbnailUpdatedAt) : new Date();
         await transaction.etsyListing.update({ where: { id: created.listing.id }, data: {
           description: row.description, listingDescription: row.description, backgroundColour: '#F5F0E8',
           thumbnailFileName: row.fileName, thumbnailOriginalFileName: row.originalFileName, thumbnailUpdatedAt: now,
           thumbnailWidthPixels: row.width, thumbnailHeightPixels: row.height, artworkOrientation: row.orientation,
+          ...(row.insertion ? { printCropSettings: row.insertion.cropSettings as unknown as Prisma.InputJsonValue } : {}),
           detailsChanged: true, imagesChanged: true, lastLocalChangeAt: now,
         } });
         ids.push(created.listing.id);
@@ -324,7 +341,8 @@ async function persistReviewRows(plan: ListingZipReviewPlan, prepared: PreparedR
 }
 
 /** Commit exactly one reviewed row. Session state records success before reloading table data. */
-export async function insertListingZipReviewRow(plan: ListingZipReviewPlan, index: number) {
+export async function insertListingZipReviewRow(plan: ListingZipReviewPlan, index: number,
+  options: { cropSettings?: unknown; requireCropSettings?: boolean } = {}) {
   if (!Number.isSafeInteger(index) || index < 0) throw new ListingZipImportError('The review row is invalid.');
   const row = plan.rows[index];
   requirePreparedRow(row);
@@ -354,6 +372,21 @@ export async function insertListingZipReviewRow(plan: ListingZipReviewPlan, inde
     // The UUID belongs to this row, so a lost commit confirmation can be
     // recovered without uploading again, overwriting artwork, or creating a duplicate.
     return { listingIds: [String(owner.id)] };
+  }
+  if (!row.insertion && (options.requireCropSettings || options.cropSettings !== undefined)) {
+    if (row.cropError) throw new ListingZipImportError(row.cropError);
+    if (options.cropSettings === undefined) throw rowError(row, 'Choose the Set Size crops before inserting this listing.');
+    const thumbnailUpdatedAt = new Date().toISOString();
+    let cropSettings: ListingPrintCropSettings;
+    try {
+      cropSettings = createListingPrintCropSettings(options.cropSettings, { width: row.width, height: row.height,
+        fileName: row.fileName, updatedAt: thumbnailUpdatedAt }, row.orientation);
+    } catch (error) {
+      throw rowError(row, `The Set Size crops are invalid: ${error instanceof Error ? error.message : 'Choose all six print sizes.'}`);
+    }
+    // Freeze a detached canonical payload before the first write. A retry must
+    // never change crop identity while the earlier commit may be uncertain.
+    row.insertion = { thumbnailUpdatedAt, cropSettings };
   }
   const { target } = await loadImportTemplate(context, String(plan.target.id));
   if (target.updatedAt.getTime() !== plan.target.updatedAt.getTime()) throw new ListingZipImportError('The selected template changed. Upload the ZIP again.', 409);

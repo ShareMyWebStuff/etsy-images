@@ -6,6 +6,7 @@ import {
 } from '@/lib/listing-zip-import';
 import { getSubSectionListingsPageData } from '@/lib/listing-table';
 import type { ListingZipReviewResponse, ListingZipReviewState } from '@/lib/listing-zip-review-types';
+import { listingPrintCropDraftForSave } from '@/lib/listing-print-crops';
 
 export const LISTING_ZIP_REVIEW_LIMITS = Object.freeze({ ttlMs: 30 * 60 * 1000, sessions: 2, stagedBytes: 750 * 1024 * 1024 });
 type RowAction = 'insert' | 'skip';
@@ -62,7 +63,9 @@ function state(session: ReviewSession): ListingZipReviewState {
     cursor: session.cursor, insertedCount: session.inserted, skippedCount: session.skipped, expiresAt: new Date(session.expiresAt).toISOString(),
     current: row ? { index: session.cursor, rowNumber: row.rowNumber, title: row.title, description: row.description,
       relativeFilename: row.relativeFilename, originalFileName: row.originalFileName,
-      width: row.width, height: row.height, orientation: row.orientation, error: row.error } : null };
+      width: row.width, height: row.height, orientation: row.orientation, error: row.error ?? row.cropError ?? null,
+      ...(row.insertion || row.initialCropSettings ? { initialCropSettings: row.insertion
+        ? listingPrintCropDraftForSave(row.insertion.cropSettings) : row.initialCropSettings } : {}) } : null };
 }
 function bytes(plans: ListingZipReviewPlan[]) {
   const retained = new Set<Buffer>(); let total = 0;
@@ -132,7 +135,8 @@ async function refresh(session: ReviewSession): Promise<ListingZipReviewResponse
   }
 }
 
-export async function actOnListingZipReview(input: ListingZipImportContext, id: string, rowIndex: number, action: RowAction): Promise<ListingZipReviewResponse> {
+export async function actOnListingZipReview(input: ListingZipImportContext, id: string, rowIndex: number, action: RowAction,
+  cropSettings?: unknown): Promise<ListingZipReviewResponse> {
   const session = find(input, id);
   if (!Number.isSafeInteger(rowIndex) || rowIndex < 0 || rowIndex >= session.plan.rows.length) throw new ListingZipImportError('Choose a valid review row.');
   if (action !== 'insert' && action !== 'skip') throw new ListingZipImportError('Choose Insert or Skip for this review row.');
@@ -146,9 +150,9 @@ export async function actOnListingZipReview(input: ListingZipImportContext, id: 
     if (rowIndex !== session.cursor) throw new ListingZipImportError('This ZIP review has moved to another row. Reload the review before continuing.', 409);
     const row = session.plan.rows[rowIndex];
     if (action === 'insert') {
-      if (row.error) throw new ListingZipImportError(row.error, 400);
+      if (row.error || row.cropError) throw new ListingZipImportError((row.error ?? row.cropError)!, 400);
       try {
-        await insertListingZipReviewRow(session.plan, rowIndex);
+        await insertListingZipReviewRow(session.plan, rowIndex, { cropSettings, requireCropSettings: true });
         session.unconfirmedInsert = false;
       } catch (error) {
         if (error instanceof ListingZipImportError && error.status === 503) session.unconfirmedInsert = true;

@@ -195,4 +195,28 @@ describe('ListingPrintCropDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save Size' }));
     expect(onSave.mock.calls[0][0].placements['4x5']).toMatchObject({ x: 0, y: 0, width: 1 });
   });
+
+  it('preserves guided-generation save copy, errors and the saving lock around the shared editor', () => {
+    const initial = settings(4000, 5000), onSave = vi.fn(), onOpenChange = vi.fn();
+    const { rerender } = render(<ListingPrintCropDialog open onOpenChange={onOpenChange} imageUrl={previewUrl}
+      context={context} orientation="portrait" initialSettings={initial} saving onSave={onSave}
+      continuationLabel="Generate Images" />);
+    expect(screen.getByText('Save these sizes to continue Generate Images.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Saving...' }) as HTMLButtonElement).disabled).toBe(true);
+    const crop = screen.getByRole('slider', { name: '2:3 crop area' });
+    const originalLeft = crop.style.left;
+    fireEvent.keyDown(crop, { key: 'ArrowLeft' });
+    dragSelection(100, 0);
+    expect(crop.style.left).toBe(originalLeft);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+
+    rerender(<ListingPrintCropDialog open onOpenChange={onOpenChange} imageUrl={previewUrl}
+      context={context} orientation="portrait" initialSettings={initial} saving={false} onSave={onSave}
+      continuationLabel="Generate Images" errorMessage="The size save failed. Please retry." />);
+    expect(screen.getByRole('alert').textContent).toContain('The size save failed');
+    fireEvent.click(screen.getByRole('button', { name: 'Save Size and continue Generate Images' }));
+    expect(onSave).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ regions: initial.regions, placements: initial.placements }));
+  });
 });

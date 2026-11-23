@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ListingZipImportDialog } from '@/app/listings/ListingZipImportDialog';
 import type { SubSectionListingsPageData } from '@/lib/listing-table';
 import type { ListingZipReviewState } from '@/lib/listing-zip-review-types';
+import {
+  cropRegionToArtworkPlacement, defaultNativeListingPrintCropDraft,
+  type ListingArtworkOrientation, type ListingPrintCropDraft,
+} from '@/lib/listing-print-crops';
 
 const endpoint = '/api/shops/listings/import';
 const choices = [{ id: '15', name: 'Country living prints', templateType: 'single', itemCount: 1 }];
@@ -35,6 +39,41 @@ async function beginReview() {
 function actions(fetchMock: ReturnType<typeof vi.fn>) {
   return fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST' && typeof options.body === 'string')
     .map(([, options]) => JSON.parse(options.body));
+}
+
+function defaultCrops(width = 2000, height = 3000, orientation: ListingArtworkOrientation = 'portrait'): ListingPrintCropDraft {
+  const { regions, placements } = defaultNativeListingPrintCropDraft(width, height, orientation);
+  return { regions, placements };
+}
+
+function expectCrops(actual: ListingPrintCropDraft, expected: ListingPrintCropDraft) {
+  expect(Object.keys(actual).sort()).toEqual(['placements', 'regions']);
+  for (const kind of ['regions', 'placements'] as const) {
+    expect(Object.keys(actual[kind]!).sort()).toEqual(Object.keys(expected[kind]!).sort());
+    for (const ratio of Object.keys(expected.regions) as Array<keyof ListingPrintCropDraft['regions']>) {
+      for (const coordinate of ['x', 'y', 'width', 'height'] as const) {
+        expect(actual[kind]![ratio][coordinate]).toBeCloseTo(expected[kind]![ratio][coordinate], 12);
+      }
+    }
+  }
+}
+
+function fourByFiveReview(cursor = 0, inserted = 0, skipped = 0) {
+  const value = review(cursor, inserted, skipped);
+  if (value.current) Object.assign(value.current, { width: 4000, height: 5000, initialCropSettings: defaultCrops(4000, 5000) });
+  return value;
+}
+
+function dragCrop(deltaX: number, deltaY = 0) {
+  vi.stubGlobal('PointerEvent', MouseEvent);
+  vi.spyOn(screen.getByTestId('print-crop-source-frame'), 'getBoundingClientRect').mockReturnValue({
+    x: 0, y: 0, left: 0, top: 0, width: 400, height: 500, right: 400, bottom: 500, toJSON: () => ({}),
+  });
+  const selection = screen.getByTestId('print-crop-selection');
+  Object.assign(selection, { setPointerCapture: vi.fn(), hasPointerCapture: () => false });
+  fireEvent.pointerDown(selection, { clientX: 100, clientY: 100, button: 0, pointerId: 1 });
+  fireEvent.pointerMove(selection, { clientX: 100 + deltaX, clientY: 100 + deltaY, pointerId: 1 });
+  fireEvent.pointerUp(selection, { pointerId: 1 });
 }
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -238,7 +277,7 @@ describe('Listing ZIP import dialog', () => {
     expect(screen.queryByRole('button', { name: 'Insert' })).toBeNull();
     expect(props.onOpenChange).not.toHaveBeenCalled(); expect(props.onFinished).not.toHaveBeenCalled();
     expect(actions(fetchMock)).toEqual([
-      { shopId: '123', sectionId: '3', subSectionId: '8', sessionId: 'review-1', rowIndex: 0, action: 'insert' },
+      { shopId: '123', sectionId: '3', subSectionId: '8', sessionId: 'review-1', rowIndex: 0, action: 'insert', cropSettings: defaultCrops() },
       { shopId: '123', sectionId: '3', subSectionId: '8', sessionId: 'review-1', rowIndex: 1, action: 'skip' },
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
@@ -280,7 +319,7 @@ describe('Listing ZIP import dialog', () => {
     await screen.findByText('Otter print');
     expect(actions(fetchMock).map((body) => body.action)).toEqual(['skip']);
     expect(props.onInserted).not.toHaveBeenCalled();
-    expect(screen.getByRole('status').textContent).toContain('0 inserted');
+    expect(screen.getAllByRole('status').some((element) => element.textContent?.includes('0 inserted'))).toBe(true);
   });
 
   it.each([
@@ -316,12 +355,157 @@ describe('Listing ZIP import dialog', () => {
   });
 
   it('keeps Insert available when only the browser artwork preview fails', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(json({ templates: choices })).mockResolvedValueOnce(json({ review: review() })));
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ templates: choices })).mockResolvedValueOnce(json({ review: review() }))
+      .mockResolvedValueOnce(json({ review: review(1, 1), data }));
+    vi.stubGlobal('fetch', fetchMock);
     setup(); await beginReview();
     fireEvent.error(screen.getByRole('img', { name: 'Fox print import artwork' }));
-    expect(screen.getByText(/You can still choose Insert/)).toBeTruthy();
+    expect(screen.getByText(/Unable to load the artwork preview/)).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Insert' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Skip' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    await screen.findByText('Otter print');
+    expect(actions(fetchMock)[0]).toMatchObject({ action: 'insert', cropSettings: defaultCrops() });
+  });
+
+  it('edits the real six-ratio crop editor and sends complete source-based settings only on Insert', async () => {
+    const initial = defaultCrops(4000, 5000);
+    initial.regions['2x3'].x = 0.02;
+    initial.placements!['2x3'] = cropRegionToArtworkPlacement(initial.regions['2x3']);
+    const first = fourByFiveReview(); Object.assign(first.current!, { initialCropSettings: initial });
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ templates: choices })).mockResolvedValueOnce(json({ review: first }))
+      .mockResolvedValueOnce(json({ review: review(1, 1), data }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { props } = setup(); await beginReview();
+    expect(screen.getAllByRole('tab')).toHaveLength(6);
+    expect(screen.getByRole('tab', { name: /^2:3/ }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('A woodland fox.')).toBeTruthy();
+    const image = screen.getByRole('img', { name: 'Fox print import artwork' }) as HTMLImageElement;
+    Object.defineProperties(image, { naturalWidth: { configurable: true, value: 410 }, naturalHeight: { configurable: true, value: 512 } });
+    fireEvent.load(image);
+    const crop = screen.getByRole('slider', { name: '2:3 crop area' });
+    expect(Number.parseFloat(crop.style.width)).toBeCloseTo(100 * 5 / 6);
+    expect(Number.parseFloat(crop.style.left)).toBeCloseTo(2);
+    expect(crop.style.boxShadow).toContain('100vmax');
+    dragCrop(40, 200); // The original-width geometry uses +0.1 horizontally and ignores vertical movement.
+    fireEvent.click(screen.getByRole('tab', { name: /^3:4/ }));
+    fireEvent.keyDown(screen.getByRole('slider', { name: '3:4 crop area' }), { key: 'ArrowLeft' });
+    fireEvent.click(screen.getByRole('tab', { name: /^2:3/ }));
+    expect(Number.parseFloat(screen.getByRole('slider', { name: '2:3 crop area' }).style.left)).toBeCloseTo(12);
+    expect(actions(fetchMock)).toEqual([]);
+    expect(props.onInserted).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const expected = defaultCrops(4000, 5000);
+    expected.regions['2x3'].x = 0.12;
+    expected.regions['3x4'].x -= 0.01;
+    expected.placements!['2x3'] = cropRegionToArtworkPlacement(expected.regions['2x3']);
+    expected.placements!['3x4'] = cropRegionToArtworkPlacement(expected.regions['3x4']);
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    await screen.findByText('Otter print');
+    const sent = actions(fetchMock)[0];
+    expect(sent).toMatchObject({ shopId: '123', sectionId: '3', subSectionId: '8', sessionId: 'review-1', rowIndex: 0, action: 'insert' });
+    expect(sent.cropSettings.regions['2x3'].x).toBeCloseTo(expected.regions['2x3'].x);
+    expect(sent.cropSettings.regions['3x4'].x).toBeCloseTo(expected.regions['3x4'].x);
+    expectCrops(sent.cropSettings, expected);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/editor/print-crops'))).toBe(false);
+  });
+
+  it('resets the active ratio and crop draft to the next artwork instead of carrying edits between rows', async () => {
+    const next = fourByFiveReview(1, 1);
+    const nextDraft = defaultCrops(4000, 5000);
+    nextDraft.regions['2x3'].x = 0.025;
+    nextDraft.placements!['2x3'] = cropRegionToArtworkPlacement(nextDraft.regions['2x3']);
+    Object.assign(next.current!, { initialCropSettings: nextDraft });
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ templates: choices })).mockResolvedValueOnce(json({ review: fourByFiveReview() }))
+      .mockResolvedValueOnce(json({ review: next, data })).mockResolvedValueOnce(json({ review: review(2, 2), data }));
+    vi.stubGlobal('fetch', fetchMock);
+    setup(); await beginReview();
+    fireEvent.keyDown(screen.getByRole('slider', { name: '2:3 crop area' }), { key: 'ArrowRight' });
+    fireEvent.click(screen.getByRole('tab', { name: /^3:4/ }));
+    fireEvent.keyDown(screen.getByRole('slider', { name: '3:4 crop area' }), { key: 'ArrowLeft' });
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    await screen.findByText('Otter print');
+    expect(screen.getByRole('tab', { name: /^2:3/ }).getAttribute('aria-selected')).toBe('true');
+    expect(Number.parseFloat(screen.getByRole('slider', { name: '2:3 crop area' }).style.left)).toBeCloseTo(2.5);
+    expect((screen.getByRole('button', { name: 'Insert' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole('tab', { name: /^3:4/ }));
+    expect(Number.parseFloat(screen.getByRole('slider', { name: '3:4 crop area' }).style.left)).toBeCloseTo(3.125);
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    await screen.findByText('Review complete');
+    expect(actions(fetchMock)[1].rowIndex).toBe(1);
+    expectCrops(actions(fetchMock)[1].cropSettings, nextDraft);
+    expect(actions(fetchMock)[0].cropSettings).not.toEqual(actions(fetchMock)[1].cropSettings);
+  });
+
+  it('discards crop edits on Skip without submitting or persisting them', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ templates: choices })).mockResolvedValueOnce(json({ review: fourByFiveReview() }))
+      .mockResolvedValueOnce(json({ review: fourByFiveReview(1, 0, 1) })).mockResolvedValue(json({ closed: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { props } = setup(); await beginReview();
+    fireEvent.keyDown(screen.getByRole('slider', { name: '2:3 crop area' }), { key: 'ArrowRight' });
+    fireEvent.click(screen.getByRole('tab', { name: /^3:4/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+    await screen.findByText('Otter print');
+    expect(actions(fetchMock)).toEqual([{ shopId: '123', sectionId: '3', subSectionId: '8', sessionId: 'review-1', rowIndex: 0, action: 'skip' }]);
+    expect(screen.getByRole('tab', { name: /^2:3/ }).getAttribute('aria-selected')).toBe('true');
+    expect(Number.parseFloat(screen.getByRole('slider', { name: '2:3 crop area' }).style.left)).toBeCloseTo(100 / 12);
+    expect(props.onInserted).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+    expect(props.onFinished).toHaveBeenCalledWith({ insertedCount: 0, skippedCount: 1, totalCount: 2 });
+  });
+
+  it('keeps unsaved crop edits and the selected ratio when Refresh returns the same row', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ templates: choices })).mockResolvedValueOnce(json({ review: fourByFiveReview() }))
+      .mockResolvedValueOnce(json({ error: 'The Skip response could not be confirmed.' }, false))
+      .mockResolvedValueOnce(json({ review: fourByFiveReview() })).mockResolvedValueOnce(json({ review: review(1, 1), data }));
+    vi.stubGlobal('fetch', fetchMock);
+    setup(); await beginReview();
+    fireEvent.keyDown(screen.getByRole('slider', { name: '2:3 crop area' }), { key: 'ArrowRight' });
+    fireEvent.click(screen.getByRole('tab', { name: /^3:4/ }));
+    fireEvent.keyDown(screen.getByRole('slider', { name: '3:4 crop area' }), { key: 'ArrowLeft' });
+    const before = screen.getByRole('slider', { name: '3:4 crop area' }).style.left;
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh review' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(screen.getByRole('tab', { name: /^3:4/ }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('slider', { name: '3:4 crop area' }).style.left).toBe(before);
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    await screen.findByText('Otter print');
+    expect(actions(fetchMock)[0]).not.toHaveProperty('cropSettings');
+    const sent = actions(fetchMock)[1].cropSettings as ListingPrintCropDraft;
+    expect(sent.regions['2x3'].x).toBeCloseTo(1 / 12 + 0.01);
+    expect(sent.regions['3x4'].x).toBeCloseTo(0.03125 - 0.01);
+    expect(fetchMock).toHaveBeenCalledWith(`${endpoint}?shopId=123&sectionId=3&subSectionId=8&action=review&sessionId=review-1`, { cache: 'no-store' });
+  });
+
+  it('freezes the first Insert crop intent and retries an uncertain response with the exact same payload', async () => {
+    const pending = deferred<ReturnType<typeof json>>();
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ templates: choices })).mockResolvedValueOnce(json({ review: fourByFiveReview() }))
+      .mockReturnValueOnce(pending.promise).mockResolvedValueOnce(json({ review: review(1, 1), data }));
+    vi.stubGlobal('fetch', fetchMock);
+    setup(); await beginReview();
+    fireEvent.keyDown(screen.getByRole('slider', { name: '2:3 crop area' }), { key: 'ArrowRight' });
+    const crop = screen.getByRole('slider', { name: '2:3 crop area' });
+    const frozenLeft = crop.style.left;
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    expect(crop.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.keyDown(crop, { key: 'ArrowRight' });
+    dragCrop(40);
+    expect(crop.style.left).toBe(frozenLeft);
+    await act(async () => pending.resolve(json({ error: 'The previous Insert result is not confirmed. Retry Insert.' }, false)));
+    await screen.findByRole('alert');
+    expect(crop.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.keyDown(crop, { key: 'ArrowLeft' });
+    expect(crop.style.left).toBe(frozenLeft);
+    fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
+    await screen.findByText('Otter print');
+    const sent = actions(fetchMock);
+    expect(sent).toHaveLength(2);
+    expect(sent[0]).toEqual(sent[1]);
+    expect(sent[0].cropSettings.regions['2x3'].x).toBeCloseTo(1 / 12 + 0.01);
+    expect(fetchMock.mock.calls.filter(([, options]) => options?.body instanceof FormData)).toHaveLength(1);
+    expect((screen.getByRole('button', { name: 'Insert' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('retries a failed Insert with the same row index instead of advancing or repeating the ZIP upload', async () => {

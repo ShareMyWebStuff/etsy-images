@@ -47,7 +47,11 @@ export async function POST(request: Request) {
       const body = await json(request), context = listingZipImportContext(body);
       if (body.action !== 'insert' && body.action !== 'skip') throw new ListingZipImportError('Choose Insert or Skip for this review row.');
       if (typeof body.rowIndex !== 'number' || !Number.isSafeInteger(body.rowIndex) || body.rowIndex < 0) throw new ListingZipImportError('Choose a valid review row.');
-      return NextResponse.json(await actOnListingZipReview(context, sessionId(body.sessionId), body.rowIndex, body.action), { headers: { 'Cache-Control': 'private, no-store' } });
+      const id = sessionId(body.sessionId);
+      const result = body.action === 'insert'
+        ? await actOnListingZipReview(context, id, body.rowIndex, body.action, body.cropSettings)
+        : await actOnListingZipReview(context, id, body.rowIndex, body.action);
+      return NextResponse.json(result, { headers: { 'Cache-Control': 'private, no-store' } });
     }
     let form: FormData;
     try { form = await request.formData(); } catch { throw new ListingZipImportError('Choose a ZIP file and template.'); }
