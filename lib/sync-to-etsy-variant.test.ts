@@ -57,6 +57,12 @@ describe('category-specific Etsy sync', () => {
     expect(mocks.publishListing).toHaveBeenCalledWith('66615491', '1', '1', '16', ['download']);
   });
 
+  it('preserves individual reactivation when the optional synced-draft guard is explicitly disabled', async () => {
+    mocks.listingFindUnique.mockResolvedValue(listing([]));
+    await publishOneListing('16', ['download'], { requireSyncedDrafts: false });
+    expect(mocks.publishListing).toHaveBeenCalledWith('66615491', '1', '1', '16', ['download']);
+  });
+
   it('passes only the selected digital variant to deactivation', async () => {
     mocks.listingFindUnique.mockResolvedValue({ ...listing([]), etsyDownloadState: 'active' });
     await makeOneListingInactive('16', ['download']);

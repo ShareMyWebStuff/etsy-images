@@ -285,6 +285,67 @@ describe('atomic ZIP import and storage ownership', () => {
 });
 
 describe('sequential ZIP review preparation and insertion', () => {
+  it.each([
+    { source: 'current title', title: 'FOX', localDirectoryName: 'Different folder' },
+    { source: 'original uploaded title after renaming', title: 'A new generated listing title', localDirectoryName: 'Fox' },
+  ])('keeps an existing $source visible as a blocked review row while another listing can be inserted', async ({ title, localDirectoryName }) => {
+    rows = [{ id: 90, title, localDirectoryName }];
+    const plan = await prepareListingZipReview(context, '10', await archive('Title,Description,Filename\n fOx ,Previously uploaded artwork,art.png\nOwl,A new listing,art.png'));
+    const duplicate = plan.rows[0];
+    expect(duplicate).toMatchObject({ title: 'fOx', description: 'Previously uploaded artwork', width: 40, height: 50,
+      error: 'CSV row 2: A listing or folder named "fOx" already exists in this section. Choose Skip to continue.', contents: expect.any(Buffer) });
+    expect(await sharp(duplicate.contents).metadata()).toMatchObject({ format: 'png', width: 40, height: 50 });
+    expect(mocks.listings).toHaveBeenCalledWith({ where: { shopId: '66615491', OR: [
+      { subSection: { is: { shopSectionId: 2 } } }, { subSectionId: null, shopSectionId: 1234 },
+    ] }, select: { title: true, localDirectoryName: true } });
+    await expect(insertListingZipReviewRow(plan, 0)).rejects.toMatchObject({ status: 409, message: duplicate.error });
+    expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(plan.rows[1]).toMatchObject({ title: 'Owl', error: null });
+    expect(await insertListingZipReviewRow(plan, 1)).toEqual({ listingIds: ['100'] });
+    expect(rows).toHaveLength(2); expect(rows[1].title).toBe('Owl');
+    expect(mocks.write).toHaveBeenCalledOnce();
+  });
+
+  it('reviews repeated CSV titles with their own images and blocks only later duplicates without rejecting the ZIP', async () => {
+    const fox = await sharp({ create: { width: 40, height: 50, channels: 3, background: '#ff3300' } }).png().toBuffer();
+    const owl = await sharp({ create: { width: 60, height: 40, channels: 3, background: '#0055bb' } }).png().toBuffer();
+    const plan = await prepareListingZipReview(context, '10', zip([
+      ['overview.csv', 'Title,Description,Filename\nFox,First artwork,fox.png\nfOx,Repeated title different artwork,owl.png\nOwl,Unique artwork,owl.png'],
+      ['fox.png', fox], ['owl.png', owl],
+    ]));
+    expect(plan.rows[0]).toMatchObject({ error: null, title: 'Fox', contents: fox });
+    expect(plan.rows[1]).toMatchObject({ title: 'fOx', description: 'Repeated title different artwork', contents: owl, width: 60, height: 40,
+      error: 'CSV row 3: The title "fOx" duplicates another row in this ZIP. Choose Skip to continue.' });
+    expect(plan.rows[2]).toMatchObject({ title: 'Owl', error: null, contents: owl });
+    await expect(insertListingZipReviewRow(plan, 1)).rejects.toMatchObject({ status: 409 });
+    expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it('shows an oversized image as a preview-only blocked row and still allows a later valid listing', async () => {
+    const original = await sharp({ create: { width: 1800, height: 2400, channels: 3, background: '#bc7b54' } }).png().toBuffer();
+    const oversized = Buffer.alloc(60 * 1024 * 1024 + 1); original.copy(oversized);
+    const valid = await sharp({ create: { width: 40, height: 50, channels: 3, background: '#ff3300' } }).png().toBuffer();
+    const file = zip([
+      ['overview.csv', 'Title,Description,Filename\nLarge art,Review and skip,large.png\nSmall art,Ready to insert,small.png'],
+      ['large.png', oversized], ['small.png', valid],
+    ]);
+    const plan = await prepareListingZipReview(context, '10', file);
+    const rejected = plan.rows[0];
+    expect(rejected).toMatchObject({ title: 'Large art', description: 'Review and skip', width: 1800, height: 2400, orientation: 'portrait',
+      error: expect.stringMatching(/Skipping this image.*60 MB per-image limit.*Choose Skip/) });
+    expect(rejected.error).toContain('60.1 MB');
+    expect(rejected.contents).toBeUndefined(); expect(rejected.fileName).toBeUndefined(); expect(rejected.filePath).toBeUndefined();
+    expect(rejected).not.toHaveProperty('image');
+    expect(rejected.previewContents!.length).toBeLessThan(1024 * 1024);
+    expect(await sharp(rejected.previewContents).metadata()).toMatchObject({ format: 'webp', width: 750, height: 1000 });
+    expect(plan.rows[1]).toMatchObject({ title: 'Small art', error: null, contents: expect.any(Buffer) });
+    await expect(insertListingZipReviewRow(plan, 0)).rejects.toMatchObject({ status: 400, message: rejected.error });
+    expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.transaction).not.toHaveBeenCalled();
+    expect(await insertListingZipReviewRow(plan, 1)).toEqual({ listingIds: ['100'] });
+    expect(rows.map(row => row.title)).toEqual(['Small art']);
+    expect(mocks.write).toHaveBeenCalledOnce(); expect(mocks.write.mock.calls[0][1]).toEqual(valid);
+  });
+
   it('prepares row metadata, previews and skippable collision/decode/text errors without creating listings or storage', async () => {
     rows = [{ title: 'FOX', localDirectoryName: 'Existing fox' }];
     const valid = await sharp({ create: { width: 40, height: 50, channels: 3, background: '#ff3300' } }).png().toBuffer();

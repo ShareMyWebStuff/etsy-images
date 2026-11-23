@@ -291,7 +291,9 @@ export function ListingZipImportDialog({ open, onOpenChange, shopId, sectionId, 
         <div className="rounded-md border bg-muted/30 p-3 text-sm">
           <p>Include <code>overview.csv</code> and its artwork images in the ZIP. The first row is skipped as the header.</p>
           <p className="mt-2">CSV columns, in order: <strong>Title, Description, Image filename</strong>. Image paths are relative to the folder containing <code>overview.csv</code>, such as <code>images/fox.png</code>.</p>
-          <p className="mt-2 text-xs text-muted-foreground">ZIP limit: 500 MB. Artwork: JPG, PNG or WebP, up to 35 MB per image. Each row creates a single-artwork listing; set templates are not supported.</p>
+          <p className="mt-2 text-xs text-muted-foreground">ZIP limit: 500 MB. Artwork: JPG, PNG or WebP, up to 60 MB per image. Each row creates a single-artwork listing; set templates are not supported.</p>
+          <p className="mt-2 text-xs text-muted-foreground">Images larger than 60 MB are displayed for review with a warning. They cannot be inserted; choose Skip to continue.</p>
+          <p className="mt-2 text-xs text-muted-foreground">Titles already present in this section, including its subsections, or repeated in the ZIP are shown with an error and Insert disabled. Choose Skip to continue.</p>
         </div>
         <div className="grid gap-2">
           <label htmlFor={templateSelectId} className="text-sm font-medium">Import template</label>

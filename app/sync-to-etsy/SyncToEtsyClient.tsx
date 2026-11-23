@@ -1,17 +1,21 @@
 'use client';
 
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useId, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckCircle2, ChevronDown, ChevronRight, RefreshCw, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { SyncToEtsyData } from '@/lib/sync-to-etsy';
 import type { EtsySyncVariant } from '@/lib/etsy-sync-images';
+import { summarizeSectionPublication } from '@/lib/etsy-section-publication';
 
 type PublishTarget = { id: string; listingName: string; variants: EtsySyncVariant[]; etsyCategory: string };
 type DeleteTarget = { id: string; listingName: string };
+
+type SectionPublishTarget = { shopId: string; sectionId: string; sectionName: string; view: 'local' | 'etsy' };
 type SyncAllProgress = {
   sectionName: string;
   completed: number;
@@ -39,8 +43,21 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
   const [inactiveTarget, setInactiveTarget] = useState<PublishTarget | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [syncAllProgress, setSyncAllProgress] = useState<SyncAllProgress | null>(null);
+  const [publishSectionTarget, setPublishSectionTarget] = useState<SectionPublishTarget | null>(null);
+  const [publishSectionQuantity, setPublishSectionQuantity] = useState('1');
+  const [publishSectionProgress, setPublishSectionProgress] = useState<SyncAllProgress | null>(null);
+  const publishQuantityId = useId();
   const [expandedSectionIds, setExpandedSectionIds] = useState<Set<string>>(() => new Set());
+  const actionLock = useRef(false);
+  const mounted = useRef(true);
   const actionsDisabled = busy !== null || refreshing;
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  useEffect(() => { setPublishSectionTarget(null); }, [selectedShopId, syncView]);
 
   useEffect(() => {
     setData(initialData);
@@ -56,6 +73,8 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
   }
 
   async function runAction(url: string, payload: object, key: string, fallbackError: string, method = 'POST') {
+    if (actionLock.current || refreshing) return;
+    actionLock.current = true;
     setBusy(key);
     setError(null);
     try {
@@ -70,6 +89,7 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : fallbackError);
     } finally {
+      actionLock.current = false;
       setBusy(null);
     }
   }
@@ -98,9 +118,11 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
   async function syncAllSection(
     section: SyncToEtsyData['sections'][number] | SyncToEtsyData['localSections'][number],
   ) {
+    if (actionLock.current || refreshing) return;
     const listings = section.listings.filter((listing) => listing.canSync);
     if (listings.length === 0) return;
 
+    actionLock.current = true;
     const busyKey = `sync-all-${section.id}`;
     setBusy(busyKey);
     setError(null);
@@ -150,6 +172,7 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
       setError(message);
       setSyncAllProgress((progress) => progress ? { ...progress, status: 'error', message } : null);
     } finally {
+      actionLock.current = false;
       setBusy(null);
     }
   }
@@ -157,6 +180,55 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
   const showingLocalView = syncView === 'local';
   const displayedSections = (showingLocalView ? data.localSections : data.sections)
     .filter((section) => section.shopId === selectedShopId);
+  const sectionToPublish = publishSectionTarget?.shopId === selectedShopId && publishSectionTarget.view === syncView
+    ? displayedSections.find((section) => section.id === publishSectionTarget.sectionId) : undefined;
+  const sectionPublishTargets = sectionToPublish ? summarizeSectionPublication(sectionToPublish.listings).targets : [];
+  const sectionPublishCount = publishSectionQuantity.trim() === '' ? NaN : Number(publishSectionQuantity);
+  const validSectionPublishCount = Number.isSafeInteger(sectionPublishCount)
+    && sectionPublishCount >= 1 && sectionPublishCount <= sectionPublishTargets.length;
+  const selectedSectionPublishTargets = validSectionPublishCount ? sectionPublishTargets.slice(0, sectionPublishCount) : [];
+
+  async function publishSectionConfirmed() {
+    if (actionLock.current || refreshing || !sectionToPublish || !validSectionPublishCount) return;
+    const section = sectionToPublish, targets = selectedSectionPublishTargets;
+    actionLock.current = true;
+    setPublishSectionTarget(null);
+    setBusy(`publish-section-${section.id}`);
+    setError(null);
+    setPublishSectionProgress({ sectionName: section.sectionName, completed: 0, total: targets.length,
+      status: 'running', currentListingName: targets[0].listingName });
+    let completed = 0, needsRefresh = false;
+    try {
+      for (const target of targets) {
+        if (!mounted.current) return;
+        setPublishSectionProgress({ sectionName: section.sectionName, completed, total: targets.length,
+          status: 'running', currentListingName: target.listingName });
+        const response = await fetch('/api/etsy/publish', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ listingId: target.id, variants: target.variants, requireSyncedDrafts: true }),
+        });
+        const result = await response.json().catch(() => null) as { data?: SyncToEtsyData; error?: string } | null;
+        if (!response.ok) throw new Error(`${target.listingName} (${target.etsyCategory}): ${result?.error ?? 'Unable to publish listing.'}`);
+        completed++;
+        if (!mounted.current) return;
+        if (result?.data) setData(result.data); else needsRefresh = true;
+        setPublishSectionProgress({ sectionName: section.sectionName, completed, total: targets.length,
+          status: completed === targets.length ? 'complete' : 'running', currentListingName: target.listingName });
+      }
+    } catch (caught) {
+      if (!mounted.current) return;
+      const message = caught instanceof Error ? caught.message : 'Unable to publish this section.';
+      setError(message);
+      setPublishSectionProgress((progress) => progress ? { ...progress, completed, status: 'error', message } : null);
+      needsRefresh = true;
+    } finally {
+      actionLock.current = false;
+      if (mounted.current) {
+        setBusy(null);
+        if (needsRefresh) startRefresh(() => router.refresh());
+      }
+    }
+  }
 
   return <>
     <div className="grid gap-6">
@@ -189,10 +261,10 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
       </label>
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex w-fit rounded-lg border bg-card p-1" role="tablist" aria-label={mode === 'publish' ? 'Publish view' : 'Sync view'}>
-          <Button type="button" variant={syncView === 'local' ? 'default' : 'ghost'} role="tab" aria-selected={syncView === 'local'} onClick={() => setSyncView('local')}>
+          <Button type="button" variant={syncView === 'local' ? 'default' : 'ghost'} role="tab" aria-selected={syncView === 'local'} disabled={actionsDisabled} onClick={() => setSyncView('local')}>
             Local View
           </Button>
-          <Button type="button" variant={syncView === 'etsy' ? 'default' : 'ghost'} role="tab" aria-selected={syncView === 'etsy'} onClick={() => setSyncView('etsy')}>
+          <Button type="button" variant={syncView === 'etsy' ? 'default' : 'ghost'} role="tab" aria-selected={syncView === 'etsy'} disabled={actionsDisabled} onClick={() => setSyncView('etsy')}>
             Etsy View
           </Button>
         </div>
@@ -206,6 +278,7 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
         {shops.length === 0 ? 'No shops are available.' : 'No listings are available for this shop.'}
       </p> : null}
       {displayedSections.map((section) => {
+        const publication = mode === 'publish' ? summarizeSectionPublication(section.listings) : null;
         const isExpanded = expandedSectionIds.has(section.id);
         const isLocalSection = 'etsySections' in section;
         const listingCount = isLocalSection
@@ -223,8 +296,8 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
               || first.listingName.localeCompare(second.listingName, undefined, { sensitivity: 'base' })
             )
             : section.listings;
-        return <Card key={section.id}>
-        <CardHeader className="flex flex-row items-center justify-between gap-4">
+        return <Card key={section.id} role="region" aria-label={`${section.sectionName} section`}>
+        <CardHeader className="flex flex-col items-stretch justify-between gap-4 sm:flex-row sm:items-center">
           <button
             type="button"
             className="flex min-w-0 flex-1 items-center gap-2 text-left"
@@ -240,7 +313,13 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
               ({listingCount} listing{listingCount === 1 ? '' : 's'})
             </span>
           </button>
-          {mode === 'publish' ? <Button
+          {mode === 'publish' && publication ? <div className="flex flex-wrap items-center gap-3 sm:justify-end">
+          <dl aria-label="Section publication counts" className="grid gap-1 text-sm tabular-nums">
+            <div className="flex justify-between gap-4" title="All Etsy products for this listing are published."><dt>Published:</dt><dd className="font-semibold">{publication.published}</dd></div>
+            <div className="flex justify-between gap-4" title="All Etsy products for this listing are published or synced drafts."><dt>Synced:</dt><dd className="font-semibold">{publication.synced}</dd></div>
+            <div className="flex justify-between gap-4" title="At least one Etsy product is not a published listing or a synced draft."><dt>Not Synced:</dt><dd className="font-semibold">{publication.notSynced}</dd></div>
+          </dl>
+          <Button
             type="button"
             variant="outline"
             onClick={() => runAction('/api/etsy/check-statuses', { listingIds: [...new Set(section.listings.map((listing) => listing.id))] }, `check-statuses-${section.id}`, 'Unable to check Etsy listing statuses.')}
@@ -248,7 +327,19 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
           >
             <RefreshCw className={`mr-2 h-4 w-4 ${busy === `check-statuses-${section.id}` ? 'animate-spin' : ''}`} aria-hidden="true" />
             {busy === `check-statuses-${section.id}` ? 'Checking...' : 'Check statuses'}
-          </Button> : null}
+          </Button>
+          <Button type="button" aria-label="Publish section"
+            title={`Publish synced drafts in ${section.sectionName}`}
+            disabled={actionsDisabled || publication.targets.length === 0}
+            onClick={() => {
+              if (actionLock.current || actionsDisabled || publication.targets.length === 0) return;
+              setPublishSectionQuantity('1');
+              setPublishSectionTarget({ shopId: section.shopId, sectionId: section.id, sectionName: section.sectionName, view: syncView });
+              setError(null);
+            }}>
+            {busy === `publish-section-${section.id}` ? 'Publishing...' : 'Publish'}
+          </Button>
+          </div> : null}
           {mode === 'sync' && !isLocalSection ? <div className="flex items-center gap-2">
             {!section.hasEtsySection ? <Button
               variant="outline"
@@ -341,6 +432,50 @@ export function SyncToEtsyClient({ initialData, mode = 'sync', shops }: SyncToEt
       </Card>;
       })}
     </div>
+
+    {mode === 'publish' ? <Dialog open={publishSectionTarget !== null} onOpenChange={(open) => { if (!open && !actionLock.current) setPublishSectionTarget(null); }}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Publish section?</DialogTitle>
+          <DialogDescription>Choose how many of the {sectionPublishTargets.length} eligible {sectionPublishTargets.length === 1 ? 'listing' : 'listings'} in {publishSectionTarget?.sectionName} to publish to Etsy.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2">
+          <label htmlFor={publishQuantityId} className="text-sm font-medium">Number of listings to publish</label>
+          <Input id={publishQuantityId} type="number" min={1} max={sectionPublishTargets.length} step={1}
+            value={publishSectionQuantity} disabled={actionsDisabled || sectionPublishTargets.length === 0}
+            aria-invalid={sectionPublishTargets.length > 0 && !validSectionPublishCount}
+            aria-describedby={`${publishQuantityId}-hint${sectionPublishTargets.length > 0 && !validSectionPublishCount ? ` ${publishQuantityId}-error` : ''}`}
+            onChange={(event) => setPublishSectionQuantity(event.target.value)} />
+          <p id={`${publishQuantityId}-hint`} className="text-sm text-muted-foreground">{sectionPublishTargets.length > 0
+            ? `Choose 1 to ${sectionPublishTargets.length}. Listings will be published in the order shown below.`
+            : 'No synced drafts remain ready to publish in this section.'}</p>
+          {sectionPublishTargets.length > 0 && !validSectionPublishCount ? <p id={`${publishQuantityId}-error`} role="alert" className="text-sm text-destructive">Enter a whole number from 1 to {sectionPublishTargets.length}.</p> : null}
+        </div>
+        <ul className="max-h-60 space-y-2 overflow-y-auto rounded-md border p-3 text-sm">
+          {selectedSectionPublishTargets.map((target) => <li key={target.id}>{target.listingName} <span className="text-muted-foreground">({target.variants.map((variant) => variant === 'download' ? 'Digital' : variant === 'customised' ? 'Customised' : 'Print').join(', ')})</span></li>)}
+        </ul>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setPublishSectionTarget(null)}>Cancel</Button>
+          <Button type="button" disabled={actionsDisabled || !validSectionPublishCount} onClick={() => { void publishSectionConfirmed(); }}>
+            {validSectionPublishCount ? `Publish ${sectionPublishCount} ${sectionPublishCount === 1 ? 'listing' : 'listings'}` : 'Publish listings'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog> : null}
+
+    <Dialog open={publishSectionProgress !== null} onOpenChange={(open) => { if (!open && publishSectionProgress?.status !== 'running') setPublishSectionProgress(null); }}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Publish section — {publishSectionProgress?.sectionName}</DialogTitle>
+          <DialogDescription>Publishing the selected section's synced draft products to Etsy.</DialogDescription>
+        </DialogHeader>
+        <div className="py-4 text-center" role="status">
+          <p className="text-3xl font-semibold tabular-nums">{publishSectionProgress?.completed ?? 0} of {publishSectionProgress?.total ?? 0}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{publishSectionProgress?.status === 'running'
+            ? `Publishing ${publishSectionProgress.currentListingName}` : publishSectionProgress?.status === 'complete'
+              ? 'All selected listings have been published.' : publishSectionProgress?.message}</p>
+        </div>
+        {publishSectionProgress?.status !== 'running' ? <DialogFooter><Button type="button" onClick={() => setPublishSectionProgress(null)}>Close</Button></DialogFooter> : null}
+      </DialogContent>
+    </Dialog>
 
     <Dialog open={syncAllProgress !== null} onOpenChange={(open) => { if (!open && syncAllProgress?.status !== 'running') setSyncAllProgress(null); }}>
       <DialogContent>

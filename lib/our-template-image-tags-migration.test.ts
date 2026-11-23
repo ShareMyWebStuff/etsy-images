@@ -13,7 +13,7 @@ describe('additive template image tag migration', () => {
       'Dinosaurs', 'Farm Animals', 'Sea Creatures', 'Woodland Animals', 'Bugs & Insects', 'Jungle Animals', 'Safari Animals',
       'Set of 3', 'Vintage Art', 'Minimalist Room', 'Modern Room', 'Dark Room',
       'Kitchen', 'Bathroom', 'Toilet', 'Hallway', 'Plant(s)', 'Spot Light', 'Photo Border', 'Candle(s)', 'Book(s)',
-      'Light Room', 'Coffee Table', 'Frame Black', 'Frame White', 'Frame Oak', 'Art', 'Bedroom', 'Study', 'Traditional']);
+      'Light Room', 'Coffee Table', 'Frame Black', 'Frame White', 'Frame Oak', 'Art', 'Bedroom', 'Study', 'Traditional', 'Portrait', 'Landscape']);
     const rows = new Map([['nursery', { id: 'existing-nursery-id', name: 'Nursery' }], ['custom', { id: 'custom-id', name: 'Custom' }]]);
     const execute = vi.fn(async (sql: string, id?: string, name?: string, key?: string) => {
       if (sql.startsWith('INSERT INTO') && !rows.has(key!)) rows.set(key!, { id: id!, name: name! });
@@ -21,7 +21,7 @@ describe('additive template image tag migration', () => {
     const client = { $queryRawUnsafe: vi.fn().mockResolvedValue([{ characterSet: 'utf8mb4', collationName: 'utf8mb4_unicode_ci' }]),
       $executeRawUnsafe: execute, $transaction: vi.fn(async (operation) => operation({ $executeRawUnsafe: execute })) };
     await migrateTemplateImageTags(client); await migrateTemplateImageTags(client);
-    expect(rows.size).toBe(37); expect(rows.get('nursery')?.id).toBe('existing-nursery-id');
+    expect(rows.size).toBe(39); expect(rows.get('nursery')?.id).toBe('existing-nursery-id');
     expect(rows.get('custom')).toEqual({ id: 'custom-id', name: 'Custom' });
     const ddl = execute.mock.calls.filter(([sql]) => sql.startsWith('CREATE TABLE'));
     expect(ddl).toHaveLength(4);

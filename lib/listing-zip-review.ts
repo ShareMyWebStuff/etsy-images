@@ -23,7 +23,8 @@ function expired(): never { throw new ListingZipImportError('This ZIP review exp
 function unconfirmedInsert(): never {
   throw new ListingZipImportError('The previous Insert result is not confirmed. Retry Insert to check it, or finish and reload the listings.', 503);
 }
-function release(session: ReviewSession) { for (const row of session.plan.rows) row.contents = undefined; }
+function releaseRow(row: ListingZipReviewPlan['rows'][number]) { row.contents = undefined; row.previewContents = undefined; }
+function release(session: ReviewSession) { for (const row of session.plan.rows) releaseRow(row); }
 function remove(session: ReviewSession) {
   release(session); store.sessions.delete(session.id);
   if (!store.sessions.size && store.timer !== undefined) { clearTimeout(store.timer); store.timer = undefined; }
@@ -65,8 +66,8 @@ function state(session: ReviewSession): ListingZipReviewState {
 }
 function bytes(plans: ListingZipReviewPlan[]) {
   const retained = new Set<Buffer>(); let total = 0;
-  for (const plan of plans) for (const row of plan.rows) if (row.contents && !retained.has(row.contents)) {
-    retained.add(row.contents); total += row.contents.byteLength;
+  for (const plan of plans) for (const row of plan.rows) for (const contents of [row.contents, row.previewContents]) {
+    if (contents && !retained.has(contents)) { retained.add(contents); total += contents.byteLength; }
   }
   return total;
 }
@@ -92,7 +93,7 @@ export async function startListingZipReview(input: ListingZipImportContext, temp
     if (!plan.rows.length) throw new ListingZipImportError('The ZIP does not contain any rows to review.');
     purge();
     if (bytes([...store.sessions.values()].map((session) => session.plan).concat(plan)) > LISTING_ZIP_REVIEW_LIMITS.stagedBytes) {
-      for (const row of plan.rows) row.contents = undefined;
+      for (const row of plan.rows) releaseRow(row);
       throw new ListingZipImportError('The ZIP reviews exceed the available memory. Close another review or choose a smaller ZIP.', 429);
     }
     const session: ReviewSession = { id: randomUUID(), context, plan, expiresAt: Date.now() + LISTING_ZIP_REVIEW_LIMITS.ttlMs,
@@ -113,7 +114,9 @@ export async function getListingZipReview(input: ListingZipImportContext, id: st
 export async function getListingZipReviewImage(input: ListingZipImportContext, id: string, rowIndex: number): Promise<Buffer> {
   const session = find(input, id);
   if (!Number.isSafeInteger(rowIndex) || rowIndex < 0 || rowIndex >= session.plan.rows.length) throw new ListingZipImportError('Choose a valid review row.');
-  const contents = session.plan.rows[rowIndex].contents;
+  const row = session.plan.rows[rowIndex];
+  if (row.previewContents) return row.previewContents;
+  const contents = row.contents;
   if (!contents) throw new ListingZipImportError('This review image is no longer available. Continue with the current row or choose the ZIP again.', 410);
   try { return await sharp(contents, { failOn: 'error' }).rotate().resize({ width: 1000, height: 1000, fit: 'inside', withoutEnlargement: true }).webp({ quality: 82 }).toBuffer(); }
   catch { throw new ListingZipImportError('The artwork preview could not be decoded. This row can be skipped.', 400); }
@@ -154,7 +157,7 @@ export async function actOnListingZipReview(input: ListingZipImportContext, id: 
       session.inserted++;
     } else session.skipped++;
     // Record success and release the image before any optional table refresh.
-    session.completed.set(rowIndex, action); session.cursor++; row.contents = undefined;
+    session.completed.set(rowIndex, action); session.cursor++; releaseRow(row);
     session.expiresAt = Date.now() + LISTING_ZIP_REVIEW_LIMITS.ttlMs;
     return action === 'insert' ? refresh(session) : { review: state(session) };
   });

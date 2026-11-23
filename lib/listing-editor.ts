@@ -1710,8 +1710,20 @@ export async function saveListingPrintCropSettings(
 }
 
 export async function getListingPrintCropSourceDimensions(context: ListingEditorContext) {
-  const { data, listingPath } = await getListingAssetDirectory(context);
+  const data = await getListingForContext(context);
   if (!data.listing.thumbnailFileName) throw new Error('Upload a thumbnail before setting print sizes.');
+  const width = data.listing.thumbnailWidthPixels;
+  const height = data.listing.thumbnailHeightPixels;
+  if (typeof width === 'number' && Number.isSafeInteger(width) && width > 0
+    && typeof height === 'number' && Number.isSafeInteger(height) && height > 0) {
+    return { width, height };
+  }
+  const listingPath = getListingDirectoryPath(
+    data.shop.shopName ?? data.shop.title ?? `Shop ${data.shop.etsyShopId}`,
+    data.section.title,
+    data.subSection.name,
+    data.listing.localDirectoryName ?? `Listing-${data.listing.id}`,
+  );
   const source = await readFile(path.join(listingPath, 'thumbnail', data.listing.thumbnailFileName)).catch((error) => {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       throw new Error('The saved thumbnail file could not be found. Upload the thumbnail again.');

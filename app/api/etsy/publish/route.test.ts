@@ -30,4 +30,31 @@ describe('selected Etsy product publication API', () => {
     expect(mocks.inactive).toHaveBeenCalledWith('80', ['print']);
     expect(mocks.publish).not.toHaveBeenCalled();
   });
+
+  it('requires a fresh synced-draft eligibility check for section publication', async () => {
+    expect((await POST(request({ listingId: '80', variants: ['print', 'download'], requireSyncedDrafts: true }))).status).toBe(200);
+    expect(mocks.publish).toHaveBeenCalledWith('80', ['print', 'download'], { requireSyncedDrafts: true });
+  });
+
+  it('preserves the individual publication call when the optional guard is false', async () => {
+    expect((await POST(request({ listingId: '80', variants: ['download'], requireSyncedDrafts: false }))).status).toBe(200);
+    expect(mocks.publish).toHaveBeenCalledWith('80', ['download']);
+  });
+
+  it.each(['true', 1, null, {}])('rejects a nonboolean strict publication flag: %j', async (requireSyncedDrafts) => {
+    expect((await POST(request({ listingId: '80', variants: ['download'], requireSyncedDrafts }))).status).toBe(400);
+    expect(mocks.publish).not.toHaveBeenCalled();
+    expect(mocks.inactive).not.toHaveBeenCalled();
+    expect(mocks.data).not.toHaveBeenCalled();
+  });
+
+  it('returns a stale-draft guard failure without reloading or publishing another product', async () => {
+    const message = 'The selected Etsy drafts are no longer ready to publish. Refresh the page.';
+    mocks.publish.mockRejectedValueOnce(new Error(message));
+    const result = await POST(request({ listingId: '80', variants: ['download'], requireSyncedDrafts: true }));
+    expect(result.status).toBe(500);
+    expect(await result.json()).toEqual({ error: message });
+    expect(mocks.data).not.toHaveBeenCalled();
+    expect(mocks.inactive).not.toHaveBeenCalled();
+  });
 });

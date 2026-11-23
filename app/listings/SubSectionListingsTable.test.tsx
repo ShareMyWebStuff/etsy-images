@@ -37,7 +37,7 @@ describe('SubSectionListingsTable categories', () => {
   it('opens the whole-section gallery between Generate and Edit even when the displayed subsection is empty', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ sectionName: data.section.sectionName,
       listings: [{ id: '701', listingName: 'Artwork from another subsection', hasThumbnail: true,
-        thumbnailUpdatedAt: '2026-11-22T09:00:00.000Z', subSectionId: '9' }] }) });
+        thumbnailUpdatedAt: '2026-11-22T09:00:00.000Z', subSectionId: '9', canDelete: true, deleteDisabledReason: null }] }) });
     vi.stubGlobal('fetch', fetchMock);
     render(<SubSectionListingsTable data={{ ...data, listings: [] }} shopId="66615491" sectionId="3" subSectionId="8" />);
     const gallery = screen.getByRole('button', { name: 'View section images' });
@@ -59,6 +59,48 @@ describe('SubSectionListingsTable categories', () => {
     fireEvent.keyDown(dialog, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(gallery));
+  });
+
+  it('keeps gallery deletions scoped to each item and removes acknowledged listings from the table', async () => {
+    const singleData: SubSectionListingsPageData = { ...data, subSection: { ...data.subSection, numberOfDownloads: 1 } };
+    const galleryRows = [{ id: '500', listingName: 'Sea Creatures Set', hasThumbnail: true, thumbnailUpdatedAt: null,
+      subSectionId: '8', canDelete: true, deleteDisabledReason: null },
+    { id: '501', listingName: 'Other subsection artwork', hasThumbnail: true, thumbnailUpdatedAt: null,
+      subSectionId: '9', canDelete: true, deleteDisabledReason: null }];
+    let finishDelete!: (response: unknown) => void;
+    const fetchMock = vi.fn().mockImplementation(async (url: string, options?: RequestInit) => {
+      if (options?.method === 'DELETE') {
+        const body = JSON.parse(options.body as string);
+        if (body.listingId === '501') return { ok: true, json: async () => ({ deletedId: '501', data: {
+          ...singleData, subSection: { ...singleData.subSection, id: '9' },
+          listings: [{ ...data.listings[0], id: '999', listingName: 'Foreign subsection row' }],
+        } }) };
+        return new Promise((resolve) => { finishDelete = resolve; });
+      }
+      return { ok: true, json: async () => ({ sectionName: data.section.sectionName, listings: galleryRows }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { container } = render(<SubSectionListingsTable data={singleData} shopId="66615491" sectionId="3" subSectionId="8" />);
+    const generate = screen.getByRole('button', { name: 'Generate' }) as HTMLButtonElement;
+    const add = screen.getByRole('button', { name: 'Add listing' }) as HTMLButtonElement;
+    fireEvent.click(screen.getByRole('button', { name: 'View section images' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete Other subsection artwork' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, delete listing' }));
+    await waitFor(() => expect(screen.queryByText('Other subsection artwork')).toBeNull());
+    const firstDelete = fetchMock.mock.calls.find(([, options]) => options?.method === 'DELETE');
+    expect(JSON.parse(firstDelete?.[1]?.body as string)).toEqual({ shopId: '66615491', sectionId: '3', subSectionId: '9', listingId: '501' });
+    expect(container.querySelector('[data-listing-id="500"]')).toBeTruthy();
+    expect(container.querySelector('[data-listing-id="999"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Sea Creatures Set' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, delete listing' }));
+    expect(generate.disabled).toBe(true); expect(add.disabled).toBe(true);
+    await act(async () => finishDelete({ ok: true, json: async () => ({ deletedId: '500', data: null,
+      refreshError: 'The listing was deleted, but the listings table could not be refreshed. Reload this section.' }) }));
+    await waitFor(() => expect(container.querySelector('[data-listing-id="500"]')).toBeNull());
+    expect(screen.getByRole('dialog', { name: `Images: ${data.section.sectionName}` })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByText('No listings found.')).toBeTruthy(); expect(add.disabled).toBe(false);
   });
 
   it('places thumbnail preview before Delete and opens the selected row original with scoped/versioned URL', async () => {

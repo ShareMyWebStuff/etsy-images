@@ -120,9 +120,15 @@ export async function DELETE(request: Request) {
     }
 
     await deleteListing(body.shopId, body.sectionId, body.subSectionId, body.listingId);
-    const data = await getSubSectionListingsPageData(body.shopId, body.sectionId, body.subSectionId);
-
-    return NextResponse.json({ data });
+    const deletedId = String(body.listingId);
+    try {
+      const data = await getSubSectionListingsPageData(body.shopId, body.sectionId, body.subSectionId);
+      if (!data) throw new Error('The listings table could not be loaded.');
+      return NextResponse.json({ deletedId, data });
+    } catch {
+      return NextResponse.json({ deletedId, data: null,
+        refreshError: 'The listing was deleted, but the listings table could not be refreshed. Reload this section.' });
+    }
   } catch (error) {
     console.error('Failed to delete listing:', error);
     return NextResponse.json(

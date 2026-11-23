@@ -9,12 +9,15 @@ const shopId = '66615491', sectionId = '2';
 const updated = new Date('2026-11-22T09:20:30.000Z');
 const subsections = [{ id: 3, shopSectionId: 2 }, { id: 7, shopSectionId: 2 }, { id: 9, shopSectionId: 8 }];
 type Row = { id: number; title: string; localDirectoryName: string | null; thumbnailFileName: string | null; thumbnailUpdatedAt: Date | null;
-  shopId: string; shopSectionId: number | null; subSectionId: number | null };
+  shopId: string; shopSectionId: number | null; subSectionId: number | null; state: string | null;
+  etsyId: string | null; etsyCustomisedId: string | null; etsyCustomisedState: string | null;
+  etsyDownloadId: string | null; etsyDownloadState: string | null };
 let rows: Row[];
 let linkedSection: bigint | null;
 function row(id: number, subSectionId: number | null, overrides: Partial<Row> = {}): Row {
   return { id, title: `Artwork ${id}`, localDirectoryName: `Local ${id}`, thumbnailFileName: 'thumbnail.png', thumbnailUpdatedAt: updated,
-    shopId, shopSectionId: null, subSectionId, ...overrides };
+    shopId, shopSectionId: null, subSectionId, state: 'draft', etsyId: null, etsyCustomisedId: null, etsyCustomisedState: null,
+    etsyDownloadId: null, etsyDownloadState: null, ...overrides };
 }
 
 beforeEach(() => {
@@ -36,12 +39,13 @@ describe('section listing gallery metadata', () => {
   it('includes every subsection and excludes other shops and sections using only lightweight listing columns', async () => {
     const result = await getListingGallery(shopId, sectionId);
     expect(result).toEqual({ sectionName: 'Japanese Landscapes', listings: [
-      { id: '10', listingName: 'Local 10', hasThumbnail: true, thumbnailUpdatedAt: updated.toISOString(), subSectionId: '3' },
-      { id: '11', listingName: 'Local 11', hasThumbnail: true, thumbnailUpdatedAt: updated.toISOString(), subSectionId: '7' },
+      { id: '10', listingName: 'Local 10', hasThumbnail: true, thumbnailUpdatedAt: updated.toISOString(), subSectionId: '3', canDelete: true, deleteDisabledReason: null },
+      { id: '11', listingName: 'Local 11', hasThumbnail: true, thumbnailUpdatedAt: updated.toISOString(), subSectionId: '7', canDelete: true, deleteDisabledReason: null },
     ] });
     expect(mocks.listings).toHaveBeenCalledWith({
       where: { shopId, OR: [{ subSection: { is: { shopSectionId: 2 } } }] },
-      select: { id: true, title: true, localDirectoryName: true, thumbnailFileName: true, thumbnailUpdatedAt: true, subSectionId: true },
+      select: { id: true, title: true, localDirectoryName: true, thumbnailFileName: true, thumbnailUpdatedAt: true, subSectionId: true,
+        state: true, etsyId: true, etsyCustomisedId: true, etsyCustomisedState: true, etsyDownloadId: true, etsyDownloadState: true },
       orderBy: [{ title: 'asc' }, { id: 'asc' }],
     });
     expect(mocks.subSections).toHaveBeenCalledWith({ where: { shopSectionId: 2 }, select: { id: true }, orderBy: { id: 'asc' } });
@@ -54,6 +58,8 @@ describe('section listing gallery metadata', () => {
     expect(result.listings.map(({ id, subSectionId }) => ({ id, subSectionId }))).toEqual([
       { id: '10', subSectionId: '3' }, { id: '11', subSectionId: '7' }, { id: '14', subSectionId: '3' },
     ]);
+    expect(result.listings.find(({ id }) => id === '14')).toMatchObject({ canDelete: false,
+      deleteDisabledReason: 'This listing has no assigned subsection and cannot be deleted here.' });
     expect(mocks.listings.mock.calls[0][0].where).toEqual({ shopId, OR: [
       { subSection: { is: { shopSectionId: 2 } } }, { subSectionId: null, shopSectionId: 1234 },
     ] });
@@ -61,7 +67,8 @@ describe('section listing gallery metadata', () => {
 
   it('keeps remote-only metadata visible with no preview context when the section has no subsections', async () => {
     linkedSection = 1234n; rows = [row(14, null, { shopSectionId: 1234 })]; mocks.subSections.mockResolvedValue([]);
-    expect((await getListingGallery(shopId, sectionId)).listings[0]).toMatchObject({ id: '14', hasThumbnail: true, subSectionId: null });
+    expect((await getListingGallery(shopId, sectionId)).listings[0]).toMatchObject({ id: '14', hasThumbnail: true, subSectionId: null,
+      canDelete: false, deleteDisabledReason: 'This listing has no assigned subsection and cannot be deleted here.' });
   });
 
   it('maps absent and blank thumbnails, nullable dates and the title fallback without exposing filenames', async () => {
@@ -69,11 +76,36 @@ describe('section listing gallery metadata', () => {
       row(21, 7, { thumbnailFileName: '  ', thumbnailUpdatedAt: null }), row(22, 7, { thumbnailFileName: '' })];
     const result = await getListingGallery(shopId, sectionId);
     expect(result.listings).toEqual([
-      { id: '20', listingName: 'Artwork 20', hasThumbnail: false, thumbnailUpdatedAt: null, subSectionId: '3' },
-      { id: '21', listingName: 'Local 21', hasThumbnail: false, thumbnailUpdatedAt: null, subSectionId: '7' },
-      { id: '22', listingName: 'Local 22', hasThumbnail: false, thumbnailUpdatedAt: updated.toISOString(), subSectionId: '7' },
+      { id: '20', listingName: 'Artwork 20', hasThumbnail: false, thumbnailUpdatedAt: null, subSectionId: '3', canDelete: true, deleteDisabledReason: null },
+      { id: '21', listingName: 'Local 21', hasThumbnail: false, thumbnailUpdatedAt: null, subSectionId: '7', canDelete: true, deleteDisabledReason: null },
+      { id: '22', listingName: 'Local 22', hasThumbnail: false, thumbnailUpdatedAt: updated.toISOString(), subSectionId: '7', canDelete: true, deleteDisabledReason: null },
     ]);
     expect(JSON.stringify(result)).not.toContain('thumbnail.png');
+  });
+
+  it.each(['etsyId', 'etsyCustomisedId', 'etsyDownloadId'] as const)('disables deletion for a linked %s even when its state is not published', async (field) => {
+    rows = [row(20, 3, { [field]: '12345', state: 'inactive' })];
+    expect((await getListingGallery(shopId, sectionId)).listings[0]).toMatchObject({
+      canDelete: false, deleteDisabledReason: 'Listings on Etsy cannot be deleted here.',
+    });
+  });
+
+  it.each([
+    ['state', 'active'], ['state', 'published'],
+    ['etsyCustomisedState', 'active'], ['etsyCustomisedState', 'published'],
+    ['etsyDownloadState', 'active'], ['etsyDownloadState', 'published'],
+  ] as const)('disables deletion for %s=%s even when all Etsy IDs are absent', async (field, state) => {
+    rows = [row(20, 3, { [field]: state })];
+    expect((await getListingGallery(shopId, sectionId)).listings[0]).toMatchObject({
+      canDelete: false, deleteDisabledReason: 'Published listings cannot be deleted here.',
+    });
+  });
+
+  it('allows assigned local listings with unpublished states, including no state or thumbnail', async () => {
+    rows = [row(20, 3, { state: null, thumbnailFileName: null }),
+      row(21, 7, { state: 'inactive', etsyCustomisedState: 'draft', etsyDownloadState: 'expired' })];
+    expect((await getListingGallery(shopId, sectionId)).listings.map(({ canDelete, deleteDisabledReason }) => ({ canDelete, deleteDisabledReason })))
+      .toEqual([{ canDelete: true, deleteDisabledReason: null }, { canDelete: true, deleteDisabledReason: null }]);
   });
 
   it('retains title/id ordering across subsections even when displayed local names differ', async () => {

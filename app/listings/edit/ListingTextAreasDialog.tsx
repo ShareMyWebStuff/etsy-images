@@ -32,6 +32,8 @@ type ListingTextAreasDialogProps = {
   allowTop: boolean;
   allowBottom: boolean;
   saving: boolean;
+  continuationLabel?: string;
+  errorMessage?: string | null;
   onSave(value: ListingPersonalisationTextAreaSettings): void;
 };
 
@@ -106,6 +108,8 @@ export function ListingTextAreasDialog({
   allowTop,
   allowBottom,
   saving,
+  continuationLabel,
+  errorMessage,
   onSave,
 }: ListingTextAreasDialogProps) {
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -208,6 +212,8 @@ export function ListingTextAreasDialog({
           <DialogDescription>
             Select each aspect ratio and position its Top Text and Bottom Text areas. Sizes that share an aspect ratio use the same saved layout.
           </DialogDescription>
+          {continuationLabel ? <p className="text-sm font-medium">Save these text areas to continue {continuationLabel}.</p> : null}
+          {errorMessage ? <p role="alert" className="text-sm text-destructive">{errorMessage}</p> : null}
         </DialogHeader>
         <div className="flex flex-wrap gap-2" role="tablist" aria-label="Text-area aspect ratio">
           {PRINT_CROP_RATIOS.map(({ key }) => (
@@ -249,7 +255,7 @@ export function ListingTextAreasDialog({
         </div>
         <div className="flex justify-end gap-2">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-          <Button type="button" onClick={() => onSave(settings)} disabled={saving}>{saving ? 'Saving...' : 'Save Text Areas'}</Button>
+          <Button type="button" onClick={() => onSave(settings)} disabled={saving}>{saving ? 'Saving...' : continuationLabel ? `Save Text Areas and continue ${continuationLabel}` : 'Save Text Areas'}</Button>
         </div>
       </DialogContent>
     </Dialog>

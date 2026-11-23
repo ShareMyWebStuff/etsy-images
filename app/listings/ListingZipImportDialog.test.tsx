@@ -54,6 +54,7 @@ describe('Listing ZIP import dialog', () => {
     expect(screen.getByText(/first row is skipped as the header/)).toBeTruthy();
     expect(screen.getByText(/Title, Description, Image filename/)).toBeTruthy();
     expect(screen.getByText('images/fox.png')).toBeTruthy();
+    expect(screen.getByText(/Images larger than 60 MB are displayed for review/)).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith(`${endpoint}?shopId=123&sectionId=3&subSectionId=8`, expect.objectContaining({ cache: 'no-store' }));
     expect((screen.getByRole('button', { name: 'Import listings' }) as HTMLButtonElement).disabled).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -280,6 +281,38 @@ describe('Listing ZIP import dialog', () => {
     expect(actions(fetchMock).map((body) => body.action)).toEqual(['skip']);
     expect(props.onInserted).not.toHaveBeenCalled();
     expect(screen.getByRole('status').textContent).toContain('0 inserted');
+  });
+
+  it.each([
+    { scenario: 'oversized artwork', warning: 'CSV row 2: Skipping this image because it exceeds the 60 MB per-image limit (62.4 MB). Choose Skip to continue.' },
+    { scenario: 'a duplicate listing title', warning: 'CSV row 2: A listing or folder named "Fox print" already exists in this section. Choose Skip to continue.' },
+  ])('shows artwork and the warning for $scenario, blocks Insert, and lets Skip continue to an insertable item', async ({ warning }) => {
+    const blocked = review();
+    blocked.current!.error = warning;
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ templates: choices })).mockResolvedValueOnce(json({ review: blocked }))
+      .mockResolvedValueOnce(json({ review: review(1, 0, 1) }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { props } = setup(); await beginReview();
+    expect(screen.getByText('Fox print')).toBeTruthy();
+    expect(screen.getByText('A woodland fox.')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toBe(warning);
+    const image = screen.getByRole('img', { name: 'Fox print import artwork' }) as HTMLImageElement;
+    expect(new URL(image.src).searchParams.get('action')).toBe('image');
+    expect(new URL(image.src).searchParams.get('rowIndex')).toBe('0');
+    fireEvent.load(image);
+    expect(image.className).not.toContain('invisible');
+    const insert = screen.getByRole('button', { name: 'Insert' }) as HTMLButtonElement;
+    expect(insert.disabled).toBe(true); fireEvent.click(insert);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(actions(fetchMock)).toEqual([]); expect(props.onInserted).not.toHaveBeenCalled();
+    const skip = screen.getByRole('button', { name: 'Skip' }) as HTMLButtonElement;
+    expect(skip.disabled).toBe(false); fireEvent.click(skip);
+    await screen.findByText('Otter print');
+    expect(screen.getByRole('img', { name: 'Otter print import artwork' })).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Insert' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('progressbar') as HTMLProgressElement).value).toBe(1);
+    expect(actions(fetchMock)).toEqual([{ shopId: '123', sectionId: '3', subSectionId: '8', sessionId: 'review-1', rowIndex: 0, action: 'skip' }]);
   });
 
   it('keeps Insert available when only the browser artwork preview fails', async () => {

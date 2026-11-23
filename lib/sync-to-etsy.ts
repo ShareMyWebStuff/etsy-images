@@ -11,6 +11,7 @@ import { getRemoteEtsySectionIds } from '@/lib/local-shop-sections';
 import type { EtsySyncVariant } from '@/lib/etsy-sync-images';
 import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
 import { etsyPersonalisationFingerprint, loadEtsyPersonalisationSyncStates } from '@/lib/etsy-personalisation-sync-state';
+import { summarizeSectionPublication } from '@/lib/etsy-section-publication';
 
 const MAX_ETSY_DOWNLOAD_SIZE_BYTES = 20 * 1024 * 1024;
 
@@ -36,6 +37,10 @@ export type SyncToEtsyListing = {
   categoryUses: string[];
   syncVariants: EtsySyncVariant[];
   listOnEtsy: boolean;
+  publication?: {
+    allProductsSynced: boolean;
+    readyVariants: EtsySyncVariant[];
+  };
 };
 
 export type SyncToEtsySection = {
@@ -519,6 +524,14 @@ export async function getSyncToEtsyData(
       etsyCategory: category.title,
       categoryUses: category.uses,
       syncVariants: category.variants,
+      publication: {
+        allProductsSynced: statuses.every((status) => status.isPublished || status.isSynced),
+        readyVariants: category.variants.filter((variant) => {
+          const status = variantStatuses[variant];
+          return baseListing.listOnEtsy && status.isComplete && status.hasEtsyListing && status.isSynced
+            && !status.isPublished && !status.isInactive && status.pendingChanges.length === 0;
+        }),
+      },
       hasEtsyListing: statuses.some((status) => status.hasEtsyListing),
       hasActiveEtsyListing: statuses.some((status) => status.hasActiveEtsyListing),
       isComplete: statuses.every((status) => status.isComplete),
@@ -683,7 +696,7 @@ export async function syncOneListing(listingId: string, requestedVariants?: Etsy
   );
 }
 
-export async function publishOneListing(listingId: string, variants: EtsySyncVariant[]) {
+export async function publishOneListing(listingId: string, variants: EtsySyncVariant[], options: { requireSyncedDrafts?: boolean } = {}) {
   const listing = await prisma.etsyListing.findUnique({
     where: { id: Number(listingId) },
     include: { subSection: { include: { shopSection: { include: { shop: true } } } } },
@@ -691,6 +704,15 @@ export async function publishOneListing(listingId: string, variants: EtsySyncVar
   const section = listing?.subSection?.shopSection;
   const shop = section?.shop;
   if (!listing || !listing.subSection || !section || !shop) throw new Error('Listing context not found.');
+  if (options.requireSyncedDrafts) {
+    const current = await getSyncToEtsyData({ checkRemoteSections: false });
+    const rows = current.localSections.flatMap((localSection) => localSection.listings)
+      .filter((row) => row.id === String(listing.id));
+    const target = summarizeSectionPublication(rows).targets.find((candidate) => candidate.id === String(listing.id));
+    if (variants.length === 0 || variants.some((variant) => !target?.variants.includes(variant))) {
+      throw new Error('The selected Etsy drafts are no longer ready to publish. Refresh the page and publish only synced drafts with no pending changes.');
+    }
+  }
   await publishListing(shop.etsyShopId.toString(), String(section.id), String(listing.subSection.id), String(listing.id), variants);
 }
 

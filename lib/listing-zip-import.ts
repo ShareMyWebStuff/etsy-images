@@ -25,6 +25,8 @@ export type ListingZipReviewRow = Omit<ArchiveRow, 'image'> & {
   orientation: 'portrait' | 'landscape' | null;
   error: string | null;
   contents?: Buffer;
+  /** Review-only preview for rejected artwork; never used to insert a listing. */
+  previewContents?: Buffer;
   fileName?: string;
   filePath?: string;
 };
@@ -79,7 +81,9 @@ function validateRow(row: Pick<ArchiveRow, 'rowNumber' | 'title' | 'description'
   if (/[<>:"/\\|?*\x00-\x1F]/.test(row.title) || /[. ]$/.test(row.title) || row.title === '.' || row.title === '..'
     || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(row.title)) throw rowError(row, 'The title cannot be used as a listing folder name.');
   if (row.description.length > DESCRIPTION_LIMIT) throw rowError(row, `The description must contain no more than ${DESCRIPTION_LIMIT} characters.`);
-  if (previous.some((other) => nameCollator.compare(other.title, row.title) === 0)) throw rowError(row, 'The title duplicates another row.');
+  if (previous.some((other) => nameCollator.compare(other.title, row.title) === 0)) {
+    throw rowError(row, `The title "${row.title}" duplicates another row in this ZIP. Choose Skip to continue.`);
+  }
 }
 
 async function existingNames(client: Pick<Prisma.TransactionClient, 'etsyListing'>, context: ResolvedContext) {
@@ -96,7 +100,7 @@ async function existingNames(client: Pick<Prisma.TransactionClient, 'etsyListing
 
 function assertNoCollisions(rows: Array<Pick<ArchiveRow, 'title' | 'rowNumber'>>, names: string[]) {
   for (const row of rows) if (names.some((name) => nameCollator.compare(name.trim(), row.title) === 0)) {
-    throw rowError(row, `A listing or folder named "${row.title}" already exists in this section.`, 409);
+    throw rowError(row, `A listing or folder named "${row.title}" already exists in this section. Choose Skip to continue.`, 409);
   }
 }
 
@@ -115,7 +119,7 @@ async function storageNames(context: ResolvedContext) {
 
 /** In-memory image preflight; never reads or mutates the database or storage. */
 export async function prepareListingZipArtwork(row: ArtworkRow) {
-  if (row.image.length > LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes) throw rowError(row, 'The artwork must be 35 MB or smaller.');
+  if (row.image.length > LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes) throw rowError(row, 'The artwork must be 60 MB or smaller.');
   const extension = path.extname(row.originalFileName).toLowerCase();
   const format = extension === '.jpg' || extension === '.jpeg' ? 'jpeg' : extension === '.png' ? 'png' : extension === '.webp' ? 'webp' : null;
   if (!format) throw rowError(row, 'Choose a JPG, PNG, or WEBP artwork image.');
@@ -152,6 +156,20 @@ export async function prepareListingZipArtwork(row: ArtworkRow) {
     }
     throw rowError(row, `The ${detectedFormat} artwork "${row.relativeFilename}" (${dimensions}) could not be decoded. Re-export this file as a complete JPG, PNG, or WEBP.`);
   }
+}
+
+/** Retain a small preview of rejected oversized artwork, never its original. */
+async function prepareOversizedArtworkPreview(row: ArtworkRow) {
+  const source = sharp(row.image, { failOn: 'error' });
+  const metadata = await source.metadata();
+  if (!metadata.width || !metadata.height || (metadata.pages ?? 1) > 1
+    || !['jpeg', 'png', 'webp'].includes(metadata.format ?? '')) return null;
+  const preview = await source.rotate().resize({ width: 1000, height: 1000, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 82 }).toBuffer({ resolveWithObject: true });
+  const rotated = metadata.orientation !== undefined && metadata.orientation >= 5;
+  const width = rotated ? metadata.height : metadata.width;
+  const height = rotated ? metadata.width : metadata.height;
+  return { previewContents: preview.data, width, height, orientation: width > height ? 'landscape' as const : 'portrait' as const };
 }
 
 async function cleanup(paths: string[]) {
@@ -201,6 +219,19 @@ export async function prepareListingZipReview(input: Context, templateId: unknow
     const value: ListingZipReviewRow = { ...metadata, width: null, height: null, orientation: null, error: null };
     try { validateRow(row, archive.rows.slice(0, index)); }
     catch (error) { value.error = error instanceof Error ? error.message : `CSV row ${row.rowNumber}: The listing is invalid.`; }
+    if (row.image.length > LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes) {
+      const megabytes = (Math.ceil(row.image.length / (1024 * 1024) * 10) / 10).toFixed(1);
+      value.error = rowError(row, `Skipping this image because it exceeds the 60 MB per-image limit (${megabytes} MB). Choose Skip to continue.`).message;
+      try {
+        const preview = await prepareOversizedArtworkPreview(row);
+        if (preview && normalizedBytes + preview.previewContents.length <= LISTING_IMPORT_ARCHIVE_LIMITS.expandedBytes) {
+          normalizedBytes += preview.previewContents.length;
+          Object.assign(value, preview);
+        }
+      } catch { /* Invalid or unsafe artwork can still be reviewed and skipped. */ }
+      rows.push(value);
+      continue;
+    }
     try {
       const artwork = await prepareListingZipArtwork(row);
       if (normalizedBytes + artwork.contents.length > LISTING_IMPORT_ARCHIVE_LIMITS.expandedBytes) {

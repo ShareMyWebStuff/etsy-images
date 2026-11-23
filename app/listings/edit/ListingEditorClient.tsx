@@ -4,7 +4,7 @@ import { ListingTemplateProductSettings } from './ListingTemplateProductSettings
 import { ListingTemplateSelector } from './ListingTemplateSelector';
 import { MarketsDeliverySettings } from '@/components/MarketsDeliverySettings';
 
-import { ChangeEvent, FormEvent, MouseEvent, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, MouseEvent, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { closestCenter, DndContext, DragEndEvent, DragOverlay, DragStartEvent, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, rectSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
@@ -70,6 +70,19 @@ type OverviewGenerationTask = {
   label: string;
   status: OverviewGenerationStageStatus;
 };
+
+type OverviewGenerationIntent = { action: 'images' | 'all'; scope: string; sourceScope: string; missingSourceTimestamp: boolean };
+
+function overviewPreparationScope(value: ListingEditorData | null | undefined, includeTimestamp = true) {
+  return value ? JSON.stringify([value.context.shopId, value.context.sectionId, value.context.subSectionId, value.context.listingId,
+    value.template?.id ?? null, value.thumbnail?.fileName ?? null, ...(includeTimestamp ? [value.thumbnail?.updatedAt ?? null] : [])]) : '';
+}
+
+function overviewSourceReady(value: ListingEditorData) {
+  return value.template?.templateType === 'multiple'
+    ? value.groupItems.length === value.template.itemCount && value.groupItems.every((item) => item.thumbnailFileName)
+    : Boolean(value.thumbnail);
+}
 
 function imageGenerationTasks(imageTemplates: NonNullable<ListingEditorData['template']>['imageTemplates']): OverviewGenerationTask[] {
   return [
@@ -265,6 +278,7 @@ function testerRatioFromDownloadRole(role: PrintableDownloadRole | null): Mockup
 
 export function ListingEditorClient({ initialData, showAdminEditSection = false, initialTab = 'overview' }: ListingEditorClientProps) {
   const [data, setData] = useState(initialData);
+  const currentEditorData = useRef(initialData); currentEditorData.current = data;
   const [activeTab, setActiveTab] = useState<WorkflowTab>(initialTab);
   const [previewImage, setPreviewImage] = useState<{
     src: string;
@@ -302,6 +316,10 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   // React state does not update synchronously, so two quick clicks can enter
   // separate generation workflows before the buttons become disabled.
   const overviewActionRunning = useRef(false);
+  const queuedGeneration = useRef<OverviewGenerationIntent | null>(null);
+  const [queuedGenerationAction, setQueuedGenerationAction] = useState<'images' | 'all' | null>(null);
+  const preparationSaving = useRef(false);
+  const preparationMounted = useRef(false);
   const [overviewGenerationStages, setOverviewGenerationStages] = useState<OverviewGenerationStage[] | null>(null);
   const [overviewGenerationTasks, setOverviewGenerationTasks] = useState<OverviewGenerationTask[] | null>(null);
   const [overviewGenerationItem, setOverviewGenerationItem] = useState<string | null>(null);
@@ -329,6 +347,23 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   const [activeDetailsVariant, setActiveDetailsVariant] = useState<'print' | 'digital'>(
     initialData?.listing.listingType === 'digital' ? 'digital' : 'print'
   );
+  const preparationScope = overviewPreparationScope(data);
+
+  function cancelQueuedGeneration() {
+    if (!queuedGeneration.current) return;
+    queuedGeneration.current = null; setQueuedGenerationAction(null);
+    setPrintCropsOpen(false); setTextAreasOpen(false);
+    setBusyKey((current) => current === 'prepare-overview-generation' ? null : current);
+  }
+
+  useEffect(() => {
+    preparationMounted.current = true;
+    return () => { preparationMounted.current = false; queuedGeneration.current = null; };
+  }, []);
+
+  useEffect(() => {
+    if (queuedGeneration.current && queuedGeneration.current.scope !== preparationScope) cancelQueuedGeneration();
+  }, [preparationScope]);
 
   if (!data) {
     return (
@@ -757,6 +792,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     if (!nextData) {
       return;
     }
+    if (queuedGeneration.current && queuedGeneration.current.scope !== overviewPreparationScope(nextData)) cancelQueuedGeneration();
 
     // Keep this run's confirmed steps while generation refreshes the listing.
     // A later edit should display the new server readiness instead.
@@ -766,6 +802,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       setOverviewGenerationItem(null);
     }
 
+    currentEditorData.current = nextData;
     setData(nextData);
     setListingDescription(nextData.listing.listingDescription);
     setListingOrientation(nextData.listing.artworkOrientation);
@@ -788,18 +825,31 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     ));
   }
 
-  async function parseResponse(response: Response, fallbackMessage: string) {
+  async function parseResponse(response: Response, fallbackMessage: string, allowPreparationTimestampFill = false, responseIsCurrent?: () => boolean) {
     const payload = (await response.json()) as EditorResponse;
+    if (responseIsCurrent && !responseIsCurrent()) return undefined;
 
     if (!response.ok) {
       throw new Error(payload.error?.trim() || fallbackMessage);
     }
 
+    const intended = queuedGeneration.current;
+    if (allowPreparationTimestampFill && intended?.missingSourceTimestamp && payload.data?.thumbnail?.updatedAt
+      && intended.sourceScope === overviewPreparationScope(payload.data, false)) {
+      intended.scope = overviewPreparationScope(payload.data);
+      intended.missingSourceTimestamp = false;
+    }
     applyFreshData(payload.data);
     return payload.data;
   }
 
   async function saveTextAreas(value: NonNullable<ListingEditorData['listing']['personalisationTextAreas']>) {
+    const saveScope = overviewPreparationScope(data);
+    if (preparationSaving.current || saveScope !== overviewPreparationScope(currentEditorData.current)) return;
+    const isCurrent = () => preparationMounted.current && saveScope === overviewPreparationScope(currentEditorData.current);
+    preparationSaving.current = true;
+    const intended = queuedGeneration.current;
+    let refreshed: ListingEditorData | null | undefined;
     setBusyKey('save-text-areas');
     setError(null);
     try {
@@ -808,16 +858,26 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...context, textAreas: value }),
       });
-      await parseResponse(response, 'Unable to save the personalisation text areas.');
+      if (!isCurrent()) return;
+      refreshed = await parseResponse(response, 'Unable to save the personalisation text areas.', false, isCurrent);
+      if (!refreshed) { if (!isCurrent()) return; throw new Error('The text areas were saved, but the listing could not be reloaded. Reload this listing before generating.'); }
       setTextAreasOpen(false);
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the personalisation text areas.');
+      if (isCurrent()) setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the personalisation text areas.');
     } finally {
-      setBusyKey(null);
+      preparationSaving.current = false;
+      if (preparationMounted.current) setBusyKey((current) => current === 'save-text-areas' ? queuedGeneration.current ? 'prepare-overview-generation' : null : current);
     }
+    if (refreshed && intended && queuedGeneration.current === intended) continueQueuedGeneration(refreshed);
   }
 
   async function savePrintCrops(value: ListingPrintCropDraft) {
+    const saveScope = overviewPreparationScope(data);
+    if (preparationSaving.current || saveScope !== overviewPreparationScope(currentEditorData.current)) return;
+    const isCurrent = () => preparationMounted.current && saveScope === overviewPreparationScope(currentEditorData.current);
+    preparationSaving.current = true;
+    const intended = queuedGeneration.current;
+    let refreshed: ListingEditorData | null | undefined;
     setBusyKey('save-print-crops');
     setError(null);
     try {
@@ -829,13 +889,17 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           cropSettings: listingPrintCropDraftForSave(value),
         }),
       });
-      await parseResponse(response, 'Unable to save the print crop settings.');
+      if (!isCurrent()) return;
+      refreshed = await parseResponse(response, 'Unable to save the print crop settings.', true, isCurrent);
+      if (!refreshed) { if (!isCurrent()) return; throw new Error('The print sizes were saved, but the listing could not be reloaded. Reload this listing before generating.'); }
       setPrintCropsOpen(false);
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the print crop settings.');
+      if (isCurrent()) setError(caughtError instanceof Error ? caughtError.message : 'Unable to save the print crop settings.');
     } finally {
-      setBusyKey(null);
+      preparationSaving.current = false;
+      if (preparationMounted.current) setBusyKey((current) => current === 'save-print-crops' ? queuedGeneration.current ? 'prepare-overview-generation' : null : current);
     }
+    if (refreshed && intended && queuedGeneration.current === intended) continueQueuedGeneration(refreshed);
   }
 
   async function saveDetails(event: FormEvent<HTMLFormElement>) {
@@ -1026,11 +1090,41 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     }
   }
 
-  async function generateOverviewImages() {
-    if (!data?.template || overviewActionRunning.current) return;
+  function continueQueuedGeneration(nextData: ListingEditorData) {
+    const intended = queuedGeneration.current;
+    if (!intended || !preparationMounted.current) return;
+    if (intended.scope !== overviewPreparationScope(nextData) || intended.scope !== overviewPreparationScope(currentEditorData.current)) {
+      cancelQueuedGeneration(); return;
+    }
+    if (!nextData.template || !overviewSourceReady(nextData)) { cancelQueuedGeneration(); return; }
+    if (nextData.template.templateType !== 'multiple') {
+      if (!nextData.listing.printCropSettings) {
+        setBusyKey('prepare-overview-generation'); setPrintCropsOpen(true); return;
+      }
+      if (nextData.template.customisePrints && nextData.etsyProducts.config.customisePrints && !nextData.listing.personalisationTextAreas) {
+        setBusyKey('prepare-overview-generation'); setTextAreasOpen(true); return;
+      }
+    }
+    queuedGeneration.current = null; setQueuedGenerationAction(null);
+    if (intended.action === 'images') void generateOverviewImages(nextData);
+    else void generateEntireOverview(nextData);
+  }
+
+  function requestOverviewGeneration(action: 'images' | 'all') {
+    const latest = currentEditorData.current;
+    if (busyKey !== null || saving || preparationSaving.current || overviewActionRunning.current || queuedGeneration.current
+      || !latest?.template || !overviewSourceReady(latest)) return;
+    queuedGeneration.current = { action, scope: overviewPreparationScope(latest), sourceScope: overviewPreparationScope(latest, false),
+      missingSourceTimestamp: !latest.thumbnail?.updatedAt };
+    setQueuedGenerationAction(action); setError(null);
+    continueQueuedGeneration(latest);
+  }
+
+  async function generateOverviewImages(currentData: ListingEditorData) {
+    if (!currentData.template || overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
-    startOverviewGenerationTasks(imageGenerationTasks(data.template.imageTemplates));
+    startOverviewGenerationTasks(imageGenerationTasks(currentData.template.imageTemplates));
     setBusyKey('generate-overview-images');
     try {
       const cleared = await runOverviewGenerationTask('clear-images', clearOverviewImages);
@@ -1193,13 +1287,13 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     }
   }
 
-  async function generateEntireOverview() {
-    if (!data?.template || overviewActionRunning.current) return;
+  async function generateEntireOverview(currentData: ListingEditorData) {
+    if (!currentData.template || overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
     setOverviewGenerationError(null);
-    startOverviewGenerationTasks(completeListingGenerationTasks(data.template));
-    setOverviewGenerationStages(initialOverviewGenerationStages(data.template.templateType !== 'multiple'));
+    startOverviewGenerationTasks(completeListingGenerationTasks(currentData.template));
+    setOverviewGenerationStages(initialOverviewGenerationStages(currentData.template.templateType !== 'multiple'));
     setOverviewGenerationItem(null);
     setBusyKey('generate-overview-all');
     let activeStage: OverviewGenerationStageKey | 'finalize' = 'images';
@@ -2332,9 +2426,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
         ? <CheckCircle2 className="h-5 w-5 text-green-700" aria-label="Created" />
         : <XCircle className="h-5 w-5 text-red-700" aria-label="Not created" />;
     };
-    const sourceReady = multiple
-      ? data.groupItems.length === requiredItems && data.groupItems.every((item) => item.thumbnailFileName)
-      : Boolean(data.thumbnail);
+    const sourceReady = overviewSourceReady(data);
 
     return (
       <div className="grid gap-6">
@@ -2619,13 +2711,13 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               <p className="text-sm text-muted-foreground">Template: {data.template?.name ?? 'No template selected'}</p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button type="button" variant="outline" onClick={generateOverviewImages} disabled={busyKey !== null || !sourceReady || !data.template || (!multiple && !thumbnailWorkflowReady)}>
+              <Button type="button" variant="outline" onClick={() => requestOverviewGeneration('images')} disabled={busyKey !== null || saving || !sourceReady || !data.template}>
                 {busyKey === 'generate-overview-images'
                   ? <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
                   : <ImageIcon className="h-4 w-4" aria-hidden="true" />}
                 {busyKey === 'generate-overview-images' ? 'Generating Images...' : 'Generate Images'}
               </Button>
-              <Button type="button" onClick={generateEntireOverview} disabled={busyKey !== null || !sourceReady || !data.template || (!multiple && !thumbnailWorkflowReady)}>
+              <Button type="button" onClick={() => requestOverviewGeneration('all')} disabled={busyKey !== null || saving || !sourceReady || !data.template}>
                 {busyKey === 'generate-overview-all'
                   ? <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
                   : <Sparkles className="h-4 w-4" aria-hidden="true" />}
@@ -2633,6 +2725,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               </Button>
             </div>
           </div>
+          {!multiple && sourceReady && !thumbnailWorkflowReady ? <p className="mt-3 text-sm text-muted-foreground">Generate will guide you through saving {thumbnailSizesSet ? 'Set Text Areas' : 'Set Size'} before creating the listing images.</p> : null}
           {overviewGenerationTasks?.length ? (
             <div className="mt-5 grid gap-2 rounded-md border bg-muted/30 p-4">
               <div role="status" aria-live="polite" aria-atomic="true" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm">
@@ -4228,12 +4321,16 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       {data.thumbnail ? (
         <ListingPrintCropDialog
           open={printCropsOpen}
-          onOpenChange={setPrintCropsOpen}
+          onOpenChange={(open) => { setPrintCropsOpen(open); if (!open) cancelQueuedGeneration(); }}
           imageUrl={getThumbnailUrl(true)}
+          sourceDimensions={data.thumbnail.widthPixels && data.thumbnail.heightPixels
+            ? { width: data.thumbnail.widthPixels, height: data.thumbnail.heightPixels } : null}
           context={context}
           orientation={data.listing.artworkOrientation}
           initialSettings={data.listing.printCropSettings}
           saving={busyKey === 'save-print-crops'}
+          continuationLabel={queuedGenerationAction === 'images' ? 'Generate Images' : queuedGenerationAction === 'all' ? 'Generate' : undefined}
+          errorMessage={queuedGenerationAction ? error : undefined}
           onSave={(value) => { void savePrintCrops(value); }}
         />
       ) : null}
@@ -4241,13 +4338,15 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       {data.thumbnail && data.listing.printCropSettings ? (
         <ListingTextAreasDialog
           open={textAreasOpen}
-          onOpenChange={setTextAreasOpen}
+          onOpenChange={(open) => { setTextAreasOpen(open); if (!open) cancelQueuedGeneration(); }}
           imageUrl={getThumbnailUrl(true)}
           cropSettings={data.listing.printCropSettings}
           initialAreas={data.listing.personalisationTextAreas}
           allowTop={listingCustomisationEnabled && data.etsyProducts.config.customTop}
           allowBottom={listingCustomisationEnabled && data.etsyProducts.config.customBottom}
           saving={busyKey === 'save-text-areas'}
+          continuationLabel={queuedGenerationAction === 'images' ? 'Generate Images' : queuedGenerationAction === 'all' ? 'Generate' : undefined}
+          errorMessage={queuedGenerationAction ? error : undefined}
           onSave={(value) => { void saveTextAreas(value); }}
         />
       ) : null}

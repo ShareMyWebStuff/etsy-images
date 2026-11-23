@@ -4,13 +4,17 @@ import type { EtsySyncVariant } from '@/lib/etsy-sync-images';
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { listingId?: string; action?: 'publish' | 'inactive'; variants?: EtsySyncVariant[] };
+    const body = (await request.json()) as { listingId?: string; action?: 'publish' | 'inactive'; variants?: EtsySyncVariant[]; requireSyncedDrafts?: boolean };
     if (!body.listingId) return NextResponse.json({ error: 'Choose a listing to publish.' }, { status: 400 });
     if (!Array.isArray(body.variants) || body.variants.length === 0
       || body.variants.some((variant) => !['print', 'customised', 'download'].includes(variant))) {
       return NextResponse.json({ error: 'Choose the Etsy product type to update. Refresh the page and try again.' }, { status: 400 });
     }
+    if (body.requireSyncedDrafts !== undefined && typeof body.requireSyncedDrafts !== 'boolean') {
+      return NextResponse.json({ error: 'The synced-draft publication option must be true or false.' }, { status: 400 });
+    }
     if (body.action === 'inactive') await makeOneListingInactive(body.listingId, body.variants);
+    else if (body.requireSyncedDrafts) await publishOneListing(body.listingId, body.variants, { requireSyncedDrafts: true });
     else await publishOneListing(body.listingId, body.variants);
     return NextResponse.json({ data: await getSyncToEtsyData() });
   } catch (error) {

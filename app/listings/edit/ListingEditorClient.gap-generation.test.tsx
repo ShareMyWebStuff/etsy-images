@@ -83,8 +83,8 @@ describe('listing generation after adjusting the thumbnail gap', () => {
     render(<ListingEditorClient initialData={initial} />);
     const generateImages = screen.getByRole('button', { name: 'Generate Images' }) as HTMLButtonElement;
     const generate = screen.getByRole('button', { name: 'Generate' }) as HTMLButtonElement;
-    expect(generateImages.disabled).toBe(!initiallyReady);
-    expect(generate.disabled).toBe(!initiallyReady);
+    expect(generateImages.disabled).toBe(false);
+    expect(generate.disabled).toBe(false);
     const initialPreview = screen.getByAltText('Fox source.png').getAttribute('src');
     const gapButton = screen.getByRole('button', { name: 'Adjust Gap' }) as HTMLButtonElement;
     await waitFor(() => expect(gapButton.disabled).toBe(false));

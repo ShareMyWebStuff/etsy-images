@@ -1,17 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ sections: vi.fn(), prices: vi.fn(), remoteSections: vi.fn(), personalisationStates: vi.fn() }));
+const mocks = vi.hoisted(() => ({ sections: vi.fn(), prices: vi.fn(), remoteSections: vi.fn(), personalisationStates: vi.fn(),
+  findListing: vi.fn(), publish: vi.fn() }));
 vi.mock('@/lib/prisma', () => ({ prisma: {
   etsyShopSection: { findMany: mocks.sections },
+  etsyListing: { findUnique: mocks.findListing },
   adminProductPrice: { findMany: mocks.prices },
 } }));
+vi.mock('@/lib/local-listings', () => ({ publishListing: mocks.publish, makeListingInactive: vi.fn(),
+  deleteListingFromEtsy: vi.fn(), syncListingToEtsy: vi.fn() }));
 vi.mock('@/lib/local-shop-sections', () => ({ getRemoteEtsySectionIds: mocks.remoteSections }));
 vi.mock('@/lib/etsy-personalisation-sync-state', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/etsy-personalisation-sync-state')>(),
   loadEtsyPersonalisationSyncStates: mocks.personalisationStates,
 }));
 
-import { getSyncToEtsyData } from '@/lib/sync-to-etsy';
+import { getSyncToEtsyData, publishOneListing } from '@/lib/sync-to-etsy';
 import { createListingPrintCropSettings, defaultNativeListingPrintCropDraft } from '@/lib/listing-print-crops';
 import { PRINTABLE_DOWNLOAD_SPECS } from '@/lib/printable-download-specs';
 import { etsyPersonalisationFingerprint } from '@/lib/etsy-personalisation-sync-state';
@@ -114,6 +118,92 @@ beforeEach(() => {
   }]);
   mocks.prices.mockResolvedValue([]);
   mocks.personalisationStates.mockResolvedValue(new Map());
+});
+
+describe('publication readiness for category products', () => {
+  function sharedCategoryListing() {
+    const listing = syncedListing();
+    listing.ourCategory.downloadSection = listing.ourCategory.printFrameSection;
+    listing.etsyDownloadShopSectionId = 123;
+    return listing;
+  }
+
+  function loadPublicationListing(listing: ReturnType<typeof syncedListing>) {
+    loadListings(listing);
+    mocks.findListing.mockResolvedValue({ id: listing.id, subSection: { id: 26,
+      shopSection: { id: 14, shop: { etsyShopId: 66615491n } } } });
+  }
+
+  it('preserves legacy aggregate statuses while exposing an active product and ready draft in a shared category', async () => {
+    const listing = sharedCategoryListing();
+    listing.state = 'active';
+    loadListings(listing);
+    const data = await getSyncToEtsyData();
+    expect(data.localSections[0].listings).toHaveLength(1);
+    for (const section of [...data.sections, ...data.localSections]) {
+      expect(section.listings[0]).toMatchObject({ isSynced: false, isPublished: false, hasActiveEtsyListing: true,
+        publication: { allProductsSynced: true, readyVariants: ['download'] } });
+    }
+  });
+
+  it('exposes a clean print draft when its sibling digital product still needs syncing', async () => {
+    const listing = sharedCategoryListing();
+    listing.lastLocalChangeAt = syncedDate;
+    listing.lastSyncedAt = resyncedDate;
+    listing.etsyDownloadLastSyncedAt = originalDate;
+    listing.downloadsChanged = true;
+    loadListings(listing);
+    const data = await getSyncToEtsyData();
+    expect(data.localSections[0].listings[0]).toMatchObject({ isSynced: false, pendingChanges: ['Downloads'],
+      publication: { allProductsSynced: false, readyVariants: ['print'] } });
+  });
+
+  it('publishes only the remaining clean draft after another product was already published', async () => {
+    const listing = sharedCategoryListing();
+    loadPublicationListing(listing);
+    mocks.publish.mockImplementationOnce(async () => { listing.state = 'active'; });
+    await publishOneListing(String(listing.id), ['print'], { requireSyncedDrafts: true });
+    await expect(publishOneListing(String(listing.id), ['print', 'download'], { requireSyncedDrafts: true }))
+      .rejects.toThrow(/no longer ready.*Refresh/i);
+    expect(mocks.publish).toHaveBeenCalledTimes(1);
+    await publishOneListing(String(listing.id), ['download'], { requireSyncedDrafts: true });
+    expect(mocks.publish.mock.calls.map((call) => call[4])).toEqual([['print'], ['download']]);
+    expect(mocks.remoteSections).not.toHaveBeenCalled();
+  });
+
+  it('allows only the ready sibling variant without requiring every product in the category to be synced', async () => {
+    const listing = sharedCategoryListing();
+    listing.lastLocalChangeAt = syncedDate;
+    listing.lastSyncedAt = resyncedDate;
+    listing.etsyDownloadLastSyncedAt = originalDate;
+    listing.downloadsChanged = true;
+    loadPublicationListing(listing);
+    await publishOneListing(String(listing.id), ['print'], { requireSyncedDrafts: true });
+    expect(mocks.publish).toHaveBeenCalledWith('66615491', '14', '26', String(listing.id), ['print']);
+    expect(mocks.remoteSections).not.toHaveBeenCalled();
+  });
+
+  it.each(['active', 'inactive', 'dirty', 'incomplete', 'disabled', 'missing Etsy ID'])(
+    'rechecks a queued draft and rejects %s before any Etsy publication', async (change) => {
+      const listing = sharedCategoryListing();
+      loadPublicationListing(listing);
+      const queued = await getSyncToEtsyData({ checkRemoteSections: false });
+      expect(queued.localSections[0].listings[0].publication?.readyVariants).toEqual(['print', 'download']);
+      if (change === 'active' || change === 'inactive') listing.etsyDownloadState = change;
+      if (change === 'dirty') {
+        listing.lastLocalChangeAt = changedDate;
+        listing.downloadsChanged = true;
+      }
+      if (change === 'incomplete') listing.tags = [];
+      if (change === 'disabled') listing.productConfig.listOnEtsy = false;
+      if (change === 'missing Etsy ID') Object.assign(listing, { etsyDownloadId: null });
+      await expect(publishOneListing(String(listing.id), ['download'], { requireSyncedDrafts: true }))
+        .rejects.toThrow(/no longer ready.*Refresh/i);
+      expect(mocks.publish).not.toHaveBeenCalled();
+      expect(mocks.remoteSections).not.toHaveBeenCalled();
+      expect(mocks.sections).toHaveBeenCalledTimes(2);
+    },
+  );
 });
 
 describe('free personalisation updates on Sync to Etsy', () => {

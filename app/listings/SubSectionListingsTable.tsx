@@ -25,6 +25,8 @@ type SubSectionListingsTableProps = {
 type ListingActionResponse = {
   data?: SubSectionListingsPageData | null;
   error?: string;
+  deletedId?: string;
+  refreshError?: string;
 };
 
 type GenerationProgress = {
@@ -103,6 +105,9 @@ export function SubSectionListingsTable({
   const [listingToRestore, setListingToRestore] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
+  const [galleryDeleting, setGalleryDeleting] = useState(false);
+  const galleryDeletingRef = useRef(false);
+  const mutationLoading = importLoading || galleryDeleting;
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [thumbnailPreview, setThumbnailPreview] = useState<{ id: string; context: string } | null>(null);
   const [galleryScope, setGalleryScope] = useState<string | null>(null);
@@ -235,7 +240,7 @@ export function SubSectionListingsTable({
 
   async function createListing(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (importingRef.current) return;
+    if (importingRef.current || galleryDeletingRef.current) return;
 
     if (!shopId || !sectionId || !subSectionId) {
       setError('Missing listing context.');
@@ -293,7 +298,7 @@ export function SubSectionListingsTable({
   }
 
   async function deleteListing(listingId: string) {
-    if (importingRef.current) return;
+    if (importingRef.current || galleryDeletingRef.current) return;
     if (!shopId || !sectionId || !subSectionId) {
       setError('Missing listing context.');
       return;
@@ -316,8 +321,9 @@ export function SubSectionListingsTable({
         throw new Error(payload.error ?? 'Unable to delete listing.');
       }
 
-      setData(payload.data ?? null);
+      setData((current) => payload.data ?? (current ? { ...current, listings: current.listings.filter((listing) => listing.id !== listingId) } : null));
       setListingToDelete(null);
+      if (payload.refreshError) setError(payload.refreshError);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to delete listing.');
     } finally {
@@ -326,7 +332,7 @@ export function SubSectionListingsTable({
   }
 
   async function generateListings(mode: 'changed' | 'all') {
-    if (importingRef.current) return;
+    if (importingRef.current || galleryDeletingRef.current) return;
     if (!shopId || !sectionId || !subSectionId || !data) {
       setGenerateError('Missing listing context.');
       return;
@@ -407,7 +413,7 @@ export function SubSectionListingsTable({
         <CardHeader className="flex flex-row items-center justify-between gap-4 pb-4">
           <CardTitle>{data ? `${data.section.sectionName} Listings` : 'Listings'}</CardTitle>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button type="button" variant="outline" disabled={!shopId || !sectionId || !subSectionId || !data || generateLoading || createLoading || actingListingId !== null || importLoading}
+            <Button type="button" variant="outline" disabled={!shopId || !sectionId || !subSectionId || !data || generateLoading || createLoading || actingListingId !== null || mutationLoading}
               onClick={() => { setImportMessage(null); setError(null); setImportOpen(true); }}>
               <Upload className="h-4 w-4" aria-hidden="true" />
               Import
@@ -422,7 +428,7 @@ export function SubSectionListingsTable({
                 setGenerationProgress(null);
                 setGenerateOpen(true);
               }}
-              disabled={!subSectionId || !data || data.listings.length === 0 || generateLoading || importLoading}
+              disabled={!subSectionId || !data || data.listings.length === 0 || generateLoading || mutationLoading}
             >
               <Sparkles className="h-4 w-4" aria-hidden="true" />
               Generate
@@ -434,7 +440,7 @@ export function SubSectionListingsTable({
               variant="outline"
               aria-label="View section images"
               title="View section images"
-              disabled={!shopId || !sectionId || !data || generateLoading || importLoading}
+              disabled={!shopId || !sectionId || !data || generateLoading || actingListingId !== null || mutationLoading}
               onClick={() => setGalleryScope(galleryContext)}
             >
               <ImageIcon className="h-4 w-4" aria-hidden="true" />
@@ -445,7 +451,7 @@ export function SubSectionListingsTable({
               variant="outline"
               aria-label="Edit listing"
               title="Edit listing"
-              disabled={!data?.listings.length || generateLoading || importLoading}
+              disabled={!data?.listings.length || generateLoading || mutationLoading}
               onClick={() => {
                 if (data?.listings[0]) selectListingToEdit(data.listings[0].id);
                 setCreateOpen(true);
@@ -467,7 +473,7 @@ export function SubSectionListingsTable({
                 setOurCategoryId('');
                 setCreateOpen(true);
               }}
-              disabled={!subSectionId || importLoading}
+              disabled={!subSectionId || mutationLoading}
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
             </Button>
@@ -494,7 +500,7 @@ export function SubSectionListingsTable({
               {data && data.listings.length > 0 ? (
                 data.listings.map((listing, listingIndex) => {
                   const isPublished = listing.status === 'active' || listing.status === 'published';
-                  const isBusy = actingListingId !== null || importLoading;
+                  const isBusy = actingListingId !== null || mutationLoading;
                   const sourceSectionName = listingCategoryLabel(listing);
                   const previousSourceSectionName = listingIndex === 0
                     ? null
@@ -536,7 +542,7 @@ export function SubSectionListingsTable({
                             variant="outline"
                             aria-label={`Preview thumbnail for ${listing.listingName}`}
                             title={listing.hasThumbnail ? 'View thumbnail' : 'No artwork thumbnail uploaded'}
-                            disabled={listing.hasThumbnail !== true || !shopId || !sectionId || !subSectionId || importLoading || actingListingId === listing.id}
+                            disabled={listing.hasThumbnail !== true || !shopId || !sectionId || !subSectionId || mutationLoading || actingListingId === listing.id}
                             onClick={(event) => {
                               thumbnailButtonRef.current = event.currentTarget;
                               setThumbnailPreview({ id: listing.id, context: thumbnailContext });
@@ -594,6 +600,10 @@ export function SubSectionListingsTable({
         onOpenChange={(open) => setGalleryScope(open ? galleryContext : null)}
         shopId={shopId} sectionId={sectionId} sectionName={data.section.sectionName}
         onRestoreFocus={() => { if (galleryButtonRef.current?.isConnected) galleryButtonRef.current.focus(); }}
+        onDeletingChange={(deleting) => { galleryDeletingRef.current = deleting; setGalleryDeleting(deleting); }}
+        onListingDeleted={(listingId) => {
+          setData((current) => current ? { ...current, listings: current.listings.filter((listing) => listing.id !== listingId) } : current);
+        }}
       /> : null}
 
       {shopId && sectionId && subSectionId ? <ListingThumbnailPreviewDialog
@@ -671,14 +681,14 @@ export function SubSectionListingsTable({
               type="button"
               variant="outline"
               onClick={() => setGenerateOpen(false)}
-              disabled={generateLoading || importLoading}
+              disabled={generateLoading || mutationLoading}
             >
               Cancel
             </Button>
-            <Button type="button" variant="outline" onClick={() => generateListings('changed')} disabled={generateLoading || importLoading}>
+            <Button type="button" variant="outline" onClick={() => generateListings('changed')} disabled={generateLoading || mutationLoading}>
               {generateLoading ? 'Working...' : 'Only Changed'}
             </Button>
-            <Button type="button" onClick={() => generateListings('all')} disabled={generateLoading || importLoading}>
+            <Button type="button" onClick={() => generateListings('all')} disabled={generateLoading || mutationLoading}>
               {generateLoading ? 'Working...' : 'All'}
             </Button>
           </DialogFooter>
@@ -758,7 +768,7 @@ export function SubSectionListingsTable({
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={createLoading}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={createLoading || templatesLoading || Boolean(templatesError) || !ourCategoryId || importLoading}>
+              <Button type="submit" disabled={createLoading || templatesLoading || Boolean(templatesError) || !ourCategoryId || mutationLoading}>
                 {createLoading ? (editingListingId ? 'Saving...' : 'Creating...') : (editingListingId ? 'Save' : 'Create')}
               </Button>
             </DialogFooter>
@@ -785,7 +795,7 @@ export function SubSectionListingsTable({
               type="button"
               variant="outline"
               onClick={() => setListingToDelete(null)}
-              disabled={actingListingId !== null || importLoading}
+              disabled={actingListingId !== null || mutationLoading}
             >
               Cancel
             </Button>
@@ -793,7 +803,7 @@ export function SubSectionListingsTable({
               type="button"
               variant="destructive"
               onClick={() => listingToDelete && deleteListing(listingToDelete.id)}
-              disabled={actingListingId !== null || importLoading}
+              disabled={actingListingId !== null || mutationLoading}
             >
               {actingListingId !== null ? 'Deleting...' : 'Delete'}
             </Button>

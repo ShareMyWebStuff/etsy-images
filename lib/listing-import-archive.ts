@@ -11,7 +11,8 @@ export const LISTING_IMPORT_ARCHIVE_LIMITS = Object.freeze({
   expandedBytes: 500 * MIB,
   entries: 2000,
   listings: 100,
-  imageBytes: 35 * MIB,
+  // Larger images remain reviewable; the import service blocks their insertion.
+  imageBytes: 60 * MIB,
   csvBytes: 2 * MIB,
 });
 
@@ -77,7 +78,7 @@ async function entriesInArchive(zip: ZipFile): Promise<StoredEntry[]> {
 }
 
 async function readEntry(zip: ZipFile, stored: StoredEntry, limit: number, retain: boolean): Promise<Buffer> {
-  if (stored.entry.uncompressedSize > limit) invalid(`${stored.name} exceeds the allowed ${limit === LISTING_IMPORT_ARCHIVE_LIMITS.csvBytes ? '2 MB CSV' : '35 MB image'} size.`);
+  if (stored.entry.uncompressedSize > limit) invalid(`${stored.name} exceeds the allowed ${limit === LISTING_IMPORT_ARCHIVE_LIMITS.csvBytes ? '2 MB CSV' : '500 MB entry'} size.`);
   const header = await zip.readLocalFileHeaderPromise(stored.entry);
   if (header.generalPurposeBitFlag & 0x41) invalid('Encrypted ZIP entries are not supported.');
   if (header.compressionMethod !== stored.entry.compressionMethod) invalid(`The ZIP contains a corrupt entry: ${stored.name}.`);
@@ -102,7 +103,7 @@ function csvRows(contents: Buffer, csvName: string): CsvRow[] {
   let text: string;
   try { text = new TextDecoder('utf-8', { fatal: true }).decode(contents); }
   catch { return invalid('overview.csv must use UTF-8 text encoding.'); }
-  const folder = path.posix.dirname(csvName), titles = new Set<string>();
+  const folder = path.posix.dirname(csvName);
   const rows: CsvRow[] = [];
   let rowNumber = 0, headerSkipped = false;
   try {
@@ -122,9 +123,9 @@ function csvRows(contents: Buffer, csvName: string): CsvRow[] {
         if (!filename) invalid(`overview.csv row ${rowNumber} needs a relative filename.`);
         const relativeFilename = archivePath(filename, `overview.csv row ${rowNumber}`);
         const imageKey = comparisonKey(folder === '.' ? relativeFilename : `${folder}/${relativeFilename}`);
-        if (titles.has(comparisonKey(title))) invalid(`overview.csv contains a duplicate title on row ${rowNumber}: ${title}.`);
-        titles.add(comparisonKey(title));
-        if (titles.size > LISTING_IMPORT_ARCHIVE_LIMITS.listings) invalid('overview.csv may contain no more than 100 listings.');
+        // Duplicate titles are reviewed row by row by the import service.
+        // Count every listing here so repeated titles cannot bypass the bound.
+        if (rows.length >= LISTING_IMPORT_ARCHIVE_LIMITS.listings) invalid('overview.csv may contain no more than 100 listings.');
         rows.push({ rowNumber, title, description, relativeFilename, imageKey });
         return null;
       },
@@ -156,7 +157,6 @@ export async function parseListingImportArchive(buffer: Buffer): Promise<{ rows:
     for (const row of rows) {
       const image = byName.get(row.imageKey);
       if (!image || image === csv) invalid(`The image for overview.csv row ${row.rowNumber} was not found: ${row.relativeFilename}.`);
-      if (image.entry.uncompressedSize > LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes) invalid(`The image on overview.csv row ${row.rowNumber} must be 35 MB or smaller: ${row.relativeFilename}.`);
     }
     const images = new Map<string, Buffer>();
     for (const file of entries) {
@@ -164,7 +164,9 @@ export async function parseListingImportArchive(buffer: Buffer): Promise<{ rows:
       const key = comparisonKey(file.name), retain = needed.has(key);
       // Drain unused entries too: corrupt unreferenced files must not silently
       // pass archive validation, and no unused file needs a retained buffer.
-      const image = await readEntry(zip, file, retain ? LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes : LISTING_IMPORT_ARCHIVE_LIMITS.expandedBytes, retain);
+      // The per-artwork insertion limit is a review-row error, not an archive
+      // error. Retain its verified bytes so review can still show a preview.
+      const image = await readEntry(zip, file, LISTING_IMPORT_ARCHIVE_LIMITS.expandedBytes, retain);
       if (retain) images.set(key, image);
     }
     return { rows: rows.map(({ imageKey, ...row }) => ({ ...row, image: images.get(imageKey)!, originalFileName: path.posix.basename(row.relativeFilename) })) };

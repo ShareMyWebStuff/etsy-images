@@ -66,7 +66,7 @@ export default async function EditListingPage({ searchParams }: EditListingPageP
       </div>
       <main className="pb-5 sm:pb-6 lg:pb-8">
         <AppContainer>
-          <ListingEditorClient initialData={data} initialTab={initialTab} />
+          <ListingEditorClient key={`${shopId}:${sectionId}:${subSectionId}:${listingId}`} initialData={data} initialTab={initialTab} />
         </AppContainer>
       </main>
     </div>

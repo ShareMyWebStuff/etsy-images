@@ -110,6 +110,20 @@ describe('parseListingImportArchive', () => {
     expect(result.rows[1].image).toBe(result.rows[0].image);
   });
 
+  it('preserves duplicate-title rows and their individual descriptions and image references for review', async () => {
+    const fox = Buffer.from('A different artwork.');
+    const result = await parseListingImportArchive(await zip([
+      { name: 'overview.csv', contents: 'title,description,filename\nRabbit,First description,ear.png\nrAbBiT,Second description,fox.png\nRabbit,Third description,EAR.PNG' },
+      { name: 'ear.png', contents: image }, { name: 'fox.png', contents: fox },
+    ]));
+    expect(result.rows).toEqual([
+      { rowNumber: 2, title: 'Rabbit', description: 'First description', relativeFilename: 'ear.png', originalFileName: 'ear.png', image },
+      { rowNumber: 3, title: 'rAbBiT', description: 'Second description', relativeFilename: 'fox.png', originalFileName: 'fox.png', image: fox },
+      { rowNumber: 4, title: 'Rabbit', description: 'Third description', relativeFilename: 'EAR.PNG', originalFileName: 'EAR.PNG', image },
+    ]);
+    expect(result.rows[2].image).toBe(result.rows[0].image);
+  });
+
   it.each([
     ['missing CSV', [{ name: 'ear.png', contents: image }], /missing overview\.csv/i],
     ['ambiguous CSV', [...files(), { name: 'Folder/overview.csv', contents: csv }], /more than one overview\.csv/i],
@@ -128,7 +142,6 @@ describe('parseListingImportArchive', () => {
     ['too many fields', 'Rabbit,desc,ear.png,extra', /exactly three fields/i],
     ['missing title', ',desc,ear.png', /needs a title/i],
     ['missing filename', 'Rabbit,desc,', /needs a relative filename/i],
-    ['duplicate title', 'Rabbit,,ear.png\nrAbBiT,,fox.png', /duplicate title/i],
     ['broken quotes', 'Rabbit,"unfinished,ear.png', /overview\.csv is invalid/i],
     ['parent traversal', 'Rabbit,,../ear.png', /row 2.*unsafe relative filename/i],
     ['absolute path', 'Rabbit,,/ear.png', /row 2.*unsafe relative filename/i],
@@ -173,16 +186,36 @@ describe('parseListingImportArchive', () => {
     await expect(parseListingImportArchive(archive)).rejects.toThrow(/size|byte|corrupt/i);
   });
 
-  it('rejects a CSV larger than 2 MB and referenced images larger than 35 MB before inflating', async () => {
-    expect(LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes).toBe(35 * 1024 * 1024);
-    for (const [name, limit, message] of [
-      ['overview.csv', LISTING_IMPORT_ARCHIVE_LIMITS.csvBytes, /2 MB CSV/],
-      ['ear.png', LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes, /35 MB/],
-    ] as const) {
-      const archive = await zip(files(), false), offset = central(archive, name);
-      archive.writeUInt32LE(limit + 1, offset + 24);
-      await expect(parseListingImportArchive(archive)).rejects.toThrow(message);
-    }
+  it('retains oversized image bytes for review alongside valid rows, sharing repeated image references', async () => {
+    expect(LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes).toBe(60 * 1024 * 1024);
+    const oversized = Buffer.alloc(LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes + 1, 1);
+    const archive = await zip([
+      { name: 'overview.csv', contents: 'title,description,filename\nLarge artwork,Keep this description,large.png\nBunny,Little rabbit,ear.png\nLarge second listing,Another description,LARGE.PNG' },
+      { name: 'large.png', contents: oversized }, { name: 'ear.png', contents: image },
+    ], false);
+    const result = await parseListingImportArchive(archive);
+    expect(result.rows.map(({ rowNumber, title, description, relativeFilename, originalFileName }) => ({ rowNumber, title, description, relativeFilename, originalFileName })))
+      .toEqual([
+        { rowNumber: 2, title: 'Large artwork', description: 'Keep this description', relativeFilename: 'large.png', originalFileName: 'large.png' },
+        { rowNumber: 3, title: 'Bunny', description: 'Little rabbit', relativeFilename: 'ear.png', originalFileName: 'ear.png' },
+        { rowNumber: 4, title: 'Large second listing', description: 'Another description', relativeFilename: 'LARGE.PNG', originalFileName: 'LARGE.PNG' },
+      ]);
+    expect(result.rows[0].image.length).toBe(LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes + 1);
+    expect(result.rows[0].image.equals(oversized)).toBe(true);
+    expect(result.rows[1].image.equals(image)).toBe(true);
+    expect(result.rows[2].image).toBe(result.rows[0].image);
+  });
+
+  it('rejects a CSV larger than 2 MB before inflating', async () => {
+    const archive = await zip(files(), false), offset = central(archive, 'overview.csv');
+    archive.writeUInt32LE(LISTING_IMPORT_ARCHIVE_LIMITS.csvBytes + 1, offset + 24);
+    await expect(parseListingImportArchive(archive)).rejects.toThrow(/2 MB CSV/);
+  });
+
+  it('rejects forged oversized image metadata as corrupt instead of returning a skippable row', async () => {
+    const archive = await zip(files(), false), offset = central(archive, 'ear.png');
+    archive.writeUInt32LE(LISTING_IMPORT_ARCHIVE_LIMITS.imageBytes + 1, offset + 24);
+    await expect(parseListingImportArchive(archive)).rejects.toThrow(/size|byte|corrupt/i);
   });
 
   it('rejects expanded ZIPs over 500 MB based on central-directory sizes', async () => {
@@ -197,6 +230,19 @@ describe('parseListingImportArchive', () => {
     await expect(parseListingImportArchive(archive)).rejects.toThrow(/2,000 entries/i);
     const overview = ['title,description,filename', ...Array.from({ length: 101 }, (_, index) => `Artwork ${index},,${index}.png`)].join('\n');
     await expect(parseListingImportArchive(await zip([{ name: 'overview.csv', contents: overview }]))).rejects.toThrow(/100 listings/i);
+  });
+
+  it('accepts 100 identical titles but rejects the 101st listing rather than counting distinct titles', async () => {
+    const overview = (count: number) => ['title,description,filename', ...Array.from({ length: count }, () => 'Rabbit,Repeated listing,ear.png')].join('\n');
+    const result = await parseListingImportArchive(await zip([
+      { name: 'overview.csv', contents: overview(100) }, { name: 'ear.png', contents: image },
+    ]));
+    expect(result.rows).toHaveLength(100);
+    expect(result.rows[99]).toMatchObject({ rowNumber: 101, title: 'Rabbit', description: 'Repeated listing' });
+    expect(result.rows.every((row) => row.image === result.rows[0].image)).toBe(true);
+    await expect(parseListingImportArchive(await zip([
+      { name: 'overview.csv', contents: overview(101) }, { name: 'ear.png', contents: image },
+    ]))).rejects.toThrow(/100 listings/i);
   });
 
   it('rejects invalid UTF-8 and an empty/non-ZIP input', async () => {

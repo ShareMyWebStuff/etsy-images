@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -12,6 +12,7 @@ import {
 import { ListingPrintCropDialog } from './ListingPrintCropDialog';
 
 const context = { shopId: '66615491', sectionId: '15', subSectionId: '27', listingId: '548' };
+const previewUrl = '/api/shops/listings/editor/assets?shopId=66615491&sectionId=15&subSectionId=27&listingId=548&kind=thumbnail&assetId=thumbnail&preview=1';
 
 function settings(width: number, height: number, orientation: ListingArtworkOrientation = 'portrait') {
   return createListingPrintCropSettings(defaultNativeListingPrintCropDraft(width, height, orientation), {
@@ -19,11 +20,11 @@ function settings(width: number, height: number, orientation: ListingArtworkOrie
   }, orientation);
 }
 
-function renderEditor(initialSettings: ListingPrintCropSettings | null, orientation: ListingArtworkOrientation = 'portrait', onSave = vi.fn()) {
+function renderEditor(initialSettings: ListingPrintCropSettings | null, orientation: ListingArtworkOrientation = 'portrait', onSave = vi.fn(), imageUrl = '/thumbnail.png') {
   return {
     onSave,
     ...render(<ListingPrintCropDialog
-      open onOpenChange={vi.fn()} imageUrl="/thumbnail.png" context={context}
+      open onOpenChange={vi.fn()} imageUrl={imageUrl} context={context}
       orientation={orientation} initialSettings={initialSettings} saving={false} onSave={onSave}
     />),
   };
@@ -48,6 +49,65 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('ListingPrintCropDialog', () => {
+  it('uses original API dimensions for accurate crops while displaying a rounded 410-by-512 preview', async () => {
+    let respond!: (response: { ok: boolean; json(): Promise<unknown> }) => void;
+    const fetchMock = vi.fn().mockReturnValue(new Promise((resolve) => { respond = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { onSave } = renderEditor(null, 'portrait', vi.fn(), previewUrl);
+    const image = screen.getByRole('img') as HTMLImageElement;
+    Object.defineProperties(image, {
+      naturalWidth: { configurable: true, value: 410 },
+      naturalHeight: { configurable: true, value: 512 },
+    });
+    fireEvent.load(image);
+    expect(image.getAttribute('src')).toBe(previewUrl);
+    expect(image.naturalWidth).toBe(410); expect(image.naturalHeight).toBe(512);
+    expect((screen.getByRole('button', { name: 'Save Size' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole('slider', { name: '2:3 crop area' })).toBeNull();
+
+    await act(async () => respond({ ok: true, json: async () => ({ dimensions: { width: 7200, height: 9000 } }) }));
+    const crop = await screen.findByRole('slider', { name: '2:3 crop area' });
+    expect(Number.parseFloat(crop.style.width)).toBeCloseTo(100 * 6000 / 7200);
+    expect(Number.parseFloat(screen.getByTestId('print-crop-source-frame').parentElement!.style.aspectRatio)).toBeCloseTo(7200 / 9000);
+    dragSelection(16, 200); // 16 / 400 = 0.04 normalized horizontal movement; vertical movement is ignored.
+    fireEvent.click(screen.getByRole('button', { name: 'Save Size' }));
+    expect(onSave).toHaveBeenCalledOnce();
+    const saved = onSave.mock.calls[0][0] as ListingPrintCropDraft;
+    expect(saved.regions['2x3'].width * 7200).toBeCloseTo(6000);
+    expect(saved.regions['2x3'].x * 7200).toBeCloseTo(888); // Original centred offset 600 px + 288 px movement.
+    expect(saved.regions['2x3']).toMatchObject({ y: 0, height: 1 });
+    expect(saved.regions['3x4'].width * 7200).toBeCloseTo(6750);
+    expect(saved.regions['3x4'].x * 7200).toBeCloseTo(225);
+    expect(saved.regions['4x5']).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+    expect(saved.placements?.['2x3']).toEqual(cropRegionToArtworkPlacement(saved.regions['2x3']));
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/shops/listings/editor/print-crops?shopId=66615491&sectionId=15&subSectionId=27&listingId=548', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it('uses supplied original dimensions without an extra dimensions fetch when the preview is only 410 by 512', async () => {
+    const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+    const onSave = vi.fn();
+    render(<ListingPrintCropDialog open onOpenChange={vi.fn()} imageUrl={previewUrl} sourceDimensions={{ width: 7200, height: 9000 }}
+      context={context} orientation="portrait" initialSettings={null} saving={false} onSave={onSave} />);
+    const image = screen.getByRole('img') as HTMLImageElement;
+    Object.defineProperties(image, { naturalWidth: { configurable: true, value: 410 }, naturalHeight: { configurable: true, value: 512 } });
+    expect(image.getAttribute('src')).toBe(previewUrl);
+    expect((screen.getByRole('button', { name: 'Save Size' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.load(image);
+    const crop = await screen.findByRole('slider', { name: '2:3 crop area' });
+    expect(Number.parseFloat(crop.style.width)).toBeCloseTo(100 * 6000 / 7200);
+    expect(Number.parseFloat(screen.getByTestId('print-crop-source-frame').parentElement!.style.aspectRatio)).toBeCloseTo(0.8);
+    dragSelection(16, 200);
+    fireEvent.click(screen.getByRole('button', { name: 'Save Size' }));
+    expect(onSave).toHaveBeenCalledOnce();
+    const saved = onSave.mock.calls[0][0] as ListingPrintCropDraft;
+    expect(saved.regions['2x3'].width * 7200).toBeCloseTo(6000);
+    expect(saved.regions['2x3'].x * 7200).toBeCloseTo(888);
+    expect(saved.regions['2x3']).toMatchObject({ y: 0, height: 1 });
+    expect(saved.regions['4x5']).toEqual({ x: 0, y: 0, width: 1, height: 1 });
+    expect(saved.placements?.['2x3']).toEqual(cropRegionToArtworkPlacement(saved.regions['2x3']));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('shows the complete portrait 4:5 thumbnail with a full-height crop frame after loading its dimensions', async () => {
     renderEditor(null);
     const image = await screen.findByAltText('Complete listing thumbnail for crop selection');

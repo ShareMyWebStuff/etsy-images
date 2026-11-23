@@ -54,8 +54,10 @@ describe('ZIP listing review sessions', () => {
   });
 
   it('expires idle sessions with actionable status 410 and releases every remaining buffer', async () => {
+    const value = plan(); value.rows[0].previewContents = Buffer.from('review preview');
+    plans.push(value); mocks.prepare.mockResolvedValueOnce(value);
     const { sessionId } = await start(); await vi.advanceTimersByTimeAsync(LISTING_ZIP_REVIEW_LIMITS.ttlMs + 60_000);
-    expect(plans[0].rows.every((row) => row.contents === undefined)).toBe(true);
+    expect(plans[0].rows.every((row) => row.contents === undefined && row.previewContents === undefined)).toBe(true);
     try { await getListingZipReview(context, sessionId); throw new Error('Expected expiry'); }
     catch (error) { expect(error).toMatchObject({ status: 410, message: expect.stringMatching(/Choose the ZIP again/) }); }
     expect(mocks.insert).not.toHaveBeenCalled();
@@ -176,9 +178,30 @@ describe('ZIP listing review sessions', () => {
     await expect(getListingZipReviewImage(context, sessionId, 0)).rejects.toMatchObject({ status: 410 });
   });
 
+  it('serves an oversized image preview, refuses Insert and releases the preview on Skip', async () => {
+    const value = plan(), row = value.rows[0];
+    row.contents = undefined; row.fileName = undefined; row.filePath = undefined;
+    row.error = 'CSV row 2: Skipping this image because it exceeds the 60 MB per-image limit (62.4 MB). Choose Skip to continue.';
+    row.previewContents = await sharp({ create: { width: 750, height: 1000, channels: 3, background: '#bc7b54' } }).webp().toBuffer();
+    plans.push(value); mocks.prepare.mockResolvedValueOnce(value);
+    const { sessionId } = await start();
+    expect((await getListingZipReview(context, sessionId)).review.current).toMatchObject({ error: row.error, title: row.title });
+    expect(await getListingZipReviewImage(context, sessionId, 0)).toEqual(row.previewContents);
+    await expect(actOnListingZipReview(context, sessionId, 0, 'insert')).rejects.toMatchObject({ status: 400, message: row.error });
+    expect(mocks.insert).not.toHaveBeenCalled();
+    const skipped = await actOnListingZipReview(context, sessionId, 0, 'skip');
+    expect(skipped.review).toMatchObject({ cursor: 1, skippedCount: 1, insertedCount: 0, current: { index: 1, error: null } });
+    expect(row.previewContents).toBeUndefined();
+    await expect(getListingZipReviewImage(context, sessionId, 0)).rejects.toMatchObject({ status: 410 });
+    expect((await actOnListingZipReview(context, sessionId, 1, 'insert')).review).toMatchObject({ cursor: 2, skippedCount: 1, insertedCount: 1 });
+    expect(mocks.insert).toHaveBeenCalledOnce();
+  });
+
   it('closes and releases all source buffers without creating or deleting listings', async () => {
+    const value = plan(); value.rows[0].previewContents = Buffer.from('review preview');
+    plans.push(value); mocks.prepare.mockResolvedValueOnce(value);
     const { sessionId } = await start(); await closeListingZipReview(context, sessionId);
-    expect(plans[0].rows.every((row) => !row.contents)).toBe(true); expect(mocks.insert).not.toHaveBeenCalled();
+    expect(plans[0].rows.every((row) => !row.contents && !row.previewContents)).toBe(true); expect(mocks.insert).not.toHaveBeenCalled();
     await expect(getListingZipReview(context, sessionId)).rejects.toThrow(/expired or was closed/);
   });
 
@@ -197,11 +220,12 @@ describe('ZIP listing review sessions', () => {
     await expect(start()).resolves.toMatchObject({ cursor: 0 });
   });
 
-  it('enforces the combined staged-byte budget without allocating giant test images', async () => {
+  it.each(['contents', 'previewContents'] as const)('enforces the combined staged-byte budget for %s without allocating giant test images', async (field) => {
     const value = plan(); value.rows = [value.rows[0]];
-    Object.defineProperty(value.rows[0].contents!, 'byteLength', { value: LISTING_ZIP_REVIEW_LIMITS.stagedBytes + 1 });
+    value.rows[0][field] = Buffer.from('large buffer');
+    Object.defineProperty(value.rows[0][field]!, 'byteLength', { value: LISTING_ZIP_REVIEW_LIMITS.stagedBytes + 1 });
     mocks.prepare.mockResolvedValueOnce(value);
-    await expect(start()).rejects.toMatchObject({ status: 429 }); expect(value.rows[0].contents).toBeUndefined();
+    await expect(start()).rejects.toMatchObject({ status: 429 }); expect(value.rows[0].contents).toBeUndefined(); expect(value.rows[0].previewContents).toBeUndefined();
     await expect(start()).resolves.toMatchObject({ cursor: 0 });
   });
 

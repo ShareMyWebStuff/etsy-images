@@ -6,6 +6,8 @@ export type ListingGalleryItem = {
   hasThumbnail: boolean;
   thumbnailUpdatedAt: string | null;
   subSectionId: string | null;
+  canDelete: boolean;
+  deleteDisabledReason: string | null;
 };
 
 export class ListingGalleryError extends Error {
@@ -34,14 +36,26 @@ export async function getListingGallery(shopId: string, sectionId: string): Prom
         { subSection: { is: { shopSectionId: section.id } } },
         ...(sectionEtsyId === null ? [] : [{ subSectionId: null, shopSectionId: sectionEtsyId }]),
       ] },
-      select: { id: true, title: true, localDirectoryName: true, thumbnailFileName: true, thumbnailUpdatedAt: true, subSectionId: true },
+      select: { id: true, title: true, localDirectoryName: true, thumbnailFileName: true, thumbnailUpdatedAt: true, subSectionId: true,
+        state: true, etsyId: true, etsyCustomisedId: true, etsyCustomisedState: true, etsyDownloadId: true, etsyDownloadState: true },
       orderBy: [{ title: 'asc' }, { id: 'asc' }],
     }),
   ]);
   const fallbackSubSection = subSections[0]?.id ?? null;
-  return { sectionName: section.title, listings: listings.map((listing) => ({
-    id: String(listing.id), listingName: listing.localDirectoryName ?? listing.title,
-    hasThumbnail: Boolean(listing.thumbnailFileName?.trim()), thumbnailUpdatedAt: listing.thumbnailUpdatedAt?.toISOString() ?? null,
-    subSectionId: listing.subSectionId !== null ? String(listing.subSectionId) : fallbackSubSection === null ? null : String(fallbackSubSection),
-  })) };
+  return { sectionName: section.title, listings: listings.map((listing) => {
+    const existsOnEtsy = listing.etsyId !== null || listing.etsyCustomisedId !== null || listing.etsyDownloadId !== null;
+    const isPublished = [listing.state, listing.etsyCustomisedState, listing.etsyDownloadState]
+      .some((state) => state === 'active' || state === 'published');
+    const deleteDisabledReason = existsOnEtsy ? 'Listings on Etsy cannot be deleted here.'
+      : isPublished ? 'Published listings cannot be deleted here.'
+      // The fallback subsection is valid for previews; DELETE requires an assigned subsection.
+      : listing.subSectionId === null ? 'This listing has no assigned subsection and cannot be deleted here.'
+      : null;
+    return {
+      id: String(listing.id), listingName: listing.localDirectoryName ?? listing.title,
+      hasThumbnail: Boolean(listing.thumbnailFileName?.trim()), thumbnailUpdatedAt: listing.thumbnailUpdatedAt?.toISOString() ?? null,
+      subSectionId: listing.subSectionId !== null ? String(listing.subSectionId) : fallbackSubSection === null ? null : String(fallbackSubSection),
+      canDelete: deleteDisabledReason === null, deleteDisabledReason,
+    };
+  }) };
 }

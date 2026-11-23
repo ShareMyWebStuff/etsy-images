@@ -22,10 +22,13 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   imageUrl: string;
+  sourceDimensions?: { width: number; height: number } | null;
   context: { shopId: string; sectionId: string; subSectionId: string; listingId: string };
   orientation: ListingArtworkOrientation;
   initialSettings: ListingPrintCropSettings | null;
   saving: boolean;
+  continuationLabel?: string;
+  errorMessage?: string | null;
   onSave: (value: ListingPrintCropDraft) => void;
 };
 
@@ -63,10 +66,13 @@ export function ListingPrintCropDialog({
   open,
   onOpenChange,
   imageUrl,
+  sourceDimensions,
   context,
   orientation,
   initialSettings,
   saving,
+  continuationLabel,
+  errorMessage,
   onSave,
 }: Props) {
   const imageFrameRef = useRef<HTMLDivElement>(null);
@@ -80,7 +86,12 @@ export function ListingPrintCropDialog({
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
-    setImageDimensions(initialSettings?.source ?? null);
+    // Preview pixels can be much smaller (and slightly rounded) than the
+    // original. Keep crop geometry tied to the saved artwork dimensions.
+    const dimensions = initialSettings?.source ?? (sourceDimensions
+      && Number.isSafeInteger(sourceDimensions.width) && sourceDimensions.width > 0
+      && Number.isSafeInteger(sourceDimensions.height) && sourceDimensions.height > 0 ? sourceDimensions : null);
+    setImageDimensions(dimensions);
     setPreviewLoaded(false);
     setLoadError(null);
     try {
@@ -95,7 +106,7 @@ export function ListingPrintCropDialog({
     }
     setActiveRatio('2x3');
     setInteraction(null);
-    if (!initialSettings) {
+    if (!dimensions) {
       const query = new URLSearchParams(context);
       void fetch(`/api/shops/listings/editor/print-crops?${query}`, { signal: controller.signal })
         .then(async (response) => {
@@ -109,7 +120,8 @@ export function ListingPrintCropDialog({
         });
     }
     return () => controller.abort();
-  }, [open, initialSettings, orientation, context.shopId, context.sectionId, context.subSectionId, context.listingId]);
+  }, [open, initialSettings, orientation, sourceDimensions?.width, sourceDimensions?.height,
+    context.shopId, context.sectionId, context.subSectionId, context.listingId]);
 
   useEffect(() => {
     if (!open || !previewLoaded || !imageDimensions || draft) return;
@@ -194,6 +206,8 @@ export function ListingPrintCropDialog({
               ? 'Choose the area of the thumbnail used for each paper aspect ratio. Each crop uses the full thumbnail height; drag its border left or right.'
               : 'Position the complete thumbnail on each paper aspect ratio. Portrait artwork moves vertically and landscape artwork moves horizontally.'}
           </DialogDescription>
+          {continuationLabel ? <p className="text-sm font-medium">Save these sizes to continue {continuationLabel}.</p> : null}
+          {errorMessage ? <p role="alert" className="text-sm text-destructive">{errorMessage}</p> : null}
         </DialogHeader>
 
         <div className="flex flex-wrap gap-3 rounded-md border bg-muted/30 px-4 py-3 text-sm">
@@ -295,7 +309,7 @@ export function ListingPrintCropDialog({
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
             <Button type="button" onClick={() => draft && onSave(draft)} disabled={!draft || saving}>
-              {saving ? 'Saving...' : 'Save Size'}
+              {saving ? 'Saving...' : continuationLabel ? `Save Size and continue ${continuationLabel}` : 'Save Size'}
             </Button>
           </div>
         </div>
