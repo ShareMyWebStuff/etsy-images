@@ -121,6 +121,13 @@ beforeEach(() => {
 });
 
 describe('publication readiness for category products', () => {
+  it('scopes cached section metrics to the selected shop without checking Etsy remotely', async () => {
+    loadListings(syncedListing());
+    await getSyncToEtsyData({ checkRemoteSections: false, shopId: '00066615491' });
+    expect(mocks.sections).toHaveBeenCalledWith(expect.objectContaining({ where: { shop: { is: { etsyShopId: 66615491n } } } }));
+    expect(mocks.remoteSections).not.toHaveBeenCalled();
+  });
+
   function sharedCategoryListing() {
     const listing = syncedListing();
     listing.ourCategory.downloadSection = listing.ourCategory.printFrameSection;

@@ -4,6 +4,9 @@ import { getEtsyKeystring, getValidEtsyAccessToken, readSavedTokens } from '@/li
 import { shopDirectoryExists } from '@/lib/local-shop-directory';
 import { ensureSingleListingsSubSection } from '@/lib/shop-sub-sections';
 import { ensureListingProductDefaultsInTransaction } from '@/lib/listing-products';
+import { getSyncToEtsyData } from '@/lib/sync-to-etsy';
+import { calculateShopSectionMetrics } from '@/lib/shop-section-metrics';
+import { listingsNeedingImageGeneration } from '@/lib/listing-image-generation-state';
 
 type EtsyApiOptions = {
   accessToken: string;
@@ -120,6 +123,9 @@ export type ShopSectionsPageData = {
     noOfActive: number;
     noOfDraft: number;
     noOfListings: number;
+    noToGenerate: number;
+    awaitingEtsySync: number;
+    etsyLive: number;
     hasEtsyShopSection: boolean;
   }>;
 };
@@ -990,43 +996,34 @@ export async function getShopSectionsPageData(shopId: string): Promise<ShopSecti
       id: true,
       etsyShopSectionId: true,
       title: true,
-      activeListingCount: true,
       subSections: {
-        select: { id: true, _count: { select: { listings: true } } },
+        select: { id: true }, orderBy: { id: 'asc' },
       },
     },
   });
-  const allListingCounts = await prisma.etsyListing.groupBy({
-    by: ['shopSectionId'],
-    where: {
-      shopId: shop.etsyShopId.toString(),
-    },
-    _count: {
-      _all: true,
-    },
-  });
-  const listingCounts = await prisma.etsyListing.groupBy({
-    by: ['shopSectionId', 'state'],
-    where: {
-      shopId: shop.etsyShopId.toString(),
-      state: {
-        in: ['active', 'draft'],
-      },
-    },
-    _count: {
-      _all: true,
-    },
-  });
-  const allCountMap = new Map<string, number>();
-  const countMap = new Map<string, number>();
-
-  for (const count of allListingCounts) {
-    allCountMap.set(`${count.shopSectionId ?? 'none'}`, count._count._all);
-  }
-
-  for (const count of listingCounts) {
-    countMap.set(`${count.shopSectionId ?? 'none'}:${count.state ?? 'none'}`, count._count._all);
-  }
+  const canonicalShopId = shop.etsyShopId.toString();
+  const subSectionIds = sections.flatMap((section) => section.subSections.map((subSection) => subSection.id));
+  const remoteSectionIds = sections.flatMap((section) => section.etsyShopSectionId === null ? [] : [Number(section.etsyShopSectionId)])
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
+  const [listings, syncData] = await Promise.all([
+    prisma.etsyListing.findMany({ where: { shopId: canonicalShopId, OR: [
+      { subSectionId: { in: subSectionIds } }, { subSectionId: null, shopSectionId: { in: remoteSectionIds } },
+    ] }, select: {
+      id: true, shopId: true, subSectionId: true, shopSectionId: true, state: true, etsyId: true,
+      etsyCustomisedId: true, etsyCustomisedState: true, etsyCustomisedShopSectionId: true, etsyCustomisedLastSyncedAt: true,
+      etsyDownloadId: true, etsyDownloadState: true, etsyDownloadShopSectionId: true, etsyDownloadLastSyncedAt: true,
+      lastLocalChangeAt: true, lastSyncedAt: true,
+      detailsChanged: true, tagsChanged: true, imagesChanged: true, downloadsChanged: true, productsChanged: true,
+      productConfig: { select: { listOnEtsy: true, printsFramesOverride: true, digitalDownloadOverride: true,
+        customisePrints: true, customTop: true, customBottom: true } },
+      ourCategory: { select: { printsFrames: true, customisePrints: true, customTop: true, customBottom: true,
+        digitalDownload: true, updatedAt: true, printFrameSection: { select: { id: true, etsyShopSectionId: true } },
+        customisedSection: { select: { id: true, etsyShopSectionId: true } }, downloadSection: { select: { id: true, etsyShopSectionId: true } } } },
+    } }),
+    getSyncToEtsyData({ checkRemoteSections: false, shopId: canonicalShopId }),
+  ]);
+  const pendingGenerationIds = await listingsNeedingImageGeneration(listings.map((listing) => listing.id));
+  const metrics = calculateShopSectionMetrics(canonicalShopId, sections, listings, syncData.localSections.flatMap((section) => section.listings), pendingGenerationIds);
 
   return {
     shop: {
@@ -1034,20 +1031,11 @@ export async function getShopSectionsPageData(shopId: string): Promise<ShopSecti
       shopName: shop.shopName ?? shop.title ?? `Shop ${shop.etsyShopId}`,
     },
     sections: sections.map((section) => {
-      const etsyShopSectionId = toNullableNumber(section.etsyShopSectionId);
-      const activeCount = etsyShopSectionId === null ? 0 : countMap.get(`${etsyShopSectionId}:active`) ?? 0;
-      const draftCount = etsyShopSectionId === null ? 0 : countMap.get(`${etsyShopSectionId}:draft`) ?? 0;
-      const localListingsCount = section.subSections.reduce((total, subSection) => total + subSection._count.listings, 0);
-      const listingsCount = etsyShopSectionId === null ? localListingsCount : allCountMap.get(`${etsyShopSectionId}`) ?? localListingsCount;
-      const activeListingCount = activeCount || section.activeListingCount || 0;
-
       return {
         id: String(section.id),
         subSectionId: section.subSections[0] ? String(section.subSections[0].id) : null,
         sectionName: section.title,
-        noOfActive: activeListingCount,
-        noOfDraft: draftCount,
-        noOfListings: Math.max(listingsCount, activeListingCount + draftCount),
+        ...metrics.get(section.id)!,
         hasEtsyShopSection: section.etsyShopSectionId !== null,
       };
     }),

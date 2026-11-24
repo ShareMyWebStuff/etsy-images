@@ -74,10 +74,10 @@ export type SyncToEtsyData = {
 };
 
 export async function getSyncToEtsyData(
-  { checkRemoteSections = true }: { checkRemoteSections?: boolean } = {},
+  { checkRemoteSections = true, shopId }: { checkRemoteSections?: boolean; shopId?: string } = {},
 ): Promise<SyncToEtsyData> {
   const sections = await prisma.etsyShopSection.findMany({
-    where: { shop: { isNot: null } },
+    where: { shop: shopId === undefined ? { isNot: null } : { is: { etsyShopId: BigInt(shopId) } } },
     orderBy: [{ title: 'asc' }],
     include: {
       shop: { select: { etsyShopId: true, shopName: true, title: true } },

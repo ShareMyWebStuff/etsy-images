@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { ArrowLeft, List, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,6 +32,10 @@ export function ShopSectionsClient({ initialData, shopId }: ShopSectionsClientPr
   const [sectionName, setSectionName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [createLoading, setCreateLoading] = useState(false);
+
+  useEffect(() => {
+    setData(initialData);
+  }, [initialData]);
 
   async function createSection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -136,11 +140,17 @@ export function ShopSectionsClient({ initialData, shopId }: ShopSectionsClientPr
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Section Names</TableHead>
-                <TableHead className="text-right">No of Listings</TableHead>
-                <TableHead className="text-right">No of Active</TableHead>
-                <TableHead className="text-right">No of Draft</TableHead>
-                <TableHead className="text-right">Uploaded to Etsy</TableHead>
+                <TableHead>Section Name</TableHead>
+                <TableHead className="text-center">No of Listings</TableHead>
+                <TableHead className="text-center" title="Listings that are incomplete or need their images generated">
+                  No to Generate
+                </TableHead>
+                <TableHead className="text-center" title="Listings with Etsy products waiting for their first sync or updates">
+                  Awaiting Etsy Sync
+                </TableHead>
+                <TableHead className="text-center" title="Listings whose Etsy products are all live">
+                  Etsy Live
+                </TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -151,10 +161,14 @@ export function ShopSectionsClient({ initialData, shopId }: ShopSectionsClientPr
                     <TableCell className="font-medium">
                       <span className="block">{section.sectionName}</span>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{section.noOfListings}</TableCell>
-                    <TableCell className="text-right tabular-nums">{section.noOfActive}</TableCell>
-                    <TableCell className="text-right tabular-nums">{section.noOfDraft}</TableCell>
-                    <TableCell className="text-right">{section.hasEtsyShopSection ? 'Yes' : 'No'}</TableCell>
+                    <TableCell className="text-center tabular-nums">{section.noOfListings}</TableCell>
+                    <TableCell className={`text-center tabular-nums${section.noToGenerate > 0 ? ' font-medium text-destructive' : ''}`}>
+                      {section.noToGenerate}
+                    </TableCell>
+                    <TableCell className="text-center tabular-nums">{section.awaitingEtsySync}</TableCell>
+                    <TableCell className={`text-center tabular-nums${section.etsyLive < section.noOfListings ? ' font-medium text-destructive' : ''}`}>
+                      {section.etsyLive}
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="inline-flex items-center gap-1">
                         {section.noOfListings === 0 ? <Button
