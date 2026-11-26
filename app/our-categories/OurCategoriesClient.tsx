@@ -81,6 +81,8 @@ function TemplateSearchSelect({ label, options, value, onChange, disabled }: {
 export function OurCategoriesClient({ initialCategories }: { initialCategories: OurCategoryListRow[] }) {
   const [categories, setCategories] = useState(initialCategories);
   const [createTypeOpen, setCreateTypeOpen] = useState(false);
+  const [portraitEnabled, setPortraitEnabled] = useState(true);
+  const [landscapeEnabled, setLandscapeEnabled] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<OurCategoryListRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [copyOpen, setCopyOpen] = useState(false);
@@ -135,7 +137,7 @@ export function OurCategoriesClient({ initialCategories }: { initialCategories: 
           <Button type="button" variant="outline" onClick={() => {
             setCopyType('single'); setCopyFrom(''); setCopyTo(''); setCopyError(null); setCopyOpen(true);
           }}><Copy className="h-4 w-4" aria-hidden="true" />Copy Template</Button>
-          <Button type="button" onClick={() => setCreateTypeOpen(true)}><Plus className="h-4 w-4" aria-hidden="true" />Create</Button>
+          <Button type="button" onClick={() => { setPortraitEnabled(true); setLandscapeEnabled(true); setCreateTypeOpen(true); }}><Plus className="h-4 w-4" aria-hidden="true" />Create</Button>
         </div>
       </div>
 
@@ -226,10 +228,19 @@ export function OurCategoriesClient({ initialCategories }: { initialCategories: 
           <DialogHeader>
             <DialogTitle>Create Template</DialogTitle>
           </DialogHeader>
+          <fieldset className="grid gap-3 rounded-md border p-4">
+            <legend className="px-1 text-sm font-medium">Artwork orientation</legend>
+            <div className="flex flex-wrap gap-5">
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="h-4 w-4 accent-primary" checked={portraitEnabled} onChange={(event) => setPortraitEnabled(event.target.checked)} />Portrait</label>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="h-4 w-4 accent-primary" checked={landscapeEnabled} onChange={(event) => setLandscapeEnabled(event.target.checked)} />Landscape</label>
+            </div>
+            {!portraitEnabled && !landscapeEnabled ? <p role="alert" className="text-sm text-destructive">Select at least one artwork orientation.</p> : null}
+          </fieldset>
           <p className="text-sm text-muted-foreground">Select if you want a single template or a multiple template.</p>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Button asChild size="lg"><Link href={'/our-templates/create' as Route}>Single Template</Link></Button>
-            <Button asChild size="lg" variant="outline"><Link href={'/our-templates/create/multiple' as Route}>Multiple Template</Link></Button>
+            {([{ href: '/our-templates/create', label: 'Single Template', variant: 'default' }, { href: '/our-templates/create/multiple', label: 'Multiple Template', variant: 'outline' }] as const).map((choice) => <Button key={choice.href} asChild={portraitEnabled || landscapeEnabled} size="lg" variant={choice.variant} disabled={!portraitEnabled && !landscapeEnabled}>
+              {portraitEnabled || landscapeEnabled ? <Link href={`${choice.href}?portraitEnabled=${portraitEnabled}&landscapeEnabled=${landscapeEnabled}` as Route}>{choice.label}</Link> : choice.label}
+            </Button>)}
           </div>
         </DialogContent>
       </Dialog>

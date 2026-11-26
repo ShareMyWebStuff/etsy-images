@@ -76,4 +76,23 @@ describe('listing completeness', () => {
     ]);
     expect(isListingComplete(completeState)).toBe(true);
   });
+  it('does not require Dropbox for physical-only listings, while keeping the printable master files required', () => {
+    const physical = { ...completeState, requiresDropbox: false, hasCurrentDropbox: false };
+    expect(isListingComplete(physical)).toBe(true);
+    expect(getListingTodoItems({ ...physical, hasRequiredDigitalDownloads: false })).toEqual([
+      { label: 'Create all printable downloads and the How to Print guide', tab: 'downloads' },
+    ]);
+  });
+  it('requires grouped instructions only when that grouped listing sells digital downloads', () => {
+    const grouped = { ...completeState, isMultiple: true, hasGroupSelection: true, hasDownloadInstructions: false, hasCurrentDropbox: false };
+    expect(isListingComplete({ ...grouped, requiresDropbox: false })).toBe(true);
+    expect(getListingTodoItems({ ...grouped, requiresDropbox: true })).toEqual([
+      { label: 'Create the grouped download instructions PDF', tab: 'downloads' },
+    ]);
+  });
+  it('keeps the legacy Dropbox requirement when the optional flag is omitted', () => {
+    expect(getListingTodoItems({ ...completeState, hasCurrentDropbox: false })).toEqual([
+      { label: 'Create or update Dropbox', tab: 'dropbox' },
+    ]);
+  });
 });

@@ -10,6 +10,7 @@ export type ListingCompletionState = {
   hasRequiredDigitalDownloads: boolean;
   hasCurrentZips: boolean;
   hasCurrentDropbox: boolean;
+  requiresDropbox?: boolean;
   hasDownloadSection: boolean;
   hasTags: boolean;
   hasTitle: boolean;
@@ -33,6 +34,7 @@ export type ListingTodoItem = {
 };
 
 export function getListingTodoItems(state: ListingCompletionState): ListingTodoItem[] {
+  const requiresDropbox = state.requiresDropbox !== false;
   const items: Array<ListingTodoItem | null> = [
     state.hasTemplate === false ? { label: 'Choose a template', tab: 'overview' as const } : null,
     state.hasListingDescription ? null : { label: 'Add the listing description', tab: 'overview' as const },
@@ -47,9 +49,9 @@ export function getListingTodoItems(state: ListingCompletionState): ListingTodoI
       : null,
     state.hasRequiredImages ? null : { label: 'Generate every template image', tab: 'overview' as const },
     state.isMultiple
-      ? state.hasDownloadInstructions ? null : { label: 'Create the grouped download instructions PDF', tab: 'downloads' as const }
+      ? !requiresDropbox || state.hasDownloadInstructions ? null : { label: 'Create the grouped download instructions PDF', tab: 'downloads' as const }
       : state.hasRequiredDigitalDownloads ? null : { label: 'Create all printable downloads and the How to Print guide', tab: 'downloads' as const },
-    !state.isMultiple && !state.hasCurrentDropbox ? { label: 'Create or update Dropbox', tab: 'dropbox' as const } : null,
+    requiresDropbox && !state.isMultiple && !state.hasCurrentDropbox ? { label: 'Create or update Dropbox', tab: 'dropbox' as const } : null,
     state.hasDownloadSection ? null : { label: 'Select a download section on the template', tab: 'overview' as const },
     state.hasTags ? null : { label: 'Add at least one tag', tab: 'tags' as const },
     state.hasTitle ? null : { label: 'Add the Print Etsy title', tab: 'details' as const },

@@ -67,8 +67,33 @@ describe('Our Templates list', () => {
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByRole('heading', { name: 'Create Template' })).toBeTruthy();
     expect(within(dialog).getByText('Select if you want a single template or a multiple template.')).toBeTruthy();
-    expect(within(dialog).getByRole('link', { name: 'Single Template' }).getAttribute('href')).toBe('/our-templates/create');
-    expect(within(dialog).getByRole('link', { name: 'Multiple Template' }).getAttribute('href')).toBe('/our-templates/create/multiple');
+    expect((within(dialog).getByRole('checkbox', { name: 'Portrait' }) as HTMLInputElement).checked).toBe(true);
+    expect((within(dialog).getByRole('checkbox', { name: 'Landscape' }) as HTMLInputElement).checked).toBe(true);
+    expect(within(dialog).getByRole('link', { name: 'Single Template' }).getAttribute('href')).toBe('/our-templates/create?portraitEnabled=true&landscapeEnabled=true');
+    expect(within(dialog).getByRole('link', { name: 'Multiple Template' }).getAttribute('href')).toBe('/our-templates/create/multiple?portraitEnabled=true&landscapeEnabled=true');
+  });
+
+  it('carries either orientation to both create routes and disables both choices only when neither is selected', async () => {
+    const user = userEvent.setup();
+    render(<OurCategoriesClient initialCategories={[]} />);
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Landscape' }));
+    expect(within(dialog).getByRole('link', { name: 'Single Template' }).getAttribute('href')).toContain('portraitEnabled=true&landscapeEnabled=false');
+    expect(within(dialog).getByRole('link', { name: 'Multiple Template' }).getAttribute('href')).toContain('portraitEnabled=true&landscapeEnabled=false');
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Portrait' }));
+    for (const name of ['Single Template', 'Multiple Template']) {
+      expect((within(dialog).getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true);
+      expect(within(dialog).queryByRole('link', { name })).toBeNull();
+    }
+    expect(within(dialog).getByRole('alert').textContent).toContain('at least one artwork orientation');
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Landscape' }));
+    expect(within(dialog).getByRole('link', { name: 'Single Template' }).getAttribute('href')).toContain('portraitEnabled=false&landscapeEnabled=true');
+    expect(within(dialog).getByRole('link', { name: 'Multiple Template' }).getAttribute('href')).toContain('portraitEnabled=false&landscapeEnabled=true');
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+    expect((screen.getByRole('checkbox', { name: 'Portrait' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('checkbox', { name: 'Landscape' }) as HTMLInputElement).checked).toBe(true);
   });
 
   it('shows the template type and followed template', () => {

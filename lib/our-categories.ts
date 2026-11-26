@@ -49,6 +49,9 @@ import { createListingPersonalisationPreview } from '@/lib/listing-personalisati
 import { removeListingImages } from '@/lib/listing-image-reset';
 import { getListingDirectoryPath } from '@/lib/local-shop-directory';
 import type { ListingArtworkOrientation, ListingPrintCropSettings } from '@/lib/listing-print-crops';
+import { getSceneOrientationCompatibility } from '@/lib/template-orientation';
+import { getOurTemplateImageDefinition } from '@/lib/our-template-image-definitions';
+import type { TemplateImageDefinitionMode } from '@/lib/our-template-image-definition-types';
 import { copyFile, listGeneratedListingImageFiles, mkdir, readFile, readImagePreview, rm, unlink, writeFile } from '@/lib/s3-listing-storage';
 
 const TEMPLATE_DIRECTORY = 'EtsyListingTemplates';
@@ -92,6 +95,8 @@ export type OurCategoryFormValues = {
   itemCount: number;
   roomTheme: string;
   backgroundColour: ArtworkBackgroundColour;
+  portraitEnabled?: boolean;
+  landscapeEnabled?: boolean;
   printsFrames: boolean;
   customisePrints: boolean;
   digitalDownload: boolean;
@@ -112,10 +117,34 @@ export type OurCategoryEtsySectionOption = {
   useForDigitalDownloads: boolean;
 };
 
+export type OurCategoryImageTemplateOrientationVariant = {
+  ourTemplateImageId: string;
+  itemMapping?: Record<string, number> | null;
+  name: string;
+  originalFileName: string;
+  imageWidth: number;
+  imageHeight: number;
+  updatedAt?: string;
+  compatible: boolean;
+  warning: string | null;
+  openingRegions?: TemplateOpeningRegion[];
+};
+export type OurCategoryImageTemplateOrientationVariants = {
+  portrait: OurCategoryImageTemplateOrientationVariant | null;
+  landscape: OurCategoryImageTemplateOrientationVariant | null;
+};
+type StoredOrientationSlot = { ourTemplateImageId: string; itemMapping?: Record<string, number> | null };
+type StoredOrientationVariants = { portrait: StoredOrientationSlot | null; landscape: StoredOrientationSlot | null };
+
 export type OurCategoryImageTemplateView = {
   id: string;
+  templateImageDefinitionId?: string | null;
+  definitionMode?: TemplateImageDefinitionMode;
+  definitionName?: string;
   ourTemplateImageId?: string | null;
   ourTemplateImageItemMapping?: Record<string, number> | null;
+  orientationVariants?: OurCategoryImageTemplateOrientationVariants | null;
+  orientationWarnings?: Partial<Record<ListingArtworkOrientation, string>>;
   name: string;
   description: string;
   originalFileName: string;
@@ -185,6 +214,8 @@ export function defaultOurCategoryValues(templateType: OurTemplateType = 'single
     itemCount: multiple ? 3 : 1,
     roomTheme: '',
     backgroundColour: DEFAULT_ARTWORK_BACKGROUND_COLOUR,
+    portraitEnabled: true,
+    landscapeEnabled: true,
     printsFrames: !multiple,
     customisePrints: !multiple,
     digitalDownload: !multiple,
@@ -248,6 +279,9 @@ function validateCategoryInput(value: unknown): OurCategoryFormValues {
   }
   const roomTheme = typeof value.roomTheme === 'string' ? value.roomTheme.trim() : '';
   const backgroundColour = validateArtworkBackgroundColour(value.backgroundColour);
+  const portraitEnabled = value.portraitEnabled === undefined ? true : requiredBoolean(value.portraitEnabled, 'Portrait');
+  const landscapeEnabled = value.landscapeEnabled === undefined ? true : requiredBoolean(value.landscapeEnabled, 'Landscape');
+  if (!portraitEnabled && !landscapeEnabled) throw new Error('Enable Portrait, Landscape, or both orientations.');
   if (!name) throw new Error('Enter a template name.');
   if (name.length > 100) throw new Error('Template Name must be 100 characters or fewer.');
   if (!roomTheme) throw new Error('Enter a Room Theme.');
@@ -270,6 +304,8 @@ function validateCategoryInput(value: unknown): OurCategoryFormValues {
     itemCount,
     roomTheme,
     backgroundColour,
+    portraitEnabled,
+    landscapeEnabled,
     printsFrames,
     customisePrints,
     digitalDownload,
@@ -390,8 +426,10 @@ function templateView(template: {
 
 type TemplateCalibrationRow = {
   id: number;
+  templateImageDefinitionId?: string | null;
   ourTemplateImageId?: string | null;
   ourTemplateImageItemMapping?: Record<string, number> | string | null;
+  orientationVariants?: StoredOrientationVariants | string | null;
   imageWidth: number | null;
   imageHeight: number | null;
   openingCorners: Prisma.JsonValue | string | null;
@@ -427,7 +465,7 @@ async function templateLink(templateId: number) {
 
 async function templateCalibrations(categoryId: number) {
   return prisma.$queryRaw<TemplateCalibrationRow[]>`
-    SELECT id, ourTemplateImageId, ourTemplateImageItemMapping, imageWidth, imageHeight, openingCorners, openingRegions, topText, bottomText, fontId, position
+    SELECT id, templateImageDefinitionId, ourTemplateImageId, ourTemplateImageItemMapping, orientationVariants, imageWidth, imageHeight, openingCorners, openingRegions, topText, bottomText, fontId, position
     FROM our_category_image_templates
     WHERE categoryId = ${categoryId}
   `;
@@ -479,6 +517,92 @@ async function saveSceneReference(client: Pick<typeof prisma, '$executeRaw'>, te
   const serialized = mapping ? JSON.stringify(mapping) : null;
   await client.$executeRaw`UPDATE our_category_image_templates
     SET ourTemplateImageId = ${sceneId}, ourTemplateImageItemMapping = ${serialized} WHERE id = ${templateId}`;
+}
+
+async function saveDefinitionReference(client: Pick<typeof prisma, '$executeRaw'>, templateId: number, definitionId: string) {
+  await client.$executeRaw`UPDATE our_category_image_templates SET templateImageDefinitionId = ${definitionId} WHERE id = ${templateId}`;
+}
+
+function storedOrientationVariants(value: unknown): StoredOrientationVariants | null {
+  if (value === null || value === undefined) return null;
+  const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  if (!isRecord(parsed)) throw new Error('The saved image-role orientation settings are invalid.');
+  const result: StoredOrientationVariants = { portrait: null, landscape: null };
+  for (const orientation of ['portrait', 'landscape'] as const) {
+    const slot = parsed[orientation];
+    if (slot === null || slot === undefined) continue;
+    if (!isRecord(slot) || typeof slot.ourTemplateImageId !== 'string' || !slot.ourTemplateImageId.trim()) {
+      throw new Error('The saved image-role scene reference is invalid.');
+    }
+    result[orientation] = { ourTemplateImageId: slot.ourTemplateImageId,
+      itemMapping: isRecord(slot.itemMapping) ? slot.itemMapping as Record<string, number> : null };
+  }
+  return result;
+}
+
+function orientationVariantsForCopy(view: OurCategoryImageTemplateView, remap?: (item: number) => number): StoredOrientationVariants | null {
+  if (view.orientationVariants === undefined || view.orientationVariants === null) return null;
+  return Object.fromEntries((['portrait', 'landscape'] as const).map((orientation) => {
+    const slot = view.orientationVariants![orientation];
+    if (!slot) return [orientation, null];
+    const mapping = view.isLinked && view.linkedImageItemNumber
+      ? Object.fromEntries(Array.from({ length: 100 }, (_, index) => [String(index + 1), view.linkedImageItemNumber!]))
+      : slot.itemMapping ?? null;
+    const itemMapping = remap ? Object.fromEntries(Array.from({ length: 100 }, (_, index) => {
+      const original = index + 1; return [String(original), remap(mapping?.[String(original)] ?? original)];
+    })) : mapping;
+    return [orientation, { ourTemplateImageId: slot.ourTemplateImageId, itemMapping }];
+  })) as StoredOrientationVariants;
+}
+
+async function saveOrientationVariants(client: Pick<typeof prisma, '$executeRaw'>, templateId: number, variants: StoredOrientationVariants) {
+  await client.$executeRaw`UPDATE our_category_image_templates
+    SET orientationVariants = ${JSON.stringify(variants)}, ourTemplateImageId = NULL, ourTemplateImageItemMapping = NULL
+    WHERE id = ${templateId}`;
+}
+
+async function affectedCategoryListingIds(categoryId: number) {
+  const categories = await prisma.$queryRaw<Array<{ id: number; followedTemplateId: number | null }>>`
+    SELECT id, followedTemplateId FROM our_categories`;
+  const categoryIds = new Set([categoryId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const row of categories) if (row.followedTemplateId && categoryIds.has(row.followedTemplateId) && !categoryIds.has(row.id)) {
+      categoryIds.add(row.id); changed = true;
+    }
+  }
+  const listings = await prisma.etsyListing.findMany({ where: { ourCategoryId: { in: [...categoryIds] } }, select: { id: true } });
+  return listings.map((listing) => listing.id);
+}
+
+async function enrichOrientationVariants(variants: StoredOrientationVariants): Promise<OurCategoryImageTemplateOrientationVariants> {
+  const result: OurCategoryImageTemplateOrientationVariants = { portrait: null, landscape: null };
+  await Promise.all((['portrait', 'landscape'] as const).map(async (orientation) => {
+    const slot = variants[orientation];
+    if (!slot) return;
+    try {
+      const scene = await getOurTemplateImage(slot.ourTemplateImageId);
+      const compatibility = getSceneOrientationCompatibility(scene.openings, orientation, undefined, slot.itemMapping);
+      result[orientation] = { ...slot, name: scene.name, originalFileName: scene.originalFileName,
+        imageWidth: scene.width, imageHeight: scene.height, updatedAt: scene.updatedAt,
+        compatible: compatibility.compatible, warning: compatibility.reason,
+        openingRegions: scene.openings.map((opening) => ({ id: opening.id, name: opening.name, corners: opening.corners,
+          imageItemNumber: slot.itemMapping?.[String(opening.imageItemNumber)] ?? opening.imageItemNumber })) };
+    } catch {
+      result[orientation] = { ...slot, name: 'Missing room scene', originalFileName: '', imageWidth: 0, imageHeight: 0,
+        compatible: false, warning: 'The saved room scene is no longer available. Choose another scene.' };
+    }
+  }));
+  return result;
+}
+
+function orientationWarnings(variants: OurCategoryImageTemplateOrientationVariants) {
+  return Object.fromEntries((['portrait', 'landscape'] as const).flatMap((orientation) => {
+    const slot = variants[orientation];
+    const warning = !slot ? `Choose a ${orientation} room scene for this image role.` : slot.warning;
+    return warning ? [[orientation, warning]] : [];
+  }));
 }
 
 function calibrationFromForm(
@@ -587,6 +711,8 @@ type OurCategorySettingsRow = {
   itemCount: number;
   roomTheme: string;
   backgroundColour: string | null;
+  portraitEnabled?: boolean | number;
+  landscapeEnabled?: boolean | number;
   printsFrames: boolean | number;
   customisePrints: boolean | number;
   digitalDownload: boolean | number;
@@ -602,7 +728,7 @@ type OurCategorySettingsRow = {
 async function getOurCategorySettings(categoryId: number) {
   const rows = await prisma.$queryRaw<OurCategorySettingsRow[]>`
     SELECT id, shopId, name, templateType, followedTemplateId, itemCount, roomTheme, backgroundColour,
-           printsFrames, customisePrints, digitalDownload, customTop, customBottom,
+           printsFrames, customisePrints, digitalDownload, customTop, customBottom, portraitEnabled, landscapeEnabled,
            printFrameSectionId, customisedSectionId, downloadSectionId, sizes, frames
     FROM our_categories
     WHERE id = ${categoryId}
@@ -619,6 +745,8 @@ function settingsRowValues(row: OurCategorySettingsRow): OurCategoryFormValues {
     itemCount: row.templateType === 'multiple' && MULTIPLE_ITEM_COUNTS.includes(row.itemCount as 3 | 6 | 12) ? row.itemCount : 1,
     roomTheme: row.roomTheme,
     backgroundColour: normalizeArtworkBackgroundColour(row.backgroundColour),
+    portraitEnabled: row.portraitEnabled === undefined ? true : Boolean(row.portraitEnabled),
+    landscapeEnabled: row.landscapeEnabled === undefined ? true : Boolean(row.landscapeEnabled),
     printsFrames: Boolean(row.printsFrames),
     customisePrints: Boolean(row.customisePrints),
     digitalDownload: Boolean(row.digitalDownload),
@@ -635,7 +763,7 @@ function settingsRowValues(row: OurCategorySettingsRow): OurCategoryFormValues {
 async function getSingleTemplateOptions(shopId: number, excludingId?: number) {
   const rows = await prisma.$queryRaw<OurCategorySettingsRow[]>`
     SELECT id, shopId, name, templateType, followedTemplateId, itemCount, roomTheme, backgroundColour,
-           printsFrames, customisePrints, digitalDownload, customTop, customBottom,
+           printsFrames, customisePrints, digitalDownload, customTop, customBottom, portraitEnabled, landscapeEnabled,
            printFrameSectionId, customisedSectionId, downloadSectionId, sizes, frames
     FROM our_categories
     WHERE shopId = ${shopId} AND templateType = 'single'
@@ -654,8 +782,16 @@ async function resolvedImageTemplateView(template: OurCategoryImageTemplate, vis
     const source = await prisma.ourCategoryImageTemplate.findUnique({ where: { id: link.linkedSourceImageTemplateId } });
     if (!source || source.categoryId !== link.linkedSourceCategoryId) throw new Error('The linked source image template no longer exists.');
     const sourceView = await resolvedImageTemplateView(source, nextVisited);
+    const linkedVariants = sourceView.orientationVariants ? Object.fromEntries((['portrait', 'landscape'] as const).map((orientation) => {
+      const slot = sourceView.orientationVariants![orientation];
+      return [orientation, slot ? { ...slot,
+        itemMapping: Object.fromEntries(Array.from({ length: 100 }, (_, index) => [String(index + 1), link.linkedImageItemNumber!])),
+        openingRegions: slot.openingRegions?.map((region) => remapTemplateOpeningRegionImageItem(region, link.linkedImageItemNumber!)),
+      } : null];
+    })) as OurCategoryImageTemplateOrientationVariants : sourceView.orientationVariants;
     return {
       ...sourceView,
+      orientationVariants: linkedVariants,
       id: String(template.id),
       name: template.name,
       description: template.description,
@@ -681,17 +817,76 @@ async function resolvedImageTemplateView(template: OurCategoryImageTemplate, vis
     };
   }
   const calibration = (await templateCalibrations(template.categoryId)).find((row) => row.id === template.id);
+  if (calibration?.templateImageDefinitionId) {
+    const parent = await getOurTemplateImageDefinition(calibration.templateImageDefinitionId);
+    const oldVariants = storedOrientationVariants(calibration.orientationVariants);
+    const oldMapping = typeof calibration.ourTemplateImageItemMapping === 'string'
+      ? JSON.parse(calibration.ourTemplateImageItemMapping) as Record<string, number> : calibration.ourTemplateImageItemMapping ?? null;
+    const variants: OurCategoryImageTemplateOrientationVariants = { portrait: null, landscape: null };
+    const mappingFor = (sceneId: string, slot: 'portrait' | 'landscape' | 'single') => {
+      const old = slot === 'single' ? null : oldVariants?.[slot];
+      return old?.ourTemplateImageId === sceneId ? old.itemMapping ?? null
+        : calibration.ourTemplateImageId === sceneId ? oldMapping : null;
+    };
+    const regionsFor = (image: typeof parent.images[number]) => {
+      const mapping = mappingFor(image.id, image.variantSlot ?? 'single');
+      return image.openings.map((opening) => ({ id: opening.id, name: opening.name, corners: opening.corners,
+        imageItemNumber: mapping?.[String(opening.imageItemNumber)] ?? opening.imageItemNumber }));
+    };
+    if (parent.mode === 'both') for (const orientation of ['portrait', 'landscape'] as const) {
+      const image = parent.images.find((image) => image.variantSlot === orientation);
+      if (!image) continue;
+      const mapping = mappingFor(image.id, orientation);
+      const compatible = getSceneOrientationCompatibility(image.openings, orientation, undefined, mapping);
+      variants[orientation] = { ourTemplateImageId: image.id, itemMapping: mapping, name: image.name,
+        originalFileName: image.originalFileName, imageWidth: image.width, imageHeight: image.height,
+        updatedAt: image.updatedAt, compatible: compatible.compatible, warning: compatible.reason, openingRegions: regionsFor(image) };
+    }
+    const primary = parent.mode === 'both' ? parent.images.find((image) => image.variantSlot === 'portrait')
+      ?? parent.images.find((image) => image.variantSlot === 'landscape') : parent.images.find((image) => image.variantSlot === 'single');
+    const updatedAt = new Date(Math.max(template.updatedAt.getTime(), Date.parse(parent.updatedAt),
+      ...parent.images.map((image) => Date.parse(image.updatedAt)).filter(Number.isFinite))).toISOString();
+    return { ...templateView({ ...template, ...calibration, ourTemplateImageId: primary?.id,
+      imageWidth: primary?.width ?? null, imageHeight: primary?.height ?? null, openingRegions: primary ? regionsFor(primary) : [] }),
+      templateImageDefinitionId: parent.id, definitionMode: parent.mode, definitionName: parent.name,
+      ourTemplateImageId: parent.mode === 'both' ? null : primary?.id ?? null,
+      ourTemplateImageItemMapping: primary ? mappingFor(primary.id, primary.variantSlot ?? 'single') : null,
+      orientationVariants: parent.mode === 'both' ? variants : null,
+      orientationWarnings: parent.mode === 'both' ? orientationWarnings(variants) : undefined,
+      originalFileName: primary?.originalFileName ?? template.originalFileName, updatedAt,
+      openingRegions: primary ? regionsFor(primary) : [] };
+  }
+  const storedVariants = storedOrientationVariants(calibration?.orientationVariants);
+  if (storedVariants) {
+    const variants = await enrichOrientationVariants(storedVariants);
+    const primary = variants.portrait ?? variants.landscape;
+    const updatedAt = new Date(Math.max(template.updatedAt.getTime(), ...Object.values(variants).flatMap((slot) => {
+      const value = slot?.updatedAt ? Date.parse(slot.updatedAt) : NaN;
+      return Number.isFinite(value) ? [value] : [];
+    }))).toISOString();
+    return { ...templateView({ ...template, ...calibration,
+      ourTemplateImageId: primary?.ourTemplateImageId,
+      imageWidth: primary?.imageWidth ?? null, imageHeight: primary?.imageHeight ?? null,
+      openingRegions: primary?.openingRegions ?? [],
+    }), ourTemplateImageId: null, orientationVariants: variants, orientationWarnings: orientationWarnings(variants),
+      originalFileName: primary?.originalFileName ?? template.originalFileName, updatedAt,
+      openingRegions: primary?.openingRegions ?? [] };
+  }
   if (calibration?.ourTemplateImageId) {
     const scene = await getOurTemplateImage(calibration.ourTemplateImageId);
     const mapping: Record<string, number> | null = typeof calibration.ourTemplateImageItemMapping === 'string'
       ? JSON.parse(calibration.ourTemplateImageItemMapping) : calibration.ourTemplateImageItemMapping ?? null;
     const sceneRegions = scene.openings.map((opening) => ({ id: opening.id, name: opening.name, corners: opening.corners,
       imageItemNumber: mapping?.[String(opening.imageItemNumber)] ?? opening.imageItemNumber }));
+    const warnings = Object.fromEntries((['portrait', 'landscape'] as const).flatMap((orientation) => {
+      const compatibility = getSceneOrientationCompatibility(scene.openings, orientation, undefined, mapping);
+      return compatibility.reason ? [[orientation, compatibility.reason]] : [];
+    }));
     return { ...templateView({ ...template, ...calibration,
       imageWidth: scene.width, imageHeight: scene.height,
       openingRegions: sceneRegions,
       updatedAt: new Date(scene.updatedAt),
-    }), openingRegions: sceneRegions, ourTemplateImageItemMapping: mapping };
+    }), openingRegions: sceneRegions, ourTemplateImageItemMapping: mapping, orientationVariants: null, orientationWarnings: warnings };
   }
   return templateView({ ...template, ...calibration });
 }
@@ -881,11 +1076,12 @@ async function saveOurCategoryEtsySectionIds(
 async function saveOurTemplateMetadata(
   client: Pick<typeof prisma, '$executeRaw'>,
   categoryId: number,
-  values: Pick<OurCategoryFormValues, 'templateType' | 'followedTemplateId' | 'itemCount'>,
+  values: Pick<OurCategoryFormValues, 'templateType' | 'followedTemplateId' | 'itemCount' | 'portraitEnabled' | 'landscapeEnabled'>,
 ) {
   await client.$executeRaw`
     UPDATE our_categories
-    SET templateType = ${values.templateType}, followedTemplateId = ${values.followedTemplateId}, itemCount = ${values.itemCount}
+    SET templateType = ${values.templateType}, followedTemplateId = ${values.followedTemplateId}, itemCount = ${values.itemCount},
+        portraitEnabled = ${values.portraitEnabled ?? true}, landscapeEnabled = ${values.landscapeEnabled ?? true}
     WHERE id = ${categoryId}
   `;
 }
@@ -934,6 +1130,9 @@ export async function updateOurCategory(categoryId: string, input: unknown) {
   const existingType: OurTemplateType = existingSettings.templateType === 'multiple' ? 'multiple' : 'single';
   if (submittedValues.templateType !== existingType) throw new Error('The template type cannot be changed after creation.');
   const values = await normalizeTemplateValues(category.shopId, submittedValues, id);
+  const orientationChanged = values.portraitEnabled !== (existingSettings.portraitEnabled === undefined ? true : Boolean(existingSettings.portraitEnabled))
+    || values.landscapeEnabled !== (existingSettings.landscapeEnabled === undefined ? true : Boolean(existingSettings.landscapeEnabled));
+  const orientationListingIds = orientationChanged ? await affectedCategoryListingIds(id) : [];
   if (existingType === 'multiple'
     && (values.followedTemplateId !== existingSettings.followedTemplateId || values.itemCount !== existingSettings.itemCount)) {
     const linkedImages = await prisma.$queryRaw<Array<{ count: bigint }>>`
@@ -979,6 +1178,7 @@ export async function updateOurCategory(categoryId: string, input: unknown) {
     }
     await saveOurCategoryEtsySectionIds(transaction as Pick<typeof prisma, '$executeRaw'>, id, values);
     await saveOurTemplateMetadata(transaction as Pick<typeof prisma, '$executeRaw'>, id, values);
+    if (orientationListingIds.length) await invalidateListingImageGeneration(orientationListingIds, transaction);
     if (!values.printsFrames || !values.customisePrints || !values.digitalDownload) {
       await transaction.ourCategoryImageTemplate.updateMany({
         where: { categoryId: id },
@@ -1030,9 +1230,64 @@ export async function createOurCategoryImageTemplate(categoryId: string, formDat
   const categorySettings = await getOurCategorySettings(id);
   if (!categorySettings) throw new Error('Create the template before adding image templates.');
   const categoryValues = settingsRowValues(categorySettings);
+  const definitionId = formData.get('templateImageDefinitionId');
+  if (typeof definitionId === 'string' && definitionId) {
+    const parent = await getOurTemplateImageDefinition(definitionId);
+    const name = String(formData.get('name') || parent.name).trim();
+    const description = String(formData.get('description') ?? '').trim();
+    if (!name || name.length > 100 || description.length > 500) throw new Error('Enter a valid image-template name and description.');
+    if (await prisma.ourCategoryImageTemplate.findFirst({ where: { categoryId: id, name }, select: { id: true } })) {
+      throw new Error(`An image template named "${name}" already exists in this category.`);
+    }
+    const uses = assertImageTemplateUses(formData, categoryValues);
+    const listingIds = await affectedCategoryListingIds(id);
+    const created = await prisma.$transaction(async (transaction) => {
+      const [currentDefinition] = await transaction.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM our_template_image_definitions WHERE id = ${parent.id} FOR UPDATE
+      `;
+      if (!currentDefinition) throw new Error('The template image definition was deleted. Reload and choose another definition.');
+      const row = await transaction.ourCategoryImageTemplate.create({ data: { categoryId: id, name, description,
+        imagePath: path.join(ETSY_LISTINGS_DIRECTORY, TEMPLATE_DIRECTORY, String(id), `role-${randomUUID()}.png`),
+        originalFileName: '', contentType: 'image/png', sizeBytes: 0, displayFonts: false,
+        useOnPrints: uses.prints, useOnCustomised: uses.customised, useOnDigital: uses.digital } });
+      await saveDefinitionReference(transaction, row.id, parent.id);
+      if (listingIds.length) await invalidateListingImageGeneration(listingIds, transaction);
+      return row;
+    });
+    await appendTemplatePosition(created.id, id);
+    return resolvedImageTemplateView(created);
+  }
+  if (formData.get('roleOnly') === 'true') {
+    const name = String(formData.get('name') ?? '').trim();
+    const description = String(formData.get('description') ?? '').trim();
+    if (!name || name.length > 100 || description.length > 500) throw new Error('Enter a valid image-role name and description.');
+    if (await prisma.ourCategoryImageTemplate.findFirst({ where: { categoryId: id, name }, select: { id: true } })) {
+      throw new Error(`An image template named "${name}" already exists in this category.`);
+    }
+    const uses = assertImageTemplateUses(formData, categoryValues);
+    const listingIds = await affectedCategoryListingIds(id);
+    const created = await prisma.$transaction(async (transaction) => {
+      const row = await transaction.ourCategoryImageTemplate.create({ data: { categoryId: id, name, description,
+        imagePath: path.join(ETSY_LISTINGS_DIRECTORY, TEMPLATE_DIRECTORY, String(id), `role-${randomUUID()}.png`),
+        originalFileName: '', contentType: 'image/png', sizeBytes: 0, displayFonts: false,
+        useOnPrints: uses.prints, useOnCustomised: uses.customised, useOnDigital: uses.digital } });
+      await saveOrientationVariants(transaction, row.id, { portrait: null, landscape: null });
+      if (listingIds.length) await invalidateListingImageGeneration(listingIds, transaction);
+      return row;
+    });
+    await appendTemplatePosition(created.id, id);
+    return resolvedImageTemplateView(created);
+  }
   const savedSceneId = formData.get('ourTemplateImageId');
   if (typeof savedSceneId === 'string' && savedSceneId) {
     const scene = await getOurTemplateImage(savedSceneId);
+    const requestedOrientation = formData.get('orientation');
+    if (requestedOrientation !== null && requestedOrientation !== 'portrait' && requestedOrientation !== 'landscape') throw new Error('Choose Portrait or Landscape.');
+    const selectedOrientation = requestedOrientation ?? (['portrait', 'landscape'] as const)
+      .find((orientation) => getSceneOrientationCompatibility(scene.openings, orientation).compatible);
+    if (!selectedOrientation || !getSceneOrientationCompatibility(scene.openings, selectedOrientation).compatible) {
+      throw new Error('The selected scene does not support this artwork orientation. Choose a room scene with matching print openings.');
+    }
     const stored = await getStoredOurTemplateImage(savedSceneId);
     for (const opening of scene.openings) if (opening.imageItemNumber > categoryValues.itemCount) {
       throw new Error(`This scene uses artwork item ${opening.imageItemNumber}. Choose a template with at least that many items, or change the scene's artwork assignments.`);
@@ -1049,21 +1304,33 @@ export async function createOurCategoryImageTemplate(categoryId: string, formDat
     await mkdir(directory, { recursive: true });
     await writeFile(imagePath, contents);
     let createdId: number | null = null;
+    let committed = false;
     try {
-      const created = await prisma.ourCategoryImageTemplate.create({ data: {
-        categoryId: id, name, description, imagePath, originalFileName: stored.originalFileName,
-        contentType: 'image/png', sizeBytes: contents.length, displayFonts: false,
-        useOnPrints: uses.prints, useOnCustomised: uses.customised, useOnDigital: uses.digital,
-      } });
+      const listingIds = await affectedCategoryListingIds(id);
+      const created = await prisma.$transaction(async (transaction) => {
+        const [current] = await transaction.$queryRaw<Array<{ id: string; updatedAt: Date | string }>>`
+          SELECT id, updatedAt FROM our_template_images WHERE id = ${savedSceneId} FOR UPDATE`;
+        if (!current || new Date(current.updatedAt).getTime() !== new Date(stored.updatedAt).getTime()) {
+          throw new Error('The saved room scene changed or was deleted. Refresh and choose it again.');
+        }
+        const row = await transaction.ourCategoryImageTemplate.create({ data: {
+          categoryId: id, name, description, imagePath, originalFileName: stored.originalFileName,
+          contentType: 'image/png', sizeBytes: contents.length, displayFonts: false,
+          useOnPrints: uses.prints, useOnCustomised: uses.customised, useOnDigital: uses.digital,
+        } });
+        const regions = scene.openings.map((opening) => ({ id: opening.id, name: opening.name, corners: opening.corners, imageItemNumber: opening.imageItemNumber }));
+        await saveOrientationVariants(transaction, row.id, { portrait: null, landscape: null,
+          [selectedOrientation]: { ourTemplateImageId: savedSceneId, itemMapping: null } });
+        await saveTemplateCalibration(transaction, row.id, scene.width, scene.height, regions, '', '', DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID);
+        if (listingIds.length) await invalidateListingImageGeneration(listingIds, transaction);
+        return row;
+      });
       createdId = created.id;
-      const regions = scene.openings.map((opening) => ({ id: opening.id, name: opening.name, corners: opening.corners, imageItemNumber: opening.imageItemNumber }));
-      await saveSceneReference(prisma, created.id, savedSceneId);
+      committed = true;
       await appendTemplatePosition(created.id, id);
-      await saveTemplateCalibration(prisma, created.id, scene.width, scene.height, regions, '', '', DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID);
-      const listings = await prisma.etsyListing.findMany({ where: { ourCategoryId: id }, select: { id: true } });
-      await invalidateListingImageGeneration(listings.map((listing) => listing.id));
-      return templateView({ ...created, ourTemplateImageId: savedSceneId, imageWidth: scene.width, imageHeight: scene.height, openingRegions: regions });
+      return await resolvedImageTemplateView(created);
     } catch (error) {
+      if (committed) throw new Error(`${error instanceof Error ? error.message : 'The updated details could not be loaded.'} The image template was saved. Reload the template before trying again.`, { cause: error });
       if (createdId) await prisma.ourCategoryImageTemplate.delete({ where: { id: createdId } }).catch(() => undefined);
       await unlink(imagePath).catch(() => undefined); throw error;
     }
@@ -1176,8 +1443,27 @@ export async function updateOurCategoryImageTemplate(templateId: string, formDat
   if (!existing) throw new Error('Image template not found.');
   const existingLink = await templateLink(id);
   if (existingLink?.linkedSourceImageTemplateId) throw new Error('Linked image templates cannot be edited. Delete the link and create or copy an image template instead.');
+  if (formData.get('roleOnly') === 'true') {
+    const categorySettings = await getOurCategorySettings(existing.categoryId);
+    if (!categorySettings) throw new Error('Our Template not found.');
+    const name = String(formData.get('name') ?? '').trim();
+    const description = String(formData.get('description') ?? '').trim();
+    if (!name || name.length > 100 || description.length > 500) throw new Error('Enter a valid image-role name and description.');
+    if (await prisma.ourCategoryImageTemplate.findFirst({ where: { categoryId: existing.categoryId, name, id: { not: id } }, select: { id: true } })) {
+      throw new Error(`An image template named "${name}" already exists in this category.`);
+    }
+    const uses = assertImageTemplateUses(formData, settingsRowValues(categorySettings));
+    const listingIds = await affectedCategoryListingIds(existing.categoryId);
+    const updated = await prisma.$transaction(async (transaction) => {
+      const row = await transaction.ourCategoryImageTemplate.update({ where: { id }, data: { name, description,
+        useOnPrints: uses.prints, useOnCustomised: uses.customised, useOnDigital: uses.digital } });
+      if (listingIds.length) await invalidateListingImageGeneration(listingIds, transaction);
+      return row;
+    });
+    return resolvedImageTemplateView(updated);
+  }
   const sceneCalibration = (await templateCalibrations(existing.categoryId)).find((row) => row.id === id);
-  if (sceneCalibration?.ourTemplateImageId) throw new Error('Edit this saved scene in Local → Our Template Images.');
+  if (sceneCalibration?.ourTemplateImageId || storedOrientationVariants(sceneCalibration?.orientationVariants)) throw new Error('Edit this saved scene in Local → Our Template Images.');
   const categorySettings = await getOurCategorySettings(existing.categoryId);
   if (!categorySettings) throw new Error('Our Template not found.');
   const categoryValues = settingsRowValues(categorySettings);
@@ -1313,6 +1599,101 @@ export async function updateOurCategoryImageTemplate(templateId: string, formDat
   }
 }
 
+export class OurCategoryTemplateConflictError extends Error {
+  readonly status = 409;
+}
+
+export async function updateOurCategoryImageTemplateOrientation(templateId: string, input: unknown) {
+  const id = Number(templateId);
+  if (!Number.isSafeInteger(id) || id <= 0 || !isRecord(input)
+    || (input.orientation !== 'portrait' && input.orientation !== 'landscape')) throw new Error('Choose an image role and artwork orientation.');
+  const orientation = input.orientation;
+  if (input.ourTemplateImageId !== null && (typeof input.ourTemplateImageId !== 'string' || !input.ourTemplateImageId.trim())) {
+    throw new Error('Choose a saved room scene, or clear this orientation slot.');
+  }
+  const template = await prisma.ourCategoryImageTemplate.findUnique({ where: { id } });
+  if (!template) throw new Error('Image template not found.');
+  if ((await templateLink(id))?.linkedSourceImageTemplateId) throw new Error('Linked image roles follow their source slots. Edit the source role or make a copy.');
+  const settings = await getOurCategorySettings(template.categoryId);
+  if (!settings) throw new Error('Our Template not found.');
+  const calibration = (await templateCalibrations(template.categoryId)).find((row) => row.id === id);
+  const variants = storedOrientationVariants(calibration?.orientationVariants) ?? { portrait: null, landscape: null };
+  const sceneVersions = new Map<string, string>();
+  if (calibration?.ourTemplateImageId && calibration.orientationVariants == null) {
+    const legacy = await getOurTemplateImage(calibration.ourTemplateImageId);
+    sceneVersions.set(legacy.id, legacy.updatedAt);
+    const mapping = typeof calibration.ourTemplateImageItemMapping === 'string' ? JSON.parse(calibration.ourTemplateImageItemMapping)
+      : calibration.ourTemplateImageItemMapping ?? null;
+    for (const candidate of ['portrait', 'landscape'] as const) if (getSceneOrientationCompatibility(legacy.openings, candidate, undefined, mapping).compatible) {
+      variants[candidate] = { ourTemplateImageId: legacy.id, itemMapping: mapping };
+    }
+  }
+  if (input.ourTemplateImageId === null) variants[orientation] = null;
+  else {
+    const scene = await getOurTemplateImage(input.ourTemplateImageId as string);
+    sceneVersions.set(scene.id, scene.updatedAt);
+    let mapping: Record<string, number> | null = null;
+    if (input.itemMapping === undefined && variants[orientation]?.ourTemplateImageId === scene.id) mapping = variants[orientation]?.itemMapping ?? null;
+    else if (input.itemMapping !== undefined && input.itemMapping !== null) {
+      if (!isRecord(input.itemMapping)) throw new Error('The artwork item mapping is invalid.');
+      mapping = {};
+      for (const [key, value] of Object.entries(input.itemMapping)) {
+        if (!/^[1-9]\d*$/.test(key) || Number(key) > 100 || !Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > settings.itemCount) {
+          throw new Error(`Choose artwork item numbers from 1 to ${settings.itemCount}.`);
+        }
+        mapping[key] = Number(value);
+      }
+    }
+    for (const opening of scene.openings) if ((mapping?.[String(opening.imageItemNumber)] ?? opening.imageItemNumber) > settings.itemCount) {
+      throw new Error(`This scene needs artwork item ${opening.imageItemNumber}. Choose a valid item mapping for this template.`);
+    }
+    const compatibility = getSceneOrientationCompatibility(scene.openings, orientation, undefined, mapping);
+    if (!compatibility.compatible) throw new Error(compatibility.reason ?? 'Choose a scene with matching print opening orientations.');
+    variants[orientation] = { ourTemplateImageId: scene.id, itemMapping: mapping };
+  }
+  const listingIds = await affectedCategoryListingIds(template.categoryId);
+  const updated = await prisma.$transaction(async (transaction) => {
+    for (const sceneId of [...new Set(Object.values(variants).flatMap((slot) => slot ? [slot.ourTemplateImageId] : []))].sort()) {
+      const [current] = await transaction.$queryRaw<Array<{ id: string; updatedAt: Date | string }>>`
+        SELECT id, updatedAt FROM our_template_images WHERE id = ${sceneId} FOR UPDATE`;
+      if (!current || sceneVersions.has(sceneId) && new Date(current.updatedAt).toISOString() !== sceneVersions.get(sceneId)) {
+        throw new OurCategoryTemplateConflictError('The saved room scene changed or was deleted. Refresh and choose it again.');
+      }
+    }
+    const updatedAt = new Date(Math.max(Date.now(), template.updatedAt.getTime() + 1));
+    const claim = await transaction.ourCategoryImageTemplate.updateMany({
+      where: { id, updatedAt: template.updatedAt }, data: { updatedAt },
+    });
+    if (claim.count !== 1) throw new OurCategoryTemplateConflictError('This image role changed while saving. Refresh and choose the orientation scene again.');
+    await saveOrientationVariants(transaction, id, variants);
+    if (listingIds.length) await invalidateListingImageGeneration(listingIds, transaction);
+    return { ...template, updatedAt };
+  });
+  return resolvedImageTemplateView(updated);
+}
+
+async function copyDefinitionReference(client: Pick<typeof prisma, '$executeRaw'>, id: number,
+  view: OurCategoryImageTemplateView, stored: OurCategoryImageTemplate, remap?: (item: number) => number) {
+  await saveDefinitionReference(client, id, view.templateImageDefinitionId!);
+  const original = (await templateCalibrations(stored.categoryId)).find((row) => row.id === stored.id);
+  if (!original?.ourTemplateImageId && original?.orientationVariants == null) return;
+  const mapped = (mapping: Record<string, number> | null) => view.isLinked && view.linkedImageItemNumber || remap
+    ? Object.fromEntries(Array.from({ length: 100 }, (_, index) => {
+      const item = view.isLinked && view.linkedImageItemNumber ? view.linkedImageItemNumber : mapping?.[String(index + 1)] ?? index + 1;
+      return [String(index + 1), remap ? remap(item) : item];
+    })) : mapping;
+  const oldMapping = typeof original.ourTemplateImageItemMapping === 'string'
+    ? JSON.parse(original.ourTemplateImageItemMapping) as Record<string, number> : original.ourTemplateImageItemMapping ?? null;
+  const variants = storedOrientationVariants(original.orientationVariants);
+  if (variants) for (const orientation of ['portrait', 'landscape'] as const) {
+    const slot = variants[orientation]; if (slot) slot.itemMapping = mapped(slot.itemMapping ?? null);
+  }
+  const itemMapping = mapped(oldMapping);
+  await client.$executeRaw`UPDATE our_category_image_templates SET ourTemplateImageId = ${original.ourTemplateImageId ?? null},
+    ourTemplateImageItemMapping = ${itemMapping ? JSON.stringify(itemMapping) : null},
+    orientationVariants = ${variants ? JSON.stringify(variants) : null} WHERE id = ${id}`;
+}
+
 export async function copyOurTemplateImages(sourceCategoryId: string, targetCategoryId: string) {
   const sourceId = Number(sourceCategoryId);
   const targetId = Number(targetCategoryId);
@@ -1346,9 +1727,11 @@ export async function copyOurTemplateImages(sourceCategoryId: string, targetCate
       const [view, stored] = await Promise.all([resolvedImageTemplateView(image), resolvedStoredImageTemplate(image)]);
       const extension = path.extname(stored.imagePath) || '.png';
       const imagePath = path.join(ETSY_LISTINGS_DIRECTORY, TEMPLATE_DIRECTORY, String(targetId), `${randomUUID()}${extension}`);
-      // Register before copying so partial S3 copies and previews are cleaned up on failure.
-      copiedPaths.push(imagePath);
-      await copyFile(stored.imagePath, imagePath);
+      // Orientation roles reference shared scenes directly and may have no parent file.
+      if (!view.templateImageDefinitionId && (view.orientationVariants === undefined || view.orientationVariants === null)) {
+        copiedPaths.push(imagePath);
+        await copyFile(stored.imagePath, imagePath);
+      }
       prepared.push({ image, view, stored, imagePath });
     }
     await prisma.$transaction(async (tx) => {
@@ -1384,7 +1767,10 @@ export async function copyOurTemplateImages(sourceCategoryId: string, targetCate
           useOnDigital: view.useOnDigital,
           position,
         } });
-        if (view.ourTemplateImageId) await saveSceneReference(tx, copied.id, view.ourTemplateImageId, effectiveSceneItemMapping(view));
+        const variants = orientationVariantsForCopy(view);
+        if (view.templateImageDefinitionId) await copyDefinitionReference(tx, copied.id, view, stored);
+        else if (variants) await saveOrientationVariants(tx, copied.id, variants);
+        else if (view.ourTemplateImageId) await saveSceneReference(tx, copied.id, view.ourTemplateImageId, effectiveSceneItemMapping(view));
       }
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30000 });
   } catch (error) {
@@ -1412,6 +1798,40 @@ export async function copyOurCategoryImageTemplate(
   ]);
   if (!targetSettings || targetSettings.templateType !== 'multiple') {
     throw new Error('Choose a saved multiple template before copying an image template.');
+  }
+  // A definition's artwork items are selected per listing, independently of the
+  // old grouped-template item count and source-position remapping controls.
+  if (sourceSettings && sourceSettings.shopId === targetSettings.shopId && sourceSettings.id !== targetSettings.id) {
+    const candidate = await prisma.ourCategoryImageTemplate.findUnique({ where: { id: sourceId } });
+    if (candidate?.categoryId === sourceSettings.id) {
+      const candidateView = await resolvedImageTemplateView(candidate);
+      if (candidateView.templateImageDefinitionId) {
+        if (await prisma.ourCategoryImageTemplate.findFirst({ where: { categoryId: targetId, name: candidate.name }, select: { id: true } })) {
+          throw new Error(`An image template named "${candidate.name}" already exists in this template.`);
+        }
+        const targetValues = settingsRowValues(targetSettings), listingIds = await affectedCategoryListingIds(targetId);
+        const stored = await resolvedStoredImageTemplate(candidate);
+        const remapping = Array.isArray(imageItemNumbersValue) && imageItemNumbersValue.length === sourceSettings.itemCount
+          && imageItemNumbersValue.every((value) => Number.isSafeInteger(Number(value)) && Number(value) >= 1 && Number(value) <= targetSettings.itemCount)
+          ? imageItemNumbersValue.map(Number) : null;
+        const created = await prisma.$transaction(async (transaction) => {
+          const row = await transaction.ourCategoryImageTemplate.create({ data: {
+            categoryId: targetId, name: candidate.name, description: candidate.description,
+            imagePath: path.join(ETSY_LISTINGS_DIRECTORY, TEMPLATE_DIRECTORY, String(targetId), `role-${randomUUID()}.png`),
+            originalFileName: '', contentType: 'image/png', sizeBytes: 0,
+            displayFonts: candidateView.displayFonts, borderEnabled: candidateView.borderEnabled, borderSizePercent: candidateView.borderSizePercent,
+            useOnPrints: candidate.useOnPrints && targetValues.printsFrames,
+            useOnCustomised: candidate.useOnCustomised && targetValues.customisePrints,
+            useOnDigital: candidate.useOnDigital && targetValues.digitalDownload,
+          } });
+          await copyDefinitionReference(transaction, row.id, candidateView, stored, remapping ? (item) => remapping[item - 1] ?? item : undefined);
+          if (listingIds.length) await invalidateListingImageGeneration(listingIds, transaction);
+          return row;
+        });
+        await appendTemplatePosition(created.id, targetId);
+        return resolvedImageTemplateView(created);
+      }
+    }
   }
   const compatible = sourceSettings
     && sourceSettings.shopId === targetSettings.shopId
@@ -1449,7 +1869,8 @@ export async function copyOurCategoryImageTemplate(
     resolvedImageTemplateView(source),
     resolvedStoredImageTemplate(source),
   ]);
-  if (!sourceView.imageWidth || !sourceView.imageHeight) throw new Error('Edit and save the source image template before copying it.');
+  const variants = orientationVariantsForCopy(sourceView, (item) => imageItemNumbers[item - 1] ?? item);
+  if (!variants && (!sourceView.imageWidth || !sourceView.imageHeight)) throw new Error('Edit and save the source image template before copying it.');
   const openingRegions = sourceView.openingRegions.map((region) => {
     if (region.grid) {
       return {
@@ -1479,12 +1900,13 @@ export async function copyOurCategoryImageTemplate(
       } : {}),
     };
   });
-  const contents = await readFile(storedSource.imagePath);
   const extension = path.extname(storedSource.originalFileName) || path.extname(storedSource.imagePath) || '.png';
   const directory = path.join(ETSY_LISTINGS_DIRECTORY, TEMPLATE_DIRECTORY, String(targetId));
   const imagePath = path.join(directory, `${randomUUID()}${extension.toLocaleLowerCase()}`);
-  await mkdir(directory, { recursive: true });
-  await writeFile(imagePath, contents);
+  if (!variants) {
+    await mkdir(directory, { recursive: true });
+    await writeFile(imagePath, await readFile(storedSource.imagePath));
+  }
   let createdId: number | null = null;
   try {
     const targetValues = settingsRowValues(targetSettings);
@@ -1507,7 +1929,8 @@ export async function copyOurCategoryImageTemplate(
     });
     createdId = created.id;
     await appendTemplatePosition(created.id, targetId);
-    if (sourceView.ourTemplateImageId) {
+    if (variants) await saveOrientationVariants(prisma, created.id, variants);
+    else if (sourceView.ourTemplateImageId) {
       const existingMapping = effectiveSceneItemMapping(sourceView);
       const mapping = Object.fromEntries(Array.from({ length: 100 }, (_, index) => {
         const original = index + 1; const sourceItem = existingMapping?.[String(original)] ?? original;
@@ -1515,7 +1938,7 @@ export async function copyOurCategoryImageTemplate(
       }));
       await saveSceneReference(prisma, created.id, sourceView.ourTemplateImageId, mapping);
     }
-    await saveTemplateCalibration(
+    if (sourceView.imageWidth && sourceView.imageHeight) await saveTemplateCalibration(
       prisma,
       created.id,
       sourceView.imageWidth,
@@ -1525,6 +1948,7 @@ export async function copyOurCategoryImageTemplate(
       '',
       DEFAULT_PRINTSHRIMP_CUSTOM_FONT_ID,
     );
+    if (variants) return resolvedImageTemplateView(created);
     return templateView({
       ...created,
       ourTemplateImageId: sourceView.ourTemplateImageId,
@@ -1540,7 +1964,7 @@ export async function copyOurCategoryImageTemplate(
     });
   } catch (error) {
     if (createdId) await prisma.ourCategoryImageTemplate.delete({ where: { id: createdId } }).catch(() => undefined);
-    await unlink(imagePath).catch(() => undefined);
+    if (!variants) await unlink(imagePath).catch(() => undefined);
     throw error;
   }
 }
@@ -1559,7 +1983,9 @@ export async function duplicateOurCategoryImageTemplate(templateId: string) {
       select: { name: true },
     }),
   ]);
-  if (!sourceView.imageWidth || !sourceView.imageHeight) {
+  const variants = orientationVariantsForCopy(sourceView);
+  const definitionId = sourceView.templateImageDefinitionId;
+  if (!definitionId && !variants && (!sourceView.imageWidth || !sourceView.imageHeight)) {
     throw new Error('Edit and save the image template before making a copy.');
   }
 
@@ -1575,8 +2001,10 @@ export async function duplicateOurCategoryImageTemplate(templateId: string) {
   const extension = path.extname(storedSource.originalFileName) || path.extname(storedSource.imagePath) || '.png';
   const directory = path.join(ETSY_LISTINGS_DIRECTORY, TEMPLATE_DIRECTORY, String(source.categoryId));
   const imagePath = path.join(directory, `${randomUUID()}${extension.toLocaleLowerCase()}`);
-  await mkdir(directory, { recursive: true });
-  await writeFile(imagePath, await readFile(storedSource.imagePath));
+  if (!definitionId && !variants) {
+    await mkdir(directory, { recursive: true });
+    await writeFile(imagePath, await readFile(storedSource.imagePath));
+  }
 
   let createdId: number | null = null;
   try {
@@ -1599,8 +2027,10 @@ export async function duplicateOurCategoryImageTemplate(templateId: string) {
     });
     createdId = created.id;
     await appendTemplatePosition(created.id, source.categoryId);
-    if (sourceView.ourTemplateImageId) await saveSceneReference(prisma, created.id, sourceView.ourTemplateImageId, effectiveSceneItemMapping(sourceView));
-    await saveTemplateCalibration(
+    if (definitionId) await copyDefinitionReference(prisma, created.id, sourceView, storedSource);
+    else if (variants) await saveOrientationVariants(prisma, created.id, variants);
+    else if (sourceView.ourTemplateImageId) await saveSceneReference(prisma, created.id, sourceView.ourTemplateImageId, effectiveSceneItemMapping(sourceView));
+    if (!definitionId && sourceView.imageWidth && sourceView.imageHeight) await saveTemplateCalibration(
       prisma,
       created.id,
       sourceView.imageWidth,
@@ -1610,6 +2040,7 @@ export async function duplicateOurCategoryImageTemplate(templateId: string) {
       sourceView.bottomText,
       sourceView.fontId,
     );
+    if (definitionId || variants) return resolvedImageTemplateView(created);
     return templateView({
       ...created,
       ourTemplateImageId: sourceView.ourTemplateImageId,
@@ -1625,7 +2056,7 @@ export async function duplicateOurCategoryImageTemplate(templateId: string) {
     });
   } catch (error) {
     if (createdId) await prisma.ourCategoryImageTemplate.delete({ where: { id: createdId } }).catch(() => undefined);
-    await unlink(imagePath).catch(() => undefined);
+    if (!definitionId && !variants) await unlink(imagePath).catch(() => undefined);
     throw error;
   }
 }
@@ -1707,7 +2138,7 @@ export async function linkFollowedOurCategoryImageTemplate(
   }
 }
 
-export async function getOurCategoryTemplateImage(templateId: string, preview = false) {
+export async function getOurCategoryTemplateImage(templateId: string, preview = false, orientation?: ListingArtworkOrientation) {
   const id = Number(templateId);
   if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid image template id.');
   const template = await prisma.ourCategoryImageTemplate.findUnique({ where: { id } });
@@ -1716,8 +2147,12 @@ export async function getOurCategoryTemplateImage(templateId: string, preview = 
     resolvedImageTemplateView(template),
     resolvedStoredImageTemplate(template),
   ]);
-  if (resolvedView.ourTemplateImageId) {
-    const scene = await getStoredOurTemplateImage(resolvedView.ourTemplateImageId);
+  const slot = resolvedView.orientationVariants ? orientation ? resolvedView.orientationVariants[orientation]
+    : resolvedView.orientationVariants.portrait ?? resolvedView.orientationVariants.landscape : null;
+  if (resolvedView.orientationVariants && !slot) throw new Error(`Choose a ${orientation ?? 'room'} scene for this image role.`);
+  const sceneId = slot?.ourTemplateImageId ?? resolvedView.ourTemplateImageId;
+  if (sceneId) {
+    const scene = await getStoredOurTemplateImage(sceneId);
     const contents = preview ? await readImagePreview(scene.imagePath) : await readFile(scene.imagePath);
     return { contents,
       contentType: preview ? 'image/webp' : 'image/png', fileName: `${scene.originalFileName}${preview ? '.webp' : ''}` };
@@ -1845,6 +2280,76 @@ async function removeImageGroups(
   ));
 }
 
+/** Remove generated outputs with storage rollback, leaving role ownership to the caller. */
+export async function removeOurCategoryImageTemplateOutputs<T>(
+  roleIds: number[],
+  mutate: (transaction: Prisma.TransactionClient, affectedRoleIds: number[]) => Promise<T>,
+  options: { deleteRoleFiles?: boolean } = {},
+): Promise<T> {
+  const ids = [...new Set(roleIds)];
+  if (ids.some((id) => !Number.isSafeInteger(id) || id < 1)) throw new Error('Invalid image role id.');
+  const plans = [];
+  for (const id of ids) plans.push(await imageTemplateDeletionPlan(String(id)));
+  const affectedRoleIds = [...new Set(plans.flatMap((plan) => plan.affectedTemplateIds))];
+  const categoryIds = [...new Set(plans.flatMap((plan) => [plan.template.categoryId, ...plan.dependentTemplates.map((role) => role.categoryId)]))];
+  const tracked = plans.flatMap((plan) => plan.listingImages);
+  const candidates = new Map(tracked.map((image) => [image.listing.id, image.listing]));
+  if (categoryIds.length) {
+    const current = await prisma.etsyListing.findMany({ where: { ourCategoryId: { in: categoryIds } }, select: {
+      id: true, shopId: true, localDirectoryName: true, subSection: { select: { name: true, shopSection: { select: {
+        title: true, shop: { select: { etsyShopId: true, shopName: true, title: true } },
+      } } } },
+    } });
+    for (const listing of current) candidates.set(listing.id, listing);
+  }
+  const fallbackIds = [...new Set([...candidates.values()].flatMap((listing) =>
+    listing.subSection?.shopSection.shop || !/^\d+$/.test(listing.shopId) ? [] : [BigInt(listing.shopId)]))];
+  const shops = fallbackIds.length ? await prisma.etsyShop.findMany({ where: { etsyShopId: { in: fallbackIds } },
+    select: { etsyShopId: true, shopName: true, title: true } }) : [];
+  const shopById = new Map(shops.map((shop) => [String(shop.etsyShopId), shop]));
+  const names = affectedRoleIds.map((id) => `template-${id}.png`);
+  const managedNames = new Set(names);
+  const groups = new Map<string, ImageRemovalGroup>();
+  for (const listing of candidates.values()) {
+    const known = tracked.filter((image) => image.listingId === listing.id && image.localFileName);
+    const subSection = listing.subSection, section = subSection?.shopSection;
+    const shop = section?.shop ?? shopById.get(listing.shopId);
+    if (!subSection || !section || !shop) {
+      if (known.length) throw new Error(`The storage location for listing ${listing.id} could not be resolved. No images were deleted.`);
+      continue;
+    }
+    const directoryPath = getListingDirectoryPath(shop.shopName ?? shop.title ?? `Shop ${shop.etsyShopId}`,
+      section.title, subSection.name, listing.localDirectoryName ?? `Listing-${listing.id}`);
+    const discovered = (await listGeneratedListingImageFiles(directoryPath)).filter((name) => managedNames.has(name));
+    const group = groups.get(directoryPath) ?? { directoryPath, images: [] };
+    group.images.push(...known.map(({ localFileName }) => ({ localFileName })), ...discovered.map((localFileName) => ({ localFileName })));
+    groups.set(directoryPath, group);
+  }
+  if (options.deleteRoleFiles) for (const plan of plans) {
+    if (!plan.template.linkedSourceImageTemplateId && plan.template.imagePath) {
+      const directoryPath = path.dirname(plan.template.imagePath);
+      const group = groups.get(directoryPath) ?? { directoryPath, images: [] };
+      group.images.push({ localFileName: path.basename(plan.template.imagePath) }); groups.set(directoryPath, group);
+    }
+  }
+  let result!: T;
+  await removeImageGroups([...groups.values()], 0, async () => {
+    result = await prisma.$transaction(async (transaction) => {
+      if (affectedRoleIds.length) await transaction.etsyListingImage.deleteMany({ where: { OR: [
+        { ourCategoryImageTemplateId: { in: affectedRoleIds } },
+        { localFileName: { in: names }, listingId: { in: [...candidates.keys()] } },
+      ] } });
+      if (candidates.size) {
+        const listingIds = [...candidates.keys()];
+        await transaction.etsyListing.updateMany({ where: { id: { in: listingIds } }, data: { imagesChanged: true, lastLocalChangeAt: new Date() } });
+        await invalidateListingImageGeneration(listingIds, transaction);
+      }
+      return mutate(transaction, affectedRoleIds);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30_000 });
+  });
+  return result;
+}
+
 export async function deleteOurCategoryImageTemplate(templateId: string, options?: { localSceneChange?: boolean }) {
   const plan = await imageTemplateDeletionPlan(templateId);
   const categoryIds = [...new Set([plan.template.categoryId, ...plan.dependentTemplates.map((template) => template.categoryId)])];
@@ -1962,7 +2467,7 @@ export async function reorderOurCategoryImageTemplates(categoryId: string, order
   return requestedIds.map(String);
 }
 
-export async function testOurCategoryImageTemplate(templateId: string, files: File[]) {
+export async function testOurCategoryImageTemplate(templateId: string, files: File[], orientation?: ListingArtworkOrientation) {
   const id = Number(templateId);
   if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid image template id.');
   const template = await prisma.ourCategoryImageTemplate.findUnique({
@@ -1972,13 +2477,23 @@ export async function testOurCategoryImageTemplate(templateId: string, files: Fi
   const categorySettings = await getOurCategorySettings(template.categoryId);
   if (!categorySettings) throw new Error('Our Template not found.');
   const categoryValues = settingsRowValues(categorySettings);
-  const resolvedView = await resolvedImageTemplateView(template);
+  let resolvedView = await resolvedImageTemplateView(template);
+  if (resolvedView.orientationVariants) {
+    const slot = orientation ? resolvedView.orientationVariants[orientation]
+      : resolvedView.orientationVariants.portrait ?? resolvedView.orientationVariants.landscape;
+    if (!slot) throw new Error('Choose a room scene for the selected orientation before testing this image role.');
+    resolvedView = { ...resolvedView, imageWidth: slot.imageWidth, imageHeight: slot.imageHeight, openingRegions: slot.openingRegions ?? [] };
+  }
   if (!resolvedView.imageWidth || !resolvedView.imageHeight) {
     throw new Error('Edit and save this image template before testing it.');
   }
-  if (resolvedView.displayFonts) {
+  if (resolvedView.definitionMode === 'no-areas') {
+    if (files.length) throw new Error('A No areas image does not require attached artwork.');
+    return renderOurCategoryImageTemplate(id, new Map(), undefined, undefined, undefined, undefined, undefined, undefined, orientation);
+  }
+  if (resolvedView.displayFonts && !resolvedView.orientationVariants && !resolvedView.ourTemplateImageId) {
     if (files.length > 0) throw new Error('A Display fonts template does not require an attached image.');
-    return renderOurCategoryImageTemplate(id, new Map());
+    return renderOurCategoryImageTemplate(id, new Map(), undefined, undefined, undefined, undefined, undefined, undefined, orientation);
   }
   const openingRegions = resolvedView.openingRegions;
   const requiredImageItemNumbers = categoryValues.templateType === 'multiple'
@@ -2013,7 +2528,7 @@ export async function testOurCategoryImageTemplate(templateId: string, files: Fi
   const sourceImages = await Promise.all(files.map(async (file) => Buffer.from(await file.arrayBuffer())));
   return renderOurCategoryImageTemplate(id, new Map(
     requiredImageItemNumbers.map((itemNumber, index) => [itemNumber, sourceImages[index]]),
-  ));
+  ), undefined, undefined, undefined, undefined, undefined, undefined, orientation);
 }
 
 export async function renderOurCategoryImageTemplate(
@@ -2025,6 +2540,8 @@ export async function renderOurCategoryImageTemplate(
   listingPrintCropsByItemNumber?: Map<number, ListingPrintCropSettings | null>,
   listingBackgroundColour?: ArtworkBackgroundColour,
   listingOrientationsByItemNumber?: Map<number, ListingArtworkOrientation>,
+  listingOrientation?: ListingArtworkOrientation,
+  options?: { sourceItemNumbersAreSceneItems?: boolean },
 ) {
   const template = await prisma.ourCategoryImageTemplate.findUnique({ where: { id: templateId } });
   if (!template) throw new Error('Image template not found.');
@@ -2038,19 +2555,51 @@ export async function renderOurCategoryImageTemplate(
     resolvedImageTemplateView(template),
     resolvedStoredImageTemplate(template),
   ]);
-  if (!resolvedView.imageWidth || !resolvedView.imageHeight) {
-    throw new Error('Edit and save this image template before generating it.');
+  let selectedOrientation = listingOrientation ?? listingOrientationsByItemNumber?.values().next().value
+    ?? listingPrintCropsByItemNumber?.values().next().value?.orientation;
+  if (!selectedOrientation && (resolvedView.orientationVariants || resolvedView.ourTemplateImageId) && sourceImagesByItemNumber.size) {
+    const metadata = await sharp(sourceImagesByItemNumber.values().next().value!, { failOn: 'error' }).metadata();
+    const dimensions = metadata.autoOrient ?? metadata;
+    selectedOrientation = dimensions.width && dimensions.height && dimensions.width > dimensions.height ? 'landscape' : 'portrait';
   }
-  if (resolvedView.ourTemplateImageId) {
+  const selectedSlot = resolvedView.orientationVariants && selectedOrientation ? resolvedView.orientationVariants[selectedOrientation] : null;
+  if (resolvedView.orientationVariants && !selectedSlot) throw new Error(`No ${selectedOrientation ?? 'matching'} room scene is assigned to ${resolvedView.name}.`);
+  const selectedSceneId = selectedSlot?.ourTemplateImageId ?? resolvedView.ourTemplateImageId;
+  if (selectedSceneId) {
+    const scene = await getOurTemplateImage(selectedSceneId);
+    const mapping = options?.sourceItemNumbersAreSceneItems ? null
+      : selectedSlot ? selectedSlot.itemMapping ?? null : effectiveSceneItemMapping(resolvedView);
+    if (resolvedView.definitionMode === 'no-areas') return renderSavedOurTemplateImage(selectedSceneId, new Map());
+    if (selectedOrientation) {
+      if (categoryValues[`${selectedOrientation}Enabled`] === false) throw new Error(`This template does not support ${selectedOrientation} artwork.`);
+      const sourceOrientations = new Map(listingOrientationsByItemNumber);
+      for (const opening of scene.openings) {
+        const itemNumber = mapping?.[String(opening.imageItemNumber)] ?? opening.imageItemNumber;
+        if (sourceOrientations.has(itemNumber)) continue;
+        const configured = listingPrintCropsByItemNumber?.get(itemNumber)?.orientation;
+        if (configured) sourceOrientations.set(itemNumber, configured);
+        else {
+          const contents = sourceImagesByItemNumber.get(itemNumber);
+          if (!contents) continue;
+          const metadata = await sharp(contents, { failOn: 'error' }).metadata();
+          const dimensions = metadata.autoOrient ?? metadata;
+          sourceOrientations.set(itemNumber, dimensions.width && dimensions.height && dimensions.width > dimensions.height ? 'landscape' : 'portrait');
+        }
+      }
+      const compatibility = getSceneOrientationCompatibility(scene.openings, selectedOrientation, sourceOrientations, mapping);
+      if (!compatibility.compatible) throw new Error(compatibility.reason ?? 'This room scene does not match the artwork orientation.');
+    }
     const artworks = new Map<number, { contents: Buffer; cropSettings?: ListingPrintCropSettings; backgroundColour?: ArtworkBackgroundColour }>();
     for (const [itemNumber, contents] of sourceImagesByItemNumber) {
       const crops = listingPrintCropsByItemNumber?.get(itemNumber);
       if (listingPrintCropsByItemNumber && !crops) throw new Error(`Complete Set Size for Image ${itemNumber} before generating listing images.`);
       artworks.set(itemNumber, { contents, cropSettings: crops ?? undefined, backgroundColour });
     }
-    return renderSavedOurTemplateImage(resolvedView.ourTemplateImageId, artworks,
-      (openingId, original) => resolvedView.openingRegions.find((region) => region.id === openingId)?.imageItemNumber ?? original);
+    return renderSavedOurTemplateImage(selectedSceneId, artworks,
+      (openingId, original) => options?.sourceItemNumbersAreSceneItems ? original : mapping?.[String(original)]
+        ?? (selectedSlot?.openingRegions ?? resolvedView.openingRegions).find((region) => region.id === openingId)?.imageItemNumber ?? original);
   }
+  if (!resolvedView.imageWidth || !resolvedView.imageHeight) throw new Error('Edit and save this image template before generating it.');
   const openingRegions = resolvedView.openingRegions;
   const sourceOrientations = new Map<number, Promise<ListingArtworkOrientation>>();
   const sourceOrientation = (itemNumber: number, sourceImage: Buffer) => {

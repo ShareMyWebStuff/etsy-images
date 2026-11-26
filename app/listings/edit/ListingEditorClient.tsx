@@ -2,6 +2,7 @@
 
 import { ListingTemplateProductSettings } from './ListingTemplateProductSettings';
 import { ListingTemplateSelector } from './ListingTemplateSelector';
+import { ListingTemplateArtworkAssignments } from './ListingTemplateArtworkAssignments';
 import { MarketsDeliverySettings } from '@/components/MarketsDeliverySettings';
 
 import { ChangeEvent, FormEvent, MouseEvent, useEffect, useRef, useState } from 'react';
@@ -42,6 +43,7 @@ import { ListingPrintCropDialog } from './ListingPrintCropDialog';
 import { ListingTextAreasDialog } from './ListingTextAreasDialog';
 import { ListingThumbnailChooser } from './ListingThumbnailChooser';
 import { ListingThumbnailGapControl } from './ListingThumbnailGapControl';
+import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
 
 type ListingEditorClientProps = {
   initialData: ListingEditorData | null;
@@ -79,29 +81,42 @@ function overviewPreparationScope(value: ListingEditorData | null | undefined, i
 }
 
 function overviewSourceReady(value: ListingEditorData) {
+  if (value.templateArtwork?.valid === false) return false;
   return value.template?.templateType === 'multiple'
     ? value.groupItems.length === value.template.itemCount && value.groupItems.every((item) => item.thumbnailFileName)
     : Boolean(value.thumbnail);
 }
 
+function overviewImageSourceReady(value: ListingEditorData) {
+  if (value.templateArtwork?.valid === false) return false;
+  if (value.templateArtwork?.roles.length && value.templateArtwork.roles.every((role) => role.sceneId)) return true;
+  return overviewSourceReady(value);
+}
+
 function imageGenerationTasks(imageTemplates: NonNullable<ListingEditorData['template']>['imageTemplates']): OverviewGenerationTask[] {
   return [
     { key: 'clear-images', label: 'Removing existing listing images', status: 'pending' },
-    ...imageTemplates.map((image) => ({ key: `image-${image.id}`, label: image.name, status: 'pending' as const })),
+    ...imageTemplates.filter((image) => image.enabled !== false).map((image) => ({ key: `image-${image.id}`, label: image.name, status: 'pending' as const })),
   ];
 }
 
-function completeListingGenerationTasks(template: NonNullable<ListingEditorData['template']>): OverviewGenerationTask[] {
+function listingHasDigitalDownloads(value: ListingEditorData) {
+  return effectiveListingTemplateSettings(value.template, value.etsyProducts.config).digitalDownload;
+}
+
+function completeListingGenerationTasks(template: NonNullable<ListingEditorData['template']>, digitalDownloads: boolean): OverviewGenerationTask[] {
   return [
     ...imageGenerationTasks(template.imageTemplates),
     { key: 'details', label: 'Listing details and tags', status: 'pending' },
     ...(template.templateType === 'multiple'
-      ? [{ key: 'download-grouped-pdf', label: 'Grouped download instructions', status: 'pending' as const }]
+      ? digitalDownloads ? [{ key: 'download-grouped-pdf', label: 'Grouped download instructions', status: 'pending' as const }] : []
       : [
         ...PRINTABLE_DOWNLOAD_SPECS.map((spec) => ({ key: `download-${spec.key}`, label: spec.label, status: 'pending' as const })),
         { key: 'download-guide', label: 'How to print guide', status: 'pending' as const },
-        { key: 'dropbox', label: 'Dropbox upload', status: 'pending' as const },
-        { key: 'download-instructions', label: 'Download Instructions', status: 'pending' as const },
+        ...(digitalDownloads ? [
+          { key: 'dropbox', label: 'Dropbox upload', status: 'pending' as const },
+          { key: 'download-instructions', label: 'Download Instructions', status: 'pending' as const },
+        ] : []),
       ]),
     { key: 'mark-current', label: 'Saving generation status', status: 'pending' },
   ];
@@ -114,9 +129,10 @@ const OVERVIEW_GENERATION_STAGES: Array<Pick<OverviewGenerationStage, 'key' | 'l
   { key: 'dropbox', label: 'Dropbox' },
 ];
 
-function initialOverviewGenerationStages(includeDropbox: boolean): OverviewGenerationStage[] {
+function initialOverviewGenerationStages(includeDropbox: boolean, includeDownloads = true): OverviewGenerationStage[] {
   return OVERVIEW_GENERATION_STAGES
     .filter((stage) => includeDropbox || stage.key !== 'dropbox')
+    .filter((stage) => includeDownloads || stage.key !== 'downloads')
     .map((stage) => ({ ...stage, status: 'pending', message: 'Waiting' }));
 }
 
@@ -279,6 +295,8 @@ function testerRatioFromDownloadRole(role: PrintableDownloadRole | null): Mockup
 export function ListingEditorClient({ initialData, showAdminEditSection = false, initialTab = 'overview' }: ListingEditorClientProps) {
   const [data, setData] = useState(initialData);
   const currentEditorData = useRef(initialData); currentEditorData.current = data;
+  const [artworkSelectionsDirty, setArtworkSelectionsDirty] = useState(false);
+  const artworkSelectionsDirtyRef = useRef(false); artworkSelectionsDirtyRef.current = artworkSelectionsDirty;
   const [activeTab, setActiveTab] = useState<WorkflowTab>(initialTab);
   const [previewImage, setPreviewImage] = useState<{
     src: string;
@@ -1096,8 +1114,9 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     if (intended.scope !== overviewPreparationScope(nextData) || intended.scope !== overviewPreparationScope(currentEditorData.current)) {
       cancelQueuedGeneration(); return;
     }
-    if (!nextData.template || !overviewSourceReady(nextData)) { cancelQueuedGeneration(); return; }
-    if (nextData.template.templateType !== 'multiple') {
+    if (!nextData.template || artworkSelectionsDirtyRef.current || !(intended.action === 'images' ? overviewImageSourceReady(nextData) : overviewSourceReady(nextData))) { cancelQueuedGeneration(); return; }
+    const adaptiveImageSources = !nextData.templateArtwork || nextData.templateArtwork.roles.some((role) => !role.sceneId);
+    if (nextData.template.templateType !== 'multiple' && (intended.action === 'all' || adaptiveImageSources)) {
       if (!nextData.listing.printCropSettings) {
         setBusyKey('prepare-overview-generation'); setPrintCropsOpen(true); return;
       }
@@ -1113,7 +1132,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   function requestOverviewGeneration(action: 'images' | 'all') {
     const latest = currentEditorData.current;
     if (busyKey !== null || saving || preparationSaving.current || overviewActionRunning.current || queuedGeneration.current
-      || !latest?.template || !overviewSourceReady(latest)) return;
+      || artworkSelectionsDirtyRef.current || !latest?.template || !(action === 'images' ? overviewImageSourceReady(latest) : overviewSourceReady(latest))) return;
     queuedGeneration.current = { action, scope: overviewPreparationScope(latest), sourceScope: overviewPreparationScope(latest, false),
       missingSourceTimestamp: !latest.thumbnail?.updatedAt };
     setQueuedGenerationAction(action); setError(null);
@@ -1121,15 +1140,18 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   }
 
   async function generateOverviewImages(currentData: ListingEditorData) {
-    if (!currentData.template || overviewActionRunning.current) return;
+    if (!currentData.template || currentData.templateArtwork?.valid === false || artworkSelectionsDirtyRef.current || overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
     startOverviewGenerationTasks(imageGenerationTasks(currentData.template.imageTemplates));
     setBusyKey('generate-overview-images');
     try {
       const cleared = await runOverviewGenerationTask('clear-images', clearOverviewImages);
-      const imageTemplates = [...(cleared.template?.imageTemplates ?? [])];
+      const imageTemplates = (cleared.template?.imageTemplates ?? []).filter((image) => image.enabled !== false);
       reconcileOverviewGenerationTasks(imageGenerationTasks(imageTemplates));
+      if (cleared.template && cleared.template.imageTemplates.length > 0 && imageTemplates.length === 0) {
+        await postOverviewAction({ action: 'images' }, 'Unable to finish checking image orientations.');
+      }
       for (const imageTemplate of imageTemplates) {
         await runOverviewGenerationTask(`image-${imageTemplate.id}`, () => postOverviewAction(
           { action: 'images', imageTemplateId: Number(imageTemplate.id) },
@@ -1145,7 +1167,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   }
 
   async function generateOverviewImage(imageTemplateId: string, imageTemplateName: string) {
-    if (overviewActionRunning.current) return;
+    if (overviewActionRunning.current || artworkSelectionsDirtyRef.current || currentEditorData.current?.templateArtwork?.valid === false) return;
     overviewActionRunning.current = true;
     setError(null);
     startOverviewGenerationTasks([{ key: `image-${imageTemplateId}`, label: imageTemplateName, status: 'pending' }]);
@@ -1233,7 +1255,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   }
 
   async function generateGroupedInstructions() {
-    if (overviewActionRunning.current) return;
+    if (overviewActionRunning.current || !data || !listingHasDigitalDownloads(data)) return;
     overviewActionRunning.current = true;
     setError(null);
     startOverviewGenerationTasks([{ key: 'download-grouped-pdf', label: 'Grouped download instructions', status: 'pending' }]);
@@ -1251,7 +1273,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   }
 
   async function generateSingleDownloadInstructions() {
-    if (!data || data.template?.templateType === 'multiple') return;
+    if (!data || !listingHasDigitalDownloads(data) || data.template?.templateType === 'multiple') return;
     if (overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
@@ -1288,12 +1310,13 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   }
 
   async function generateEntireOverview(currentData: ListingEditorData) {
-    if (!currentData.template || overviewActionRunning.current) return;
+    if (!currentData.template || currentData.templateArtwork?.valid === false || artworkSelectionsDirtyRef.current || overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
     setOverviewGenerationError(null);
-    startOverviewGenerationTasks(completeListingGenerationTasks(currentData.template));
-    setOverviewGenerationStages(initialOverviewGenerationStages(currentData.template.templateType !== 'multiple'));
+    const initiallyDigital = listingHasDigitalDownloads(currentData);
+    startOverviewGenerationTasks(completeListingGenerationTasks(currentData.template, initiallyDigital));
+    setOverviewGenerationStages(initialOverviewGenerationStages(initiallyDigital && currentData.template.templateType !== 'multiple', initiallyDigital || currentData.template.templateType !== 'multiple'));
     setOverviewGenerationItem(null);
     setBusyKey('generate-overview-all');
     let activeStage: OverviewGenerationStageKey | 'finalize' = 'images';
@@ -1311,16 +1334,17 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
     try {
       updateStage('images', 'running', 'Removing existing listing images');
       const cleared = await runOverviewGenerationTask('clear-images', clearOverviewImages);
-      const imageTemplates = [...(cleared.template?.imageTemplates ?? [])];
-      if (!cleared.template || imageTemplates.length === 0) {
+      const imageTemplates = (cleared.template?.imageTemplates ?? []).filter((image) => image.enabled !== false);
+      if (!cleared.template || cleared.template.imageTemplates.length === 0) {
         reconcileOverviewGenerationTasks(imageGenerationTasks([]));
         setOverviewGenerationStages([{ key: 'images', label: 'Create Images', status: 'complete',
           message: 'Existing listing images removed. No template images remain to generate.' }]);
         return;
       }
       const isMultipleTemplate = cleared.template.templateType === 'multiple';
-      reconcileOverviewGenerationTasks(completeListingGenerationTasks(cleared.template));
-      setOverviewGenerationStages((current) => initialOverviewGenerationStages(!isMultipleTemplate).map((stage) => (
+      let digitalDownloads = listingHasDigitalDownloads(cleared);
+      reconcileOverviewGenerationTasks(completeListingGenerationTasks(cleared.template, digitalDownloads));
+      setOverviewGenerationStages((current) => initialOverviewGenerationStages(digitalDownloads && !isMultipleTemplate, digitalDownloads || !isMultipleTemplate).map((stage) => (
         current?.find((previous) => previous.key === stage.key) ?? stage
       )));
       for (const [index, imageTemplate] of imageTemplates.entries()) {
@@ -1330,6 +1354,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
           `Unable to generate ${imageTemplate.name}.`,
         ));
       }
+      if (imageTemplates.length === 0) await postOverviewAction({ action: 'images' }, 'Unable to finish checking image orientations.');
       setOverviewGenerationItem(null);
       updateStage('images', 'complete', `${imageTemplates.length} ${imageTemplates.length === 1 ? 'image' : 'images'} created`);
 
@@ -1346,17 +1371,25 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       setOverviewGenerationItem(null);
       updateStage('details', 'complete', 'Listing details and tags created');
 
-      activeStage = 'downloads';
-      updateStage('downloads', 'running', isMultipleTemplate
-        ? 'Preparing source Dropbox links and the grouped instruction PDF'
-        : 'Preparing digital downloads');
-      if (isMultipleTemplate) {
+      digitalDownloads = listingHasDigitalDownloads(detailsData ?? currentEditorData.current ?? cleared);
+      reconcileOverviewGenerationTasks(completeListingGenerationTasks(cleared.template, digitalDownloads));
+      setOverviewGenerationStages((current) => initialOverviewGenerationStages(digitalDownloads && !isMultipleTemplate, digitalDownloads || !isMultipleTemplate).map((stage) => (
+        current?.find((previous) => previous.key === stage.key) ?? stage
+      )));
+
+      if (digitalDownloads || !isMultipleTemplate) {
+        activeStage = 'downloads';
+        updateStage('downloads', 'running', isMultipleTemplate
+          ? 'Preparing source Dropbox links and the grouped instruction PDF'
+          : 'Preparing digital downloads');
+      }
+      if (isMultipleTemplate && digitalDownloads) {
         await runOverviewGenerationTask('download-grouped-pdf', () => postOverviewAction(
           { action: 'grouped-pdf' },
           'Unable to create the grouped download instructions PDF.',
         ));
         updateStage('downloads', 'complete', 'Grouped instruction PDF created with all source Dropbox links');
-      } else {
+      } else if (!isMultipleTemplate) {
         for (const [index, spec] of PRINTABLE_DOWNLOAD_SPECS.entries()) {
           updateStage('downloads', 'running', `Creating ${spec.label} (${index + 1} of ${PRINTABLE_DOWNLOAD_SPECS.length + 1})`);
           await runOverviewGenerationTask(`download-${spec.key}`, async () => {
@@ -1381,7 +1414,12 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
       }
       setOverviewGenerationItem(null);
 
-      if (!isMultipleTemplate) {
+      digitalDownloads = listingHasDigitalDownloads(currentEditorData.current ?? cleared);
+      reconcileOverviewGenerationTasks(completeListingGenerationTasks(cleared.template, digitalDownloads));
+      setOverviewGenerationStages((current) => initialOverviewGenerationStages(digitalDownloads && !isMultipleTemplate, digitalDownloads || !isMultipleTemplate).map((stage) => (
+        current?.find((previous) => previous.key === stage.key) ?? stage
+      )));
+      if (!isMultipleTemplate && digitalDownloads) {
         activeStage = 'dropbox';
         updateStage('dropbox', 'running', 'Uploading files and creating the download instructions');
         await runOverviewGenerationTask('dropbox', async () => {
@@ -1473,7 +1511,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   }
 
   async function runDropboxAction() {
-    if (!data?.dropbox.action || overviewActionRunning.current) return;
+    if (!data?.dropbox.action || !listingHasDigitalDownloads(data) || overviewActionRunning.current) return;
     overviewActionRunning.current = true;
     setError(null);
     startOverviewGenerationTasks([{ key: 'dropbox', label: 'Dropbox upload', status: 'pending' }]);
@@ -2388,6 +2426,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
   function renderOverview() {
     if (!data) return null;
     const multiple = data.template?.templateType === 'multiple';
+    const digitalDownloads = listingHasDigitalDownloads(data);
     const requiredItems = data.template?.itemCount ?? 1;
     const selectedCandidates = groupSelection.flatMap((id) => {
       const candidate = data.groupCandidates.find((item) => item.id === id)
@@ -2426,7 +2465,8 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
         ? <CheckCircle2 className="h-5 w-5 text-green-700" aria-label="Created" />
         : <XCircle className="h-5 w-5 text-red-700" aria-label="Not created" />;
     };
-    const sourceReady = overviewSourceReady(data);
+    const sourceReady = overviewSourceReady(data) && !artworkSelectionsDirty;
+    const imageSourceReady = overviewImageSourceReady(data) && !artworkSelectionsDirty;
 
     return (
       <div className="grid gap-6">
@@ -2524,6 +2564,14 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               setPreviewImage(null); setOverviewGenerationError(null);
             }} />
         </section>
+
+        <ListingTemplateArtworkAssignments data={data} disabled={busyKey !== null || saving}
+          onDirtyChange={setArtworkSelectionsDirty}
+          onSavingChange={(changing) => {
+            overviewActionRunning.current = changing;
+            setBusyKey((current) => changing ? 'save-artwork-selections' : current === 'save-artwork-selections' ? null : current);
+          }}
+          onSaved={(nextData) => { applyFreshData(nextData); setOverviewGenerationError(null); }} />
 
         <section className="grid gap-4 rounded-lg border bg-card p-5">
           <h2 className="text-lg font-semibold">General Listing</h2>
@@ -2711,7 +2759,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
               <p className="text-sm text-muted-foreground">Template: {data.template?.name ?? 'No template selected'}</p>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => requestOverviewGeneration('images')} disabled={busyKey !== null || saving || !sourceReady || !data.template}>
+              <Button type="button" variant="outline" onClick={() => requestOverviewGeneration('images')} disabled={busyKey !== null || saving || !imageSourceReady || !data.template}>
                 {busyKey === 'generate-overview-images'
                   ? <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
                   : <ImageIcon className="h-4 w-4" aria-hidden="true" />}
@@ -2755,10 +2803,10 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
             <Table>
               <TableHeader><TableRow><TableHead>Details</TableHead><TableHead className="w-32">Status</TableHead><TableHead className="w-28 text-right">Run</TableHead></TableRow></TableHeader>
               <TableBody>
-                <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Images{data.listing.imagesNeedRegeneration ? <p role="status" className="mt-1 text-sm font-normal text-amber-800">A template image changed. Regenerate the listing images to use the latest scene.</p> : null}</TableCell></TableRow>
-                {(data.template?.imageTemplates ?? []).map((imageTemplate) => <TableRow key={imageTemplate.id} {...generationRowProps(`image-${imageTemplate.id}`)}>
-                  <TableCell>{imageTemplate.name}</TableCell><TableCell>{status(imageTemplate.generated, `image-${imageTemplate.id}`)}</TableCell>
-                  <TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generateOverviewImage(imageTemplate.id, imageTemplate.name)} disabled={busyKey !== null || !sourceReady || (!multiple && !thumbnailWorkflowReady)}>{busyKey === `generate-overview-image-${imageTemplate.id}` ? 'Running...' : 'Run'}</Button></TableCell>
+                <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Images{data.listing.imagesNeedRegeneration ? <p role="status" className="mt-1 text-sm font-normal text-amber-800">A template image changed. Regenerate the listing images to use the latest scene.</p> : null}{data.listing.orientationWarning ? <p role="status" className="mt-1 text-sm font-normal text-amber-800"><AlertTriangle className="mr-1 inline h-4 w-4" aria-hidden="true" />{data.listing.orientationWarning}</p> : null}</TableCell></TableRow>
+                {(data.template?.imageTemplates ?? []).map((imageTemplate) => <TableRow key={imageTemplate.id} {...(imageTemplate.enabled === false ? { className: 'bg-yellow-50 hover:bg-yellow-100' } : generationRowProps(`image-${imageTemplate.id}`))}>
+                  <TableCell>{imageTemplate.name}{imageTemplate.disabledReason ? <p className="mt-1 text-sm text-amber-800">{imageTemplate.disabledReason}</p> : null}</TableCell><TableCell>{imageTemplate.enabled === false ? <span className="inline-flex items-center gap-1 text-amber-800"><AlertTriangle className="h-4 w-4" aria-hidden="true" />Blocked</span> : status(imageTemplate.generated, `image-${imageTemplate.id}`)}</TableCell>
+                  <TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generateOverviewImage(imageTemplate.id, imageTemplate.name)} disabled={imageTemplate.enabled === false || busyKey !== null || !imageSourceReady || (!multiple && !data.templateArtwork && !thumbnailWorkflowReady)}>{busyKey === `generate-overview-image-${imageTemplate.id}` ? 'Running...' : 'Run'}</Button></TableCell>
                 </TableRow>)}
                 {(data.template?.imageTemplates.length ?? 0) === 0 ? <TableRow><TableCell colSpan={3} className="text-muted-foreground">No image templates configured.</TableCell></TableRow> : null}
 
@@ -2771,7 +2819,7 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                 <TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Create Digital Downloads</TableCell></TableRow>
                 {!multiple ? <>{printableStatus.items.map((item) => <TableRow key={item.key} {...generationRowProps(`download-${item.key}`)}><TableCell>{item.label}</TableCell><TableCell>{status(item.created, `download-${item.key}`)}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generatePrintableDownload(item.key)} disabled={busyKey !== null || !data.thumbnail}>Run</Button></TableCell></TableRow>)}
                   <TableRow {...generationRowProps('download-guide')}><TableCell>How to print guide</TableCell><TableCell>{status(printableStatus.guideCreated, 'download-guide')}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={() => void generatePrintableDownload('guide')} disabled={busyKey !== null}>Run</Button></TableCell></TableRow></> : null}
-                <TableRow {...generationRowProps(multiple ? 'download-grouped-pdf' : 'download-instructions')}>
+                {digitalDownloads ? <TableRow {...generationRowProps(multiple ? 'download-grouped-pdf' : 'download-instructions')}>
                   <TableCell>Download Instructions</TableCell>
                   <TableCell>{status(
                     data.files.some((file) => /instruction/i.test(file.originalFileName ?? file.fileName)),
@@ -2788,9 +2836,9 @@ export function ListingEditorClient({ initialData, showAdminEditSection = false,
                       </Button>
                     )}
                   </TableCell>
-                </TableRow>
+                </TableRow> : null}
 
-                {!multiple ? <><TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Dropbox</TableCell></TableRow>
+                {!multiple && digitalDownloads ? <><TableRow className="bg-muted/50"><TableCell colSpan={3} className="font-semibold">Dropbox</TableCell></TableRow>
                   <TableRow {...generationRowProps('dropbox')}><TableCell>Create Dropbox / Upload files / Create download instructions PDF</TableCell><TableCell>{status(data.dropbox.current, 'dropbox')}</TableCell><TableCell className="text-right"><Button type="button" size="sm" variant="outline" onClick={runDropboxAction} disabled={busyKey !== null || !data.dropbox.action}>Run</Button></TableCell></TableRow></> : null}
               </TableBody>
             </Table>

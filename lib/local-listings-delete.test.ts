@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ send: vi.fn(), shop: vi.fn(), section: vi.fn(), subsection: vi.fn(), listing: vi.fn(),
   otherListings: vi.fn(), current: vi.fn(), templates: vi.fn(), scenes: vi.fn(), pins: vi.fn(), orders: vi.fn(),
-  transaction: vi.fn(), deleteMany: vi.fn(), dropbox: vi.fn() }));
+  transaction: vi.fn(), deleteMany: vi.fn(), dropbox: vi.fn(),invalidateArtworkConsumers:vi.fn() }));
+vi.mock('@/lib/listing-template-artwork-dependencies',()=>({invalidateListingTemplateArtworkConsumers:mocks.invalidateArtworkConsumers}));
 vi.mock('@aws-sdk/client-s3', () => ({ S3Client: class { send = mocks.send; },
   CopyObjectCommand: class { constructor(readonly input: any) {} }, DeleteObjectCommand: class { constructor(readonly input: any) {} },
   DeleteObjectsCommand: class { constructor(readonly input: any) {} }, GetObjectCommand: class { constructor(readonly input: any) {} },
@@ -61,6 +62,7 @@ beforeEach(() => {
   mocks.listing.mockImplementation(async () => structuredClone(listing)); mocks.current.mockImplementation(async () => listing ? { id: listing.id } : null);
   mocks.otherListings.mockResolvedValue([]); mocks.templates.mockResolvedValue([]); mocks.scenes.mockResolvedValue([]); mocks.pins.mockResolvedValue([]); mocks.orders.mockResolvedValue([]);
   mocks.dropbox.mockResolvedValue(undefined);
+  mocks.invalidateArtworkConsumers.mockResolvedValue([79,90]);
   mocks.deleteMany.mockImplementation(async () => { if (staleListing) return { count: 0 }; listing = null; return { count: 1 }; });
   mocks.transaction.mockImplementation(async (operation) => {
     const previous = structuredClone(listing);
@@ -98,6 +100,15 @@ describe('local listing deletion with real storage rollback', () => {
     }) }));
     const deletes = mocks.send.mock.calls.flatMap(([command], index) => command.constructor.name === 'DeleteObjectCommand' ? [mocks.send.mock.invocationCallOrder[index]] : []);
     expect(Math.max(...deletes)).toBeLessThan(mocks.deleteMany.mock.invocationCallOrder[0]);
+    expect(mocks.invalidateArtworkConsumers).toHaveBeenCalledExactlyOnceWith([79],expect.objectContaining({etsyListing:expect.anything()}));
+    expect(mocks.invalidateArtworkConsumers.mock.invocationCallOrder[0]).toBeLessThan(mocks.deleteMany.mock.invocationCallOrder[0]);
+  });
+
+  it('restores deleted source assets and retains the listing if consumer revision invalidation fails',async()=>{
+    const before=new Map(objects);
+    mocks.invalidateArtworkConsumers.mockRejectedValueOnce(new Error('Consumer revisions could not be invalidated'));
+    await expect(deleteListing(...context)).rejects.toThrow('Consumer revisions could not be invalidated');
+    expect(mocks.deleteMany).not.toHaveBeenCalled();expect(listing).toEqual(fixture());expect(objects).toEqual(before);
   });
 
   it.each(['etsyId', 'etsyDownloadId', 'etsyCustomisedId', 'active', 'published'])('retains existing Etsy/publication guard: %s', async (guard) => {

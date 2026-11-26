@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ListingEditorData } from '@/lib/listing-editor';
 import { createListingPrintCropSettings, defaultNativeListingPrintCropDraft } from '@/lib/listing-print-crops';
 import { defaultListingPersonalisationTextAreaSettings } from '@/lib/personalisation-text-areas';
+import { PRINTABLE_DOWNLOAD_SPECS } from '@/lib/printable-download-specs';
 
 vi.mock('@/components/MarketsDeliverySettings', () => ({ MarketsDeliverySettings: () => null }));
 vi.mock('./ListingThumbnailGapControl', () => ({ ListingThumbnailGapControl: () => null }));
@@ -121,7 +122,96 @@ async function saveSize(label: string) {
 
 afterEach(() => vi.unstubAllGlobals());
 
+function orientationWarningData(allBlocked = false) {
+  const value = normalData();
+  const reason = 'Load a landscape image for this role.';
+  value.listing.orientationWarning = 'Resolve template artwork errors in Todo before generating.';
+  value.template!.imageTemplates = value.template!.imageTemplates.map((image, index) => ({ ...image,
+    enabled: allBlocked ? false : index !== 0, disabledReason: allBlocked || index === 0 ? reason : null,
+  }));
+  const errors = value.template!.imageTemplates.filter(image => image.enabled === false).map(image => `${image.name}: ${reason}`);
+  value.templateArtwork = { categoryId: 8, orientation: 'portrait', valid: false, errors, assignments: {}, candidates: [],
+    roles: value.template!.imageTemplates.map(image => ({ id: Number(image.id), name: image.name, sceneId: image.enabled === false ? null : '00000000-0000-4000-8000-000000000002',
+      assignmentKey: null, mode: 'both', requiresSelection: false, items: [], valid: image.enabled !== false, errors: image.enabled === false ? [reason] : [] })) };
+  value.todoItems = errors.map(label => ({ label, tab: 'overview' }));
+  value.readyToUpload = false;
+  value.images = [{ id: 'old-room', fileName: 'template-142.png', originalFileName: 'First room.png', rank: 1,
+    updatedAt: '2026-11-17T11:00:00.000Z', ourCategoryImageTemplateId: '142' }];
+  return value;
+}
+
+describe('strict template artwork generation controls', () => {
+  it.each([false, true])('blocks every image Run and reports Todo errors when allBlocked=%s', allBlocked => {
+    const initial = orientationWarningData(allBlocked), fetchMock = requests(initial);
+    render(<ListingEditorClient initialData={initial} />);
+    expect(screen.getAllByText('Blocked')).toHaveLength(allBlocked ? 2 : 1);
+    for (const image of initial.template!.imageTemplates) {
+      const row = screen.getByRole('row', { name: new RegExp(`^${image.name}`) }), run = within(row).getByRole('button', { name: 'Run' }) as HTMLButtonElement;
+      expect(run.disabled).toBe(true); fireEvent.click(run);
+    }
+    expect(overviewActions(fetchMock)).toEqual([]);
+    fireEvent.click(screen.getByRole('tab', { name: /Todo/ }));
+    for (const error of initial.templateArtwork!.errors) expect(screen.getByText(error)).toBeTruthy();
+    expect(fetchMock.mock.calls.filter(([, options]) => options?.method)).toHaveLength(0);
+  });
+
+  it.each(['Generate Images', 'Generate'])('%s preserves existing photos and sends no cleanup/details/download requests when any role is invalid', action => {
+    const initial = orientationWarningData(), fetchMock = requests(initial);
+    render(<ListingEditorClient initialData={initial} />);
+    const button = screen.getByRole('button', { name: action }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true); fireEvent.click(button);
+    expect(overviewActions(fetchMock)).toEqual([]);
+    expect(fetchMock.mock.calls.filter(([, options]) => options?.method)).toHaveLength(0);
+    expect(initial.images.map(image => image.id)).toEqual(['old-room']);
+    expect(screen.queryByText('Generation complete')).toBeNull();
+  });
+
+  it('blocks generation for unsaved artwork edits and re-enables it only after the saved plan is applied', async () => {
+    const initial = normalData(), assignmentKey = '142:00000000-0000-4000-8000-000000000001';
+    initial.templateArtwork = { categoryId: 8, orientation: 'portrait', valid: true, errors: [], assignments: { [assignmentKey]: { '1': '194', '2': '195' } },
+      roles: [{ id: 142, name: 'First room', sceneId: '00000000-0000-4000-8000-000000000001', assignmentKey, mode: 'both', requiresSelection: true, valid: true, errors: [],
+        items: [{ itemNumber: 1, orientation: 'portrait', sourceListingId: '194', automatic: false }, { itemNumber: 2, orientation: 'portrait', sourceListingId: '195', automatic: false }] }],
+      candidates: [{ id: '194', name: 'Current fox', orientation: 'portrait', sectionId: '7', subSectionId: '12', hasThumbnail: true, hasCurrentSizes: true },
+        { id: '195', name: 'Portrait deer', orientation: 'portrait', sectionId: '7', subSectionId: '13', hasThumbnail: true, hasCurrentSizes: true }] };
+    const saved = structuredClone(initial); saved.templateArtwork!.assignments[assignmentKey]['2'] = '194'; saved.templateArtwork!.roles[0].items[1].sourceListingId = '194';
+    const fetchMock = requests(initial, initial, (url, options) => url === '/api/shops/listings/editor/artwork-assignments' && options?.method === 'PUT'
+      ? json({ data: saved, plan: saved.templateArtwork }) : undefined);
+    render(<ListingEditorClient initialData={initial} />);
+    for (const name of ['Generate Images', 'Generate']) expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.change(screen.getByRole('combobox', { name: /^First room .*Artwork item 2 \(portrait\)$/ }), { target: { value: '194' } });
+    for (const name of ['Generate Images', 'Generate']) expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true);
+    for (const image of initial.template!.imageTemplates) expect((within(screen.getByRole('row', { name: new RegExp(`^${image.name}`) })).getByRole('button', { name: 'Run' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(overviewActions(fetchMock)).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Save artwork selections' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Generate Images' }) as HTMLButtonElement).disabled).toBe(false));
+    expect((screen.getByRole('button', { name: 'Generate' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(fetchMock.mock.calls.filter(([, options]) => options?.method).map(([url]) => url)).toEqual(['/api/shops/listings/editor/artwork-assignments']);
+    expect(overviewActions(fetchMock)).toEqual([]);
+  });
+});
+
 describe('guided generation after changing a listing template', () => {
+  it('uses a newly selected physical template for full Generate while retaining printable masters and the print guide', async () => {
+    const initial = normalData(), changed = structuredClone(initial);
+    changed.template = { ...changed.template!, id: 22, name: 'Night Sky', digitalDownload: false,
+      imageTemplates: [{ id: '222', name: 'Night room', generated: false, position: 0 }] };
+    // The template is authoritative even if an old raw product flag remains true.
+    changed.etsyProducts.config.digitalDownload = true; changed.etsyProducts.config.digitalDownloadOverride = true;
+    const fetchMock = requests(initial, changed);
+    render(<ListingEditorClient initialData={initial} />);
+    await changeTemplate();
+    expect(screen.queryByRole('row', { name: /Download Instructions/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await screen.findByText('Generation complete');
+    expect(overviewActions(fetchMock).map(request => request.action)).toEqual(['clear-images', 'images', 'details', 'mark-current']);
+    expect(overviewActions(fetchMock).find(request => request.action === 'images')?.imageTemplateId).toBe(222);
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/shops/listings/editor/downloads/generate').map(([, options]) => JSON.parse(String(options?.body)).ratio)).toEqual([...PRINTABLE_DOWNLOAD_SPECS.map(spec => spec.key), 'guide']);
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/shops/listings/dropbox')).toBe(false);
+    const stages = screen.getByRole('list', { name: 'Listing generation progress' });
+    expect(within(stages).queryByText('Dropbox')).toBeNull();
+    expect(screen.queryByRole('row', { name: /Download Instructions/ })).toBeNull();
+  });
+
   it.each(['Generate Images', 'Generate'] as const)('%s guides newly required text areas, then resumes exactly the chosen workflow with the fresh template', async (action) => {
     const initial = normalData(), changed = nightSky(initial), saved = structuredClone(changed);
     saved.listing.personalisationTextAreas = defaultListingPersonalisationTextAreaSettings();

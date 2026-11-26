@@ -4,7 +4,6 @@ import { getEtsyKeystring, getValidEtsyAccessToken, readSavedTokens } from '@/li
 import { shopDirectoryExists } from '@/lib/local-shop-directory';
 import { ensureSingleListingsSubSection } from '@/lib/shop-sub-sections';
 import { ensureListingProductDefaultsInTransaction } from '@/lib/listing-products';
-import { getSyncToEtsyData } from '@/lib/sync-to-etsy';
 import { calculateShopSectionMetrics } from '@/lib/shop-section-metrics';
 import { listingsNeedingImageGeneration } from '@/lib/listing-image-generation-state';
 
@@ -1020,7 +1019,7 @@ export async function getShopSectionsPageData(shopId: string): Promise<ShopSecti
         digitalDownload: true, updatedAt: true, printFrameSection: { select: { id: true, etsyShopSectionId: true } },
         customisedSection: { select: { id: true, etsyShopSectionId: true } }, downloadSection: { select: { id: true, etsyShopSectionId: true } } } },
     } }),
-    getSyncToEtsyData({ checkRemoteSections: false, shopId: canonicalShopId }),
+    import('@/lib/sync-to-etsy').then(({ getSyncToEtsyData }) => getSyncToEtsyData({ checkRemoteSections: false, shopId: canonicalShopId })),
   ]);
   const pendingGenerationIds = await listingsNeedingImageGeneration(listings.map((listing) => listing.id));
   const metrics = calculateShopSectionMetrics(canonicalShopId, sections, listings, syncData.localSections.flatMap((section) => section.listings), pendingGenerationIds);

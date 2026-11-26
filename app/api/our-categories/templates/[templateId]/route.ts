@@ -4,6 +4,8 @@ import {
   deleteOurCategoryImageTemplate,
   getOurCategoryImageTemplateDeletionImpact,
   updateOurCategoryImageTemplate,
+  updateOurCategoryImageTemplateOrientation,
+  OurCategoryTemplateConflictError,
 } from '@/lib/our-categories';
 
 export async function GET(_request: Request, { params }: { params: Promise<{ templateId: string }> }) {
@@ -13,6 +15,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tem
   } catch (error) {
     console.error('Failed to inspect Our Category image template deletion:', error);
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Unable to inspect the image template.' }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: Request, { params }: { params: Promise<{ templateId: string }> }) {
+  try {
+    return NextResponse.json({ template: await updateOurCategoryImageTemplateOrientation((await params).templateId, await request.json()) });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Unable to update the orientation scene.' }, { status: error instanceof OurCategoryTemplateConflictError ? 409 : 400 });
   }
 }
 

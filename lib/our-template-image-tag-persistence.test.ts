@@ -47,6 +47,7 @@ beforeEach(async () => {
     })));
     if (text.includes('FROM our_template_image_tags')) return catalogue.filter(({ id }) => params.includes(id));
     if (text.includes('FROM our_template_images')) return structuredClone(text.includes('WHERE id') ? [scenes.get(params[0])].filter(Boolean) : [...scenes.values()]);
+    if (text.includes('FROM our_template_image_definition_images')) return [];
     if (text.includes('FROM our_category_image_templates')) return [];
     throw new Error(`Unexpected tag persistence query: ${text}`);
   });
@@ -61,7 +62,7 @@ beforeEach(async () => {
     } else if (text.includes('DELETE FROM our_template_image_tag_links')) assigned.set(params[0], []);
     else if (text.includes('INSERT INTO our_template_image_tag_links')) {
       for (let index = 0; index < params.length; index += 2) assigned.set(params[index], [...(assigned.get(params[index]) ?? []), params[index + 1]]);
-    } else throw new Error(`Unexpected tag persistence write: ${text}`);
+    } else if (!text.includes('our_template_image_definitions') && !text.includes('our_template_image_definition_images')) throw new Error(`Unexpected tag persistence write: ${text}`);
     return 1;
   });
   db.transaction.mockImplementation(async (operation) => {
@@ -135,7 +136,9 @@ describe('template image tag assignment persistence', () => {
     expect((await getOurTemplateImage(sceneId)).tags).toEqual(catalogue.slice(0, 2));
     db.query.mockClear();
     expect((await getOurTemplateImages())[0].tags).toEqual(catalogue.slice(0, 2));
-    expect(db.query).toHaveBeenCalledTimes(2);
+    expect(db.query).toHaveBeenCalledTimes(3);
+    expect(db.query.mock.calls.filter(([sql]) => statement(sql).includes('FROM our_template_image_tag_links'))).toHaveLength(1);
+    expect(db.query.mock.calls.filter(([sql]) => statement(sql).includes('FROM our_template_image_definition_images'))).toHaveLength(1);
     expect(statement(db.query.mock.calls[0][0])).toContain('ORDER BY createdAt DESC, id DESC');
   });
 

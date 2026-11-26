@@ -268,6 +268,23 @@ describe('saved room scene dependencies and invalidation', () => {
   it('finds direct and transitive image links while excluding an unrelated template', () => {
     expect(dependentSceneReferences(references, id).map((row) => row.id)).toEqual([10, 20, 30]);
   });
+  it('finds either JSON orientation slot, deduplicates paired references and follows links', () => {
+    references[0].ourTemplateImageId = null;
+    references[0].orientationVariants = JSON.stringify({ portrait: { ourTemplateImageId: id }, landscape: { ourTemplateImageId: id } });
+    references[3].orientationVariants = { portrait: null, landscape: { ourTemplateImageId: 'another-scene' } };
+    expect(dependentSceneReferences(references, id).map((row) => row.id)).toEqual([10, 20, 30]);
+  });
+  it('invalidates JSON slot references and linked followers on scene edits and removes the referencing role on deletion', async () => {
+    references[0].ourTemplateImageId = null;
+    references[0].orientationVariants = { portrait: { ourTemplateImageId: 'unrelated-opposite-scene' }, landscape: { ourTemplateImageId: id } };
+    const next = configured(); next.openings[0].corners.topLeft.x += 2;
+    await updateOurTemplateImage(id, form(next));
+    expect(mocks.listings).toHaveBeenCalledWith({ where: { ourCategoryId: { in: [1, 2, 3] } }, select: { id: true } });
+    expect(mocks.execute.mock.calls.filter(([sql]) => statement(sql).includes('listingImagesRevision'))[0][0].values).toEqual([101, 202, 303]);
+    await deleteOurTemplateImage(id);
+    expect(mocks.deleteTemplate).toHaveBeenCalledExactlyOnceWith('10', { localSceneChange: true });
+    expect(mocks.query.mock.calls.some(([sql]) => statement(sql).includes('orientationVariants'))).toBe(true);
+  });
   it('sorts newest first using creation date and id, so edits do not move older scenes', async () => {
     await getOurTemplateImages();
     expect(statement(mocks.query.mock.calls[0][0])).toContain('ORDER BY createdAt DESC, id DESC');

@@ -45,4 +45,30 @@ describe('local image generation revisions', () => {
     expect(query.sql.match(/NOT EXISTS/g)).toHaveLength(2);
     expect(query.values).toEqual([3, 9, 3, 3]);
   });
+
+  it('requires only the orientation-eligible subset while retaining assignment and revision guards', async () => {
+    const ids = [94, 95, 94];
+    await markListingImageGenerationComplete(9, 3, ids);
+    const query = mocks.execute.mock.calls[0][0];
+    expect(query.sql).toMatch(/template\.categoryId = listing\.ourCategoryId/);
+    expect(query.sql).toMatch(/AND template\.id IN \(\?,\?\)/);
+    expect(query.sql).toMatch(/listing\.listingImagesRevision = \?/);
+    expect(query.sql).toMatch(/image\.templateGenerationRevision = \?/);
+    expect(query.values).toEqual([3, 9, 3, 94, 95, 3]);
+    expect(ids).toEqual([94, 95, 94]);
+  });
+
+  it('can finish cleanup when no roles support this orientation without inventing outputs', async () => {
+    await markListingImageGenerationComplete(9, 3, []);
+    const query = mocks.execute.mock.calls[0][0];
+    expect(query.sql).toMatch(/AND 1 = 0/);
+    expect(query.sql).toMatch(/listing\.listingImagesRevision = \?/);
+    expect(query.values).toEqual([3, 9, 3, 3]);
+    expect(query.sql).not.toMatch(/INSERT|DELETE/);
+  });
+
+  it.each([0, -1, 1.5, NaN, Number.MAX_SAFE_INTEGER + 1])('rejects invalid eligible role IDs before updating: %j', async (id) => {
+    await expect(markListingImageGenerationComplete(9, 3, [id])).rejects.toThrow('Invalid image template id');
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
 });

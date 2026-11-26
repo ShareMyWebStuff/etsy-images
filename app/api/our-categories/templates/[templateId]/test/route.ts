@@ -11,7 +11,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ tem
     const files = uploadedFiles.length > 0
       ? uploadedFiles
       : singleFile instanceof File ? [singleFile] : [];
-    const result = await testOurCategoryImageTemplate(templateId, files);
+    const orientation = formData.get('orientation');
+    if (orientation !== null && orientation !== 'portrait' && orientation !== 'landscape') throw new Error('Choose Portrait or Landscape.');
+    const result = orientation ? await testOurCategoryImageTemplate(templateId, files, orientation) : await testOurCategoryImageTemplate(templateId, files);
     return new Response(new Uint8Array(result), {
       headers: {
         'Content-Type': 'image/png',

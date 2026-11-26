@@ -32,6 +32,7 @@ import {
 import { TemplateCornerPicker } from './TemplateCornerPicker';
 import { MarketsDeliverySettings } from '@/components/MarketsDeliverySettings';
 import { SavedTemplateImagePicker } from './SavedTemplateImagePicker';
+import type { ListingArtworkOrientation } from '@/lib/listing-print-crops';
 
 export type OurCategoryEditorTab = 'details' | 'print-details' | 'image-templates';
 type PendingNavigation = { type: 'href'; href: string } | { type: 'back' };
@@ -129,82 +130,26 @@ function deleteTemplateImpactMessage(
   return `This single-template image ${uses.join(' and ')}. If you continue, ${deletedItemsText} will be deleted.`;
 }
 
-function SortableImageTemplateRow({
-  template,
-  disabled,
-  onDelete,
-  onTest,
-  onCopy,
-  onEdit,
-  gridEditHref,
-  sceneEditHref,
-}: {
-  template: OurCategoryImageTemplateView;
-  disabled: boolean;
-  onDelete: () => void;
-  onTest: () => void;
-  onCopy: () => void;
-  onEdit: () => void;
-  gridEditHref?: string;
-  sceneEditHref?: string;
+function SortableImageTemplateRow({ template, disabled, onDelete, onEdit, gridEditHref, definitionReturnTo }: {
+  template: OurCategoryImageTemplateView; disabled: boolean; onDelete(): void; onEdit(): void; gridEditHref?: string; definitionReturnTo: string;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: template.id,
-    disabled,
-  });
-  return (
-    <TableRow
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`touch-none select-none ${disabled ? 'cursor-wait' : 'cursor-grab active:cursor-grabbing'} ${isDragging ? 'z-10 bg-muted opacity-60' : ''}`}
-      title="Click and drag to reorder"
-      {...attributes}
-      {...listeners}
-      role="row"
-      aria-label={`Drag ${template.name} to reorder`}
-    >
-      <TableCell className="w-10 pr-0 text-muted-foreground">
-        <GripVertical className="h-5 w-5" aria-hidden="true" />
-      </TableCell>
-      <TableCell className="font-medium">
-        <div className="flex flex-wrap items-center gap-2">
-          <span>{template.name}</span>
-          {template.isLinked ? <span className="rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground">Linked</span> : null}
-        </div>
-        {template.isLinked ? (
-          <p className="mt-1 text-xs font-normal text-muted-foreground">
-            {template.linkedSourceTemplateName} / {template.linkedSourceImageTemplateName} / Image {template.linkedImageItemNumber}
-          </p>
-        ) : null}
-      </TableCell>
-      <TableCell className="max-w-xl whitespace-normal">{template.description}</TableCell>
-      <TableCell>{appliesTo(template)}</TableCell>
-      <TableCell>
-        <div
-          className="flex justify-end gap-2"
-          onPointerDown={(event) => event.stopPropagation()}
-          onKeyDown={(event) => event.stopPropagation()}
-        >
-          <Button type="button" variant="outline" size="icon" onClick={onDelete} disabled={disabled} aria-label={`Delete ${template.name}`} title="Delete image template">
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
-          </Button>
-          <Button type="button" variant="outline" size="icon" onClick={onTest} disabled={disabled} aria-label={`Test ${template.name}`} title="Test image template">
-            <FlaskConical className="h-4 w-4" aria-hidden="true" />
-          </Button>
-          <Button type="button" variant="outline" size="icon" onClick={onCopy} disabled={disabled} aria-label={`Make copy of ${template.name}`} title="Make a copy">
-            <Copy className="h-4 w-4" aria-hidden="true" />
-          </Button>
-          {sceneEditHref ? <Button type="button" variant="outline" size="icon" asChild><a href={sceneEditHref} aria-label={`Edit ${template.name}`} title="Edit shared room scene"><Pencil className="h-4 w-4" aria-hidden="true" /></a></Button> : gridEditHref ? <Button type="button" variant="outline" size="icon" asChild>
-            <a href={gridEditHref} aria-label={`Edit ${template.name} in grid editor`} title="Edit in the new grid editor">
-              <LayoutGrid className="h-4 w-4" aria-hidden="true" />
-            </a>
-          </Button> : <Button type="button" variant="outline" size="icon" onClick={onEdit} disabled={disabled || template.isLinked} aria-label={`Edit ${template.name}`} title={template.isLinked ? 'Linked image templates cannot be edited' : 'Edit image template'}>
-            <Pencil className="h-4 w-4" aria-hidden="true" />
-          </Button>}
-        </div>
-      </TableCell>
-    </TableRow>
-  );
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: template.id, disabled });
+  const name = template.definitionName ?? template.name;
+  const definitionHref = template.templateImageDefinitionId ? `/our-template-images?${new URLSearchParams({ definition: template.templateImageDefinitionId, returnTo: definitionReturnTo })}` : null;
+  return <TableRow ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }}
+    className={`touch-none select-none ${disabled ? 'cursor-wait' : 'cursor-grab active:cursor-grabbing'} ${isDragging ? 'z-10 bg-muted opacity-60' : ''}`}
+    title="Click and drag to reorder" {...attributes} {...listeners} role="row" aria-label={`Drag ${name} to reorder`}>
+    <TableCell className="w-10 pr-0 text-muted-foreground"><GripVertical className="h-5 w-5" aria-hidden="true" /></TableCell>
+    <TableCell className="font-medium"><span>{name}</span>{template.isLinked ? <><span className="ml-2 rounded-full border px-2 py-0.5 text-xs text-muted-foreground">Linked</span><p className="mt-1 text-xs font-normal text-muted-foreground">{template.linkedSourceTemplateName} / {template.linkedSourceImageTemplateName} / Image {template.linkedImageItemNumber}</p></> : null}</TableCell>
+    <TableCell className="max-w-xl whitespace-normal">{template.description}</TableCell>
+    <TableCell>{appliesTo(template)}</TableCell>
+    <TableCell><div className="flex justify-end gap-2" onPointerDown={event => event.stopPropagation()} onKeyDown={event => event.stopPropagation()}>
+      <Button type="button" variant="outline" size="icon" onClick={onDelete} disabled={disabled} aria-label={`Delete ${name}`} title="Delete image template"><Trash2 className="h-4 w-4" aria-hidden="true" /></Button>
+      {definitionHref ? <Button variant="outline" size="icon" asChild><a href={definitionHref} aria-label={`Edit ${name}`} title="Edit template image definition"><Pencil className="h-4 w-4" aria-hidden="true" /></a></Button>
+        : gridEditHref ? <Button variant="outline" size="icon" asChild><a href={gridEditHref} aria-label={`Edit ${name} in grid editor`} title="Edit in the grid editor"><LayoutGrid className="h-4 w-4" aria-hidden="true" /></a></Button>
+        : <Button type="button" variant="outline" size="icon" onClick={onEdit} disabled={disabled || template.isLinked} aria-label={`Edit ${name}`} title={template.isLinked ? 'Linked image templates cannot be edited' : 'Edit image template'}><Pencil className="h-4 w-4" aria-hidden="true" /></Button>}
+    </div></TableCell>
+  </TableRow>;
 }
 
 export function OurCategoryEditorClient({
@@ -226,6 +171,7 @@ export function OurCategoryEditorClient({
   const [editTemplate, setEditTemplate] = useState<OurCategoryImageTemplateView | null>(null);
   const [templateSaving, setTemplateSaving] = useState(false);
   const [templateName, setTemplateName] = useState('');
+  const [templateRoleOnly, setTemplateRoleOnly] = useState(false);
   const [templateDescription, setTemplateDescription] = useState('');
   const [templateDisplayFonts, setTemplateDisplayFonts] = useState(false);
   const [templateBorderEnabled, setTemplateBorderEnabled] = useState(false);
@@ -246,6 +192,7 @@ export function OurCategoryEditorClient({
   const [deleteTemplateCheck, setDeleteTemplateCheck] = useState<DeleteTemplateCheck | null>(null);
   const [deletingTemplate, setDeletingTemplate] = useState(false);
   const [testTemplate, setTestTemplate] = useState<OurCategoryImageTemplateView | null>(null);
+  const [testOrientation, setTestOrientation] = useState<ListingArtworkOrientation>('portrait');
   const [testFiles, setTestFiles] = useState<Array<File | null>>([]);
   const [testResultUrl, setTestResultUrl] = useState<string | null>(null);
   const [testingTemplate, setTestingTemplate] = useState(false);
@@ -274,11 +221,15 @@ export function OurCategoryEditorClient({
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   const isMultiple = values.templateType === 'multiple';
+  const testIsFontShowcase = Boolean(testTemplate?.displayFonts && !testTemplate.orientationVariants && !testTemplate.ourTemplateImageId);
+  const testOpeningRegions = testTemplate?.orientationVariants
+    ? testTemplate.orientationVariants[testOrientation]?.openingRegions ?? []
+    : testTemplate?.openingRegions ?? [];
   const testImageItemNumbers = testTemplate
-    ? testTemplate.displayFonts
+    ? testIsFontShowcase
       ? []
       : data.values.templateType === 'multiple'
-      ? [...new Set(testTemplate.openingRegions
+      ? [...new Set(testOpeningRegions
         .flatMap((region) => region.grid ? region.grid.cells.map((cell) => cell.imageItemNumber) : [region.imageItemNumber])
         .filter((itemNumber): itemNumber is number => Boolean(itemNumber) && itemNumber! <= data.values.itemCount))]
         .sort((first, second) => first - second)
@@ -301,6 +252,7 @@ export function OurCategoryEditorClient({
 
   const validationMessage = useMemo(() => {
     if (!values.name.trim()) return 'Enter a Template Name.';
+    if (values.portraitEnabled === false && values.landscapeEnabled === false) return 'Select at least one artwork orientation.';
     if (values.templateType === 'multiple' && values.followedTemplateId === null) return 'Choose a Followed Template.';
     if (!values.roomTheme.trim()) return 'Enter a Room Theme.';
     if (values.printsFrames && values.printFrameSectionId === null) return 'Choose an Etsy Print / Frame Section.';
@@ -318,6 +270,8 @@ export function OurCategoryEditorClient({
     values.printsFrames,
     values.roomTheme,
     values.templateType,
+    values.portraitEnabled,
+    values.landscapeEnabled,
   ]);
 
   const navigate = useCallback((navigation: PendingNavigation) => {
@@ -459,6 +413,7 @@ export function OurCategoryEditorClient({
   function resetTemplateForm() {
     if (templatePreview) URL.revokeObjectURL(templatePreview);
     setTemplateName('');
+    setTemplateRoleOnly(false);
     setTemplateDescription('');
     setTemplateDisplayFonts(false);
     setTemplateBorderEnabled(false);
@@ -483,9 +438,17 @@ export function OurCategoryEditorClient({
     setTemplateOpen(true);
   }
 
+  function openCreateImageRole() {
+    resetTemplateForm();
+    setTemplateRoleOnly(true);
+    setTemplateUses({ prints: values.printsFrames, customised: values.customisePrints, digital: values.digitalDownload });
+    setTemplateOpen(true);
+  }
+
   function openEditTemplate(template: OurCategoryImageTemplateView) {
     resetTemplateForm();
     setEditTemplate(template);
+    setTemplateRoleOnly(Boolean(template.orientationVariants));
     setTemplateName(template.name);
     setTemplateDescription(template.description);
     setTemplateDisplayFonts(template.displayFonts);
@@ -535,17 +498,17 @@ export function OurCategoryEditorClient({
 
   async function saveTemplate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const templateImageRequired = !templateDisplayFonts
+    const templateImageRequired = !templateRoleOnly && !templateDisplayFonts
       && (!editTemplate || editTemplate.displayFonts || templateImageRemoved);
     if (!data.categoryId || (templateImageRequired && !templateFile)) {
       toast.error(data.categoryId ? 'Choose a template image.' : 'Create the template before adding image templates.');
       return;
     }
-    if (!templateDisplayFonts && !templateImageSize) {
+    if (!templateRoleOnly && !templateDisplayFonts && !templateImageSize) {
       toast.error('Wait for the template image to finish loading.');
       return;
     }
-    if (!templateDisplayFonts && templateRegionDrafting) {
+    if (!templateRoleOnly && !templateDisplayFonts && templateRegionDrafting) {
       toast.error('Finish selecting all four corners for the current artwork area, or delete that area.');
       return;
     }
@@ -554,6 +517,7 @@ export function OurCategoryEditorClient({
       const formData = new FormData();
       formData.set('name', templateName);
       formData.set('description', templateDescription);
+      if (templateRoleOnly) formData.set('roleOnly', 'true');
       formData.set('displayFonts', String(templateDisplayFonts));
       formData.set('borderEnabled', String(templateBorderEnabled));
       formData.set('borderSizePercent', templateBorderSizePercent);
@@ -769,6 +733,12 @@ export function OurCategoryEditorClient({
     setTestResultUrl(null);
   }
 
+  function openTemplateTest(template: OurCategoryImageTemplateView) {
+    setTestOrientation(template.orientationVariants?.portrait?.compatible && values.portraitEnabled !== false ? 'portrait'
+      : template.orientationVariants?.landscape?.compatible && values.landscapeEnabled !== false ? 'landscape' : 'portrait');
+    setTestTemplate(template);
+  }
+
   function selectTestFile(index: number, file: File | null) {
     if (testResultUrl) URL.revokeObjectURL(testResultUrl);
     setTestFiles((current) => {
@@ -782,7 +752,7 @@ export function OurCategoryEditorClient({
   async function runTemplateTest(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const selectedFiles = Array.from({ length: testImageCount }, (_, index) => testFiles[index] ?? null);
-    if (!testTemplate || (!testTemplate.displayFonts && selectedFiles.some((file) => file === null))) {
+    if (!testTemplate || (!testIsFontShowcase && selectedFiles.some((file) => file === null))) {
       toast.error(testImageCount > 1
         ? `Choose all ${testImageCount} images required by this image template.`
         : 'Choose an image to attach.');
@@ -791,7 +761,8 @@ export function OurCategoryEditorClient({
     setTestingTemplate(true);
     try {
       const formData = new FormData();
-      if (testTemplate.displayFonts) {
+      if (testTemplate.orientationVariants) formData.set('orientation', testOrientation);
+      if (testIsFontShowcase) {
         // The server returns the stored generated showcase without an attached artwork image.
       } else if (testImageCount === 1) {
         formData.set('file', selectedFiles[0] as File);
@@ -916,6 +887,15 @@ export function OurCategoryEditorClient({
             ) : null}
           </div> : null}
           {(!isMultiple || followedTemplate?.values.digitalDownload) ? <CheckboxField checked={values.digitalDownload} label="Digital Downloads" onChange={(checked) => updateValue('digitalDownload', checked)} /> : null}
+          <fieldset className="grid gap-3 rounded-md border p-4">
+            <legend className="px-1 text-sm font-medium">Artwork orientation</legend>
+            <div className="flex flex-wrap gap-5">
+              <CheckboxField checked={values.portraitEnabled !== false} label="Portrait" disabled={saving} onChange={(checked) => updateValue('portraitEnabled', checked)} />
+              <CheckboxField checked={values.landscapeEnabled !== false} label="Landscape" disabled={saving} onChange={(checked) => updateValue('landscapeEnabled', checked)} />
+            </div>
+            <p className="text-sm text-muted-foreground">Choose which artwork orientations this template supports.</p>
+            {values.portraitEnabled === false && values.landscapeEnabled === false ? <p role="alert" className="text-sm text-destructive">Select at least one artwork orientation.</p> : null}
+          </fieldset>
           {data.categoryId ? <>
             {dirty ? <p className="text-xs text-muted-foreground">Save template details before changing delivery defaults.</p> : null}
             <MarketsDeliverySettings
@@ -1010,41 +990,17 @@ export function OurCategoryEditorClient({
         <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
           <div>
             <CardTitle>Image Templates</CardTitle>
-            <CardDescription>Reusable images stored in the EtsyListingTemplates S3 directory. Click and drag a row to change its order.</CardDescription>
+            <CardDescription>Reusable image definitions. Drag a row to change the order of listing images.</CardDescription>
+            {dirty ? <p className="mt-2 text-xs text-muted-foreground">Save template details before adding template images.</p> : null}
           </div>
           <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" variant="outline" disabled={!data.categoryId || reorderingTemplates} onClick={() => setSavedSceneOpen(true)}>Add Our Template Image</Button>
-            {isMultiple ? (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setCopySourceCategoryId('');
-                  setCopySourceImageTemplateId('');
-                  setCopyImageItemNumbers([]);
-                  setCopyTemplateOpen(true);
-                }}
-                disabled={!data.categoryId || data.copySourceTemplates.length === 0 || reorderingTemplates}
-              >Copy From</Button>
-            ) : null}
-            {isMultiple ? (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setLinkSourceImageTemplateId('');
-                  setLinkImageItemNumber('1');
-                  setLinkTemplateOpen(true);
-                }}
-                disabled={!data.categoryId || data.followedImageTemplates.length === 0 || reorderingTemplates}
-              >Link</Button>
-            ) : null}
             {data.categoryId ? (
               <Button type="button" variant="outline" asChild>
                 <a href={`/our-templates/${encodeURIComponent(data.categoryId)}/edit/image`}><ImagePlus className="h-4 w-4" aria-hidden="true" />New Create</a>
               </Button>
             ) : null}
-            <Button type="button" onClick={openCreateTemplate} disabled={!data.categoryId || reorderingTemplates}><ImagePlus className="h-4 w-4" aria-hidden="true" />Create</Button>
+            <Button type="button" variant="outline" onClick={openCreateTemplate} disabled={!data.categoryId || reorderingTemplates}>Create PNG</Button>
           </div>
         </CardHeader>
         <CardContent className="p-0">
@@ -1064,13 +1020,11 @@ export function OurCategoryEditorClient({
                         <SortableImageTemplateRow
                           key={template.id}
                           template={template}
+                          definitionReturnTo={`/our-templates/${encodeURIComponent(data.categoryId!)}/edit?tab=image-templates`}
                           disabled={reorderingTemplates || copyingRowTemplateId !== null}
-                          onDelete={() => { void openDeleteTemplate(template); }}
-                          onTest={() => setTestTemplate(template)}
-                          onCopy={() => { void makeTemplateCopy(template); }}
+                          onDelete={() => { void openDeleteTemplate({ ...template, name: template.definitionName ?? template.name }); }}
                           onEdit={() => openEditTemplate(template)}
-                          sceneEditHref={template.ourTemplateImageId ? `/our-template-images?edit=${encodeURIComponent(template.ourTemplateImageId)}` : undefined}
-                          gridEditHref={!template.isLinked && template.openingRegions.some((region) => region.grid)
+                          gridEditHref={!template.templateImageDefinitionId && !template.isLinked && template.openingRegions.some((region) => region.grid)
                             ? `/our-templates/${encodeURIComponent(data.categoryId!)}/edit/image/${encodeURIComponent(template.id)}`
                             : undefined}
                         />
@@ -1102,11 +1056,11 @@ export function OurCategoryEditorClient({
       {activeTab === 'details' ? renderDetails() : null}
       {activeTab === 'print-details' ? renderPrintDetails() : null}
       {activeTab === 'image-templates' ? renderImageTemplates() : null}
-      {savedSceneOpen && data.categoryId ? <SavedTemplateImagePicker categoryId={data.categoryId} values={values} onClose={() => setSavedSceneOpen(false)} onAttached={(template) => { setData((current) => ({ ...current, imageTemplates: [...current.imageTemplates, template] })); setSavedSceneOpen(false); toast.success('Room scene added to template.'); }} /> : null}
+      {savedSceneOpen && data.categoryId ? <SavedTemplateImagePicker categoryId={data.categoryId} values={values} onClose={() => setSavedSceneOpen(false)} onAttached={(template) => { setData((current) => ({ ...current, imageTemplates: current.imageTemplates.some((saved) => saved.id === template.id) ? current.imageTemplates.map((saved) => saved.id === template.id ? template : saved) : [...current.imageTemplates, template] })); setSavedSceneOpen(false); toast.success('Template image definition added.'); }} /> : null}
 
       <div className="sticky bottom-4 flex items-center justify-between gap-3 rounded-lg border border-border bg-card/95 p-4 shadow-lg backdrop-blur">
         <Button type="button" variant="outline" onClick={requestBack}><ArrowLeft className="h-4 w-4" aria-hidden="true" />Back</Button>
-        <Button type="button" onClick={() => void saveCategory()} disabled={saving || (!dirty && data.categoryId !== null)}>
+        <Button type="button" onClick={() => void saveCategory()} disabled={saving || (values.portraitEnabled === false && values.landscapeEnabled === false) || (!dirty && data.categoryId !== null)}>
           <Save className="h-4 w-4" aria-hidden="true" />{saving ? 'Saving...' : data.categoryId ? 'Save' : 'Create'}
         </Button>
       </div>
@@ -1180,120 +1134,14 @@ export function OurCategoryEditorClient({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={copyTemplateOpen} onOpenChange={(open) => { if (!copyingTemplate) setCopyTemplateOpen(open); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Copy Image Template</DialogTitle>
-            <DialogDescription>Choose a single template or a multiple template with up to {data.values.itemCount} items, then choose where each source image should be used.</DialogDescription>
-          </DialogHeader>
-          <label className="grid gap-2 text-sm font-medium">
-            Our Template
-            <select
-              className={selectClassName}
-              aria-label="Copy from template"
-              value={copySourceCategoryId}
-              onChange={(event) => {
-                const sourceId = event.target.value;
-                const source = data.copySourceTemplates.find((template) => String(template.id) === sourceId) ?? null;
-                const sourceImageCount = source?.templateType === 'multiple' ? source.itemCount : source ? 1 : 0;
-                setCopySourceCategoryId(sourceId);
-                setCopySourceImageTemplateId('');
-                setCopyImageItemNumbers(
-                  source?.templateType === 'multiple' && source.itemCount === data.values.itemCount
-                    ? []
-                    : Array.from({ length: sourceImageCount }, () => ''),
-                );
-              }}
-              disabled={copyingTemplate}
-            >
-              <option value="">Select a template</option>
-              {data.copySourceTemplates.map((template) => (
-                <option key={template.id} value={template.id}>
-                  {template.name} ({template.templateType === 'single' ? 'Single' : `${template.itemCount} items`})
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-2 text-sm font-medium">
-            Image Template
-            <select className={selectClassName} aria-label="Image template to copy" value={copySourceImageTemplateId} onChange={(event) => setCopySourceImageTemplateId(event.target.value)} disabled={copyingTemplate || !selectedCopySource}>
-              <option value="">Select an image template</option>
-              {selectedCopySource?.imageTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
-            </select>
-          </label>
-          {selectedCopySource && copyAllImages ? (
-            <label className="grid gap-2 text-sm font-medium">
-              Images
-              <Input aria-label="Copy image selection" value="All" disabled />
-            </label>
-          ) : null}
-          {selectedCopySource && !copyAllImages ? Array.from({ length: copySourceImageCount }, (_, sourceIndex) => {
-            const label = selectedCopySource.templateType === 'single' ? 'Image Number' : `Source Image ${sourceIndex + 1}`;
-            const ariaLabel = selectedCopySource.templateType === 'single' ? 'Copy to image number' : `Copy source Image ${sourceIndex + 1} to`;
-            return (
-              <label key={ariaLabel} className="grid gap-2 text-sm font-medium">
-                {label}
-                <select
-                  className={selectClassName}
-                  aria-label={ariaLabel}
-                  value={copyImageItemNumbers[sourceIndex] ?? ''}
-                  onChange={(event) => setCopyImageItemNumbers((current) => {
-                    const next = Array.from({ length: copySourceImageCount }, (_, index) => current[index] ?? '');
-                    next[sourceIndex] = event.target.value;
-                    return next;
-                  })}
-                  disabled={copyingTemplate}
-                >
-                  <option value="">Select an image</option>
-                  {Array.from({ length: data.values.itemCount }, (_, targetIndex) => (
-                    <option key={targetIndex + 1} value={targetIndex + 1}>Image {targetIndex + 1}</option>
-                  ))}
-                </select>
-              </label>
-            );
-          }) : null}
-          {selectedCopySource?.templateType === 'multiple' && !copyAllImages ? (
-            <p className="text-sm text-muted-foreground">Select {copySourceImageCount} different target images before copying.</p>
-          ) : null}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCopyTemplateOpen(false)} disabled={copyingTemplate}>Cancel</Button>
-            <Button type="button" onClick={() => void copyImageTemplate()} disabled={copyingTemplate || !copySourceCategoryId || !copySourceImageTemplateId || !copyMappingValid}>{copyingTemplate ? 'Copying...' : 'Copy'}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
-      <Dialog open={linkTemplateOpen} onOpenChange={(open) => { if (!linkingTemplate) setLinkTemplateOpen(open); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Link Image Template</DialogTitle>
-            <DialogDescription>Select an image template from the Followed Template and choose which image item it represents. The source image will remain linked rather than being copied.</DialogDescription>
-          </DialogHeader>
-          <label className="grid gap-2 text-sm font-medium">
-            Image Template
-            <select className={selectClassName} aria-label="Image template to link" value={linkSourceImageTemplateId} onChange={(event) => setLinkSourceImageTemplateId(event.target.value)} disabled={linkingTemplate}>
-              <option value="">Select an image template</option>
-              {data.followedImageTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
-            </select>
-          </label>
-          <label className="grid gap-2 text-sm font-medium">
-            Image Number
-            <select className={selectClassName} aria-label="Linked image number" value={linkImageItemNumber} onChange={(event) => setLinkImageItemNumber(event.target.value)} disabled={linkingTemplate}>
-              {Array.from({ length: data.values.itemCount }, (_, index) => (
-                <option key={index + 1} value={index + 1}>Image {index + 1}</option>
-              ))}
-            </select>
-          </label>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setLinkTemplateOpen(false)} disabled={linkingTemplate}>Cancel</Button>
-            <Button type="button" onClick={() => void linkImageTemplate()} disabled={linkingTemplate || !linkSourceImageTemplateId}>{linkingTemplate ? 'Selecting...' : 'Select'}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+
+
 
       <Dialog open={templateOpen} onOpenChange={(open) => { if (!open) closeTemplateDialog(); }}>
         <DialogContent className="max-h-[94vh] max-w-5xl overflow-y-auto">
           <form onSubmit={saveTemplate} className="grid gap-5">
-            <DialogHeader><DialogTitle>{editTemplate ? 'Edit Image Template' : 'Create Image Template'}</DialogTitle></DialogHeader>
+            <DialogHeader><DialogTitle>{templateRoleOnly ? editTemplate ? 'Edit Image Role' : 'Create Image Role' : editTemplate ? 'Edit Image Template' : 'Create Image Template'}</DialogTitle></DialogHeader>
             <label className="grid gap-2 text-sm font-medium">
               Template Name
               <Input required aria-label="Template Name" maxLength={100} value={templateName} onChange={(event) => setTemplateName(event.target.value)} />
@@ -1304,6 +1152,7 @@ export function OurCategoryEditorClient({
               <textarea required aria-label="Description" maxLength={500} value={templateDescription} onChange={(event) => setTemplateDescription(event.target.value)} className="min-h-28 rounded-md border border-input bg-background px-3 py-2 text-sm" />
               <span className="text-right text-xs font-normal tabular-nums text-muted-foreground">{templateDescription.length} / 500</span>
             </label>
+            {!templateRoleOnly ? <>
             <div className="grid gap-2 rounded-md border p-4">
               <CheckboxField checked={templateDisplayFonts} label="Display fonts" onChange={setTemplateDisplayFonts} />
               <p className="text-xs text-muted-foreground">Creates a styled image showing every available font name in its own typeface.</p>
@@ -1378,6 +1227,7 @@ export function OurCategoryEditorClient({
                 disabled={templateSaving}
               />
             ) : null}
+            </> : <p className="text-sm text-muted-foreground">Select this role’s portrait and landscape images in the table. Each orientation keeps its own room scene.</p>}
             <div className="grid gap-3 rounded-md border p-4">
               {values.printsFrames ? <CheckboxField checked={templateUses.prints} label="Prints – use on prints" onChange={(checked) => setTemplateUses((current) => ({ ...current, prints: checked }))} /> : null}
               {values.customisePrints ? <CheckboxField checked={templateUses.customised} label="Customized prints – use on customised prints" onChange={(checked) => setTemplateUses((current) => ({ ...current, customised: checked }))} /> : null}
@@ -1415,51 +1265,7 @@ export function OurCategoryEditorClient({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={testTemplate !== null} onOpenChange={(open) => { if (!open) closeTestDialog(); }}>
-        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
-          <form onSubmit={runTemplateTest} className="grid gap-4">
-            <DialogHeader>
-              <DialogTitle>Test {testTemplate?.name}</DialogTitle>
-              <DialogDescription>
-                {data.values.templateType === 'multiple'
-                  ? testTemplate?.displayFonts
-                    ? 'This generated showcase displays every available font and does not require an attached image.'
-                    : testImageCount > 0
-                    ? `Add the ${testImageCount} image${testImageCount === 1 ? '' : 's'} required by this image template. Each artwork area will use its saved image number. The stored template will not be changed.`
-                    : 'This image template has no configured artwork regions. Edit it and add an artwork region before testing.'
-                  : testTemplate?.displayFonts
-                    ? 'This generated showcase displays every available font and does not require an attached image.'
-                    : 'Attach an image to combine with the S3 template in memory. Saved Top Text and Bottom Text will be applied when present. The stored template will not be changed.'}
-              </DialogDescription>
-            </DialogHeader>
-            {testImageItemNumbers.map((itemNumber, index) => {
-              const label = data.values.templateType === 'multiple' ? `Image ${itemNumber}` : 'Image to attach';
-              return (
-                <label key={label} className="grid gap-2 text-sm font-medium">
-                  {label}
-                  <Input
-                    aria-label={label}
-                    required
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={(event) => selectTestFile(index, event.target.files?.[0] ?? null)}
-                    disabled={testingTemplate}
-                  />
-                </label>
-              );
-            })}
-            {testResultUrl ? (
-              <div className="overflow-hidden rounded-md border bg-muted p-2">
-                <img src={testResultUrl} alt={`Test result for ${testTemplate?.name ?? 'image template'}`} className="max-h-[65vh] w-full object-contain" />
-              </div>
-            ) : null}
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={closeTestDialog} disabled={testingTemplate}>Cancel</Button>
-              <Button type="submit" disabled={testingTemplate || (!testTemplate?.displayFonts && (testImageCount === 0 || testFiles.filter(Boolean).length !== testImageCount))}>{testingTemplate ? 'Testing...' : 'Test'}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+
     </div>
   );
 }

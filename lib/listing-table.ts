@@ -8,6 +8,9 @@ import { prisma } from '@/lib/prisma';
 import { hasRequiredTemplateDownloadSection } from '@/lib/template-download-section';
 import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
 import { listingsNeedingImageGeneration } from '@/lib/listing-image-generation-state';
+import { getListingTemplateOrientationPlans } from '@/lib/listing-template-orientation';
+import { selectListingTemplateOrientation } from '@/lib/template-orientation';
+import { getListingTemplateArtworkPlans, type ListingTemplateArtworkPlan } from '@/lib/listing-template-artwork';
 
 export type SubSectionListingsPageData = {
   shop: {
@@ -42,6 +45,8 @@ export type SubSectionListingsPageData = {
     templateProducts: ListingTemplateProducts | null;
     status: string;
     isComplete: boolean;
+    orientationWarning?: string | null;
+    artworkAssignmentErrors?: string[];
     price: string;
     hasPrice: boolean;
     quantity: number | null;
@@ -209,7 +214,7 @@ export async function getSubSectionListingsPageData(
           imageTemplates: { select: { id: true } },
         },
       },
-      groupItems: { select: { id: true } },
+      groupItems: { select: { id: true, position: true, sourceListing: { select: { artworkOrientation: true } } } },
     },
   }), prisma.ourCategory.findMany({
     where: { shopId: shop.id },
@@ -219,6 +224,10 @@ export async function getSubSectionListingsPageData(
 
   const shopName = shop.shopName ?? shop.title ?? `Shop ${shop.etsyShopId}`;
   const imagesNeedingGeneration = await listingsNeedingImageGeneration(listings.map(({ id }) => id));
+  const orientationPlans = await getListingTemplateOrientationPlans([...new Set(listings.flatMap((listing) => listing.ourCategoryId === null ? [] : [listing.ourCategoryId]))]);
+  const artworkPlans=orientationPlans.size?await getListingTemplateArtworkPlans(listings.filter(listing=>listing.ourCategoryId!==null).map(listing=>({
+    shopId:shop.etsyShopId.toString(),sectionId:String(section.id),subSectionId:String(subSection.id),listingId:String(listing.id),
+  })),{includeCandidates:false,orientationPlans}):new Map<number,ListingTemplateArtworkPlan>();
   return {
     shop: {
       id: shop.etsyShopId.toString(),
@@ -250,9 +259,17 @@ export async function getSubSectionListingsPageData(
       const generatedTemplateIds = new Set(listing.images.flatMap((image) => (
         image.ourCategoryImageTemplateId === null ? [] : [image.ourCategoryImageTemplateId]
       )));
-      const hasRequiredImages = (listing.ourCategory?.imageTemplates.length ?? 0) > 0
+      const orientationPlan = listing.ourCategoryId === null ? undefined : orientationPlans.get(listing.ourCategoryId);
+      const sourceOrientations = isMultiple ? new Map(listing.groupItems.map((item) => [item.position, normalizeListingArtworkOrientation(item.sourceListing.artworkOrientation)])) : undefined;
+      const orientationSelection = orientationPlan
+        ? selectListingTemplateOrientation(orientationPlan, normalizeListingArtworkOrientation(listing.artworkOrientation), sourceOrientations)
+        : null;
+      const artworkPlan=artworkPlans.get(listing.id);
+      const artworkErrors:string[]=artworkPlan?.errors??orientationSelection?.rows.filter(row=>!row.enabled).map(row=>row.disabledReason??`Configure ${row.name}.`)??[];
+      const expectedIds = artworkPlan?(artworkPlan.valid?artworkPlan.roles.map(role=>role.id):[]):orientationSelection?.expectedIds ?? listing.ourCategory?.imageTemplates.map((template) => template.id) ?? [];
+      const hasRequiredImages = artworkErrors.length===0 && expectedIds.length > 0
         && !imagesNeedingGeneration.has(listing.id)
-        && listing.ourCategory!.imageTemplates.every((template) => generatedTemplateIds.has(template.id));
+        && expectedIds.every((id) => generatedTemplateIds.has(id));
       const hasThumbnail = (listing.thumbnailFileName?.trim().length ?? 0) > 0;
       const listingPath = getListingDirectoryPath(
         shopName,
@@ -260,8 +277,8 @@ export async function getSubSectionListingsPageData(
         subSection.name,
         listing.localDirectoryName ?? `Listing-${listing.id}`,
       );
-      const zipStorageStatus = await inspectListingZipStorage(listing, listingPath);
-      const hasCurrentZips = zipStorageStatus.valid;
+      const zipStorageStatus = effectiveTemplate?.digitalDownload ? await inspectListingZipStorage(listing, listingPath) : null;
+      const hasCurrentZips = zipStorageStatus?.valid ?? false;
       const hasCurrentDropbox = Boolean(listing.dropboxBundle?.sharedUrl?.trim())
         && listing.dropboxSyncedAt !== null
         && listing.dropboxRevision === listing.downloadsRevision
@@ -281,6 +298,7 @@ export async function getSubSectionListingsPageData(
         hasRequiredDigitalDownloads: !isMultiple && hasRequiredPrintableDownloads(listing.files),
         hasCurrentZips,
         hasCurrentDropbox,
+        requiresDropbox: effectiveTemplate?.digitalDownload ?? false,
         hasDownloadSection: hasRequiredTemplateDownloadSection(effectiveTemplate),
         hasTags: listing.tags.length > 0,
         hasTitle: hasDetailsTitle,
@@ -313,6 +331,8 @@ export async function getSubSectionListingsPageData(
             ? (listing.state === 'active' || listing.state === 'published' ? listing.state : listing.etsyDownloadState!)
             : isComplete ? 'complete' : 'incomplete',
         isComplete,
+        orientationWarning: artworkErrors.length?artworkErrors.join(' '):artworkPlan?null:orientationSelection?.warning ?? null,
+        ...(artworkErrors.length?{artworkAssignmentErrors:artworkErrors}:{}),
         price: formatPrice(listing.priceAmount, listing.priceDivisor, listing.priceCurrencyCode),
         hasPrice: listing.priceAmount !== null && listing.priceDivisor !== null && listing.priceDivisor > 0,
         quantity: listing.quantity,

@@ -8,5 +8,6 @@ npm-debug.log*
 .pinterest-board-environments.json
 .tmp/
 .playwright/
+/backups/database/
 /output/pinterest/**/sources/
 /output/pinterest/**/images/

@@ -47,6 +47,7 @@ import { etsyPersonalisationFingerprint, recordEtsyPersonalisationSync } from '@
 import { isEtsyFontStyleQuestion } from '@/lib/etsy-personalisation-font';
 import { composeDeliveryDescription, validateEtsyDescription } from '@/lib/delivery-description';
 import { getEffectiveListingDelivery, markDeliveryAssignmentSynced, recordDeliveryAssignmentMetadata } from '@/lib/markets-delivery';
+import { invalidateListingTemplateArtworkConsumers } from '@/lib/listing-template-artwork-dependencies';
 
 export type NewListingConfiguration = {
   numberOfItems: number | null;
@@ -1136,6 +1137,9 @@ export async function deleteListing(shopId: string, sectionId: string, subSectio
           || !currentSubSection || currentSubSection.name !== context.subSection.name || currentSubSection.shopSection.title !== context.section.title) {
           throw new Error('The listing storage location changed. Reload it before deleting.');
         }
+        // Resolve JSON source references while the source still exists, and atomically
+        // stop any in-flight consumer generation from publishing its old artwork.
+        await invalidateListingTemplateArtworkConsumers([listing.id],transaction);
         const removed = await transaction.etsyListing.deleteMany({ where: {
           id: listing.id, shopId: context.shop.etsyShopId.toString(), subSectionId: context.subSection.id,
           localDirectoryName: listing.localDirectoryName, updatedAt: listing.updatedAt,

@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TemplateOpeningCorners } from '@/lib/our-category-template-composite';
 import { estimateOpeningAspect, PAPER_RATIOS, placementKey } from '@/lib/our-template-image-geometry';
 import type { OurTemplateImageOpening, PaperPlacement, PaperPlacementKey } from '@/lib/our-template-image-types';
-import { OurTemplateImagesClient, type SceneImage } from './OurTemplateImagesClient';
+import { SceneEditorTestHarness as OurTemplateImagesClient } from './scene-editor-test-harness';
+import type { SceneImage } from './SceneImageEditor';
 
 const originalCorners: TemplateOpeningCorners = {
   topLeft: { x: 1689, y: 489 }, topRight: { x: 2492, y: 488 },

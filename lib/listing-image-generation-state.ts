@@ -53,7 +53,11 @@ export async function recordListingTemplateImageRevision(listingId: number, temp
 }
 
 /** A failed, partial or superseded generation must keep the listing pending. */
-export async function markListingImageGenerationComplete(listingId: number, revision: number) {
+export async function markListingImageGenerationComplete(listingId: number, revision: number, expectedTemplateIds?: number[]) {
+  const ids = expectedTemplateIds === undefined ? undefined : [...new Set(expectedTemplateIds)];
+  if (ids?.some((id) => !Number.isSafeInteger(id) || id < 1)) throw new Error('Invalid image template id.');
+  const eligibleTemplates = ids === undefined ? Prisma.empty
+    : ids.length ? Prisma.sql`AND template.id IN (${Prisma.join(ids)})` : Prisma.sql`AND 1 = 0`;
   await prisma.$executeRaw(Prisma.sql`
     UPDATE etsy_listings listing
     SET listing.listingImagesGeneratedRevision = ${revision}
@@ -61,6 +65,7 @@ export async function markListingImageGenerationComplete(listingId: number, revi
       AND NOT EXISTS (
         SELECT 1 FROM our_category_image_templates template
         WHERE template.categoryId = listing.ourCategoryId
+          ${eligibleTemplates}
           AND NOT EXISTS (
             SELECT 1 FROM etsy_listing_images image
             WHERE image.listingId = listing.id AND image.ourCategoryImageTemplateId = template.id

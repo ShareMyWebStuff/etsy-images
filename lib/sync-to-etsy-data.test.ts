@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ sections: vi.fn(), prices: vi.fn(), remoteSections: vi.fn(), personalisationStates: vi.fn(),
-  findListing: vi.fn(), publish: vi.fn() }));
+  findListing: vi.fn(), publish: vi.fn(),orientationPlans:vi.fn(),artworkPlans:vi.fn() }));
+vi.mock('@/lib/listing-template-orientation',()=>({getListingTemplateOrientationPlans:mocks.orientationPlans}));
+vi.mock('@/lib/listing-template-artwork',()=>({getListingTemplateArtworkPlans:mocks.artworkPlans}));
 vi.mock('@/lib/prisma', () => ({ prisma: {
   etsyShopSection: { findMany: mocks.sections },
   etsyListing: { findUnique: mocks.findListing },
@@ -20,6 +22,7 @@ import { createListingPrintCropSettings, defaultNativeListingPrintCropDraft } fr
 import { PRINTABLE_DOWNLOAD_SPECS } from '@/lib/printable-download-specs';
 import { etsyPersonalisationFingerprint } from '@/lib/etsy-personalisation-sync-state';
 import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
+import {createTemplateOrientationPlan} from '@/lib/template-orientation';
 
 const originalDate = new Date('2026-11-01T12:00:00Z');
 const syncedDate = new Date('2026-11-02T12:00:00Z');
@@ -118,9 +121,48 @@ beforeEach(() => {
   }]);
   mocks.prices.mockResolvedValue([]);
   mocks.personalisationStates.mockResolvedValue(new Map());
+  mocks.orientationPlans.mockResolvedValue(new Map());
+  mocks.artworkPlans.mockResolvedValue(new Map());
 });
 
 describe('publication readiness for category products', () => {
+  it.each([
+    { type: 'single', digital: false, override: null, complete: true },
+    { type: 'single', digital: true, override: false, complete: true },
+    { type: 'single', digital: true, override: null, complete: false },
+    { type: 'multiple', digital: false, override: null, complete: true },
+    { type: 'multiple', digital: true, override: null, complete: false },
+  ])('does not require Dropbox delivery for physical-only $type listings, respecting digital=$digital override=$override', async ({ type, digital, override, complete }) => {
+    const listing = syncedListing(); listing.ourCategory.digitalDownload = digital; listing.ourCategory.templateType = type;
+    listing.ourCategory.itemCount = type === 'multiple' ? 3 : 1;
+    listing.groupItems = type === 'multiple' ? [{ id: 1 }, { id: 2 }, { id: 3 }] : [];
+    Object.assign(listing.productConfig, { digitalDownload: true, digitalDownloadOverride: override });
+    Object.assign(listing, { dropboxBundle: null, dropboxSyncedAt: null });
+    listing.files = listing.files.filter((file) => file.localFileName !== 'DownloadInstructions.pdf');
+    loadListings(listing);
+    const data = await getSyncToEtsyData();
+    expect(data.localSections[0].listings[0].isComplete).toBe(complete);
+  });
+  it('blocks all variants for incomplete artwork assignments despite existing generated images and otherwise synced drafts',async()=>{
+    const listing=Object.assign(syncedListing(),{ourCategoryId:25,artworkOrientation:'portrait'});
+    const orientation=createTemplateOrientationPlan(25,{},[{id:10,name:'Room',neutral:true}]);
+    mocks.orientationPlans.mockResolvedValue(new Map([[25,orientation]]));
+    mocks.artworkPlans.mockResolvedValue(new Map([[listing.id,{valid:false,errors:['Room: Choose artwork item 2.'],roles:[{id:10}]}]]));
+    loadListings(listing);
+    const data=await getSyncToEtsyData();
+    for(const section of [...data.localSections,...data.sections])expect(section.listings[0]).toMatchObject({
+      isComplete:false,isSynced:false,canSync:false,artworkAssignmentErrors:['Room: Choose artwork item 2.'],
+      syncDisabledReason:'Room: Choose artwork item 2.',pendingChanges:expect.arrayContaining(['Artwork selections']),
+      publication:{allProductsSynced:false,readyVariants:[]},
+    });
+    expect(mocks.artworkPlans).toHaveBeenCalledExactlyOnceWith([
+      {shopId:'66615491',sectionId:'14',subSectionId:'26',listingId:String(listing.id)},
+    ],{includeCandidates:false,orientationPlans:new Map([[25,orientation]])});
+    mocks.artworkPlans.mockResolvedValue(new Map([[listing.id,{valid:true,errors:[],roles:[{id:10}]}]]));
+    const ready=await getSyncToEtsyData();
+    expect(ready.localSections[0].listings[0]).toMatchObject({isComplete:true,isSynced:true});
+    expect(ready.localSections[0].listings[0]).not.toHaveProperty('artworkAssignmentErrors');
+  });
   it('scopes cached section metrics to the selected shop without checking Etsy remotely', async () => {
     loadListings(syncedListing());
     await getSyncToEtsyData({ checkRemoteSections: false, shopId: '00066615491' });

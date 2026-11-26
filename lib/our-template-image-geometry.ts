@@ -134,13 +134,13 @@ export function paperPlacementCorners(corners:TemplateOpeningCorners,placement:P
     bottomLeft:projectPoint(matrix,{x:placement.x,y:placement.y+height})};
 }
 
-export function validateOurTemplateImageDefinition(value:unknown,expectedWidth?:number,expectedHeight?:number):OurTemplateImageDefinition {
+export function validateOurTemplateImageDefinition(value:unknown,expectedWidth?:number,expectedHeight?:number,options?:{allowEmptyOpenings?:boolean}):OurTemplateImageDefinition {
   if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('The scene configuration is invalid.');
   const record=value as Record<string,unknown>,width=Number(record.width),height=Number(record.height);
   if(!Number.isInteger(width)||!Number.isInteger(height)||width<4||height<4||width>16000||height>16000||width*height>64000000)throw new Error('The scene dimensions are invalid (maximum 64 megapixels).');
   if(expectedWidth!==undefined&&width!==expectedWidth||expectedHeight!==undefined&&height!==expectedHeight)throw new Error('The opening coordinates do not match the original scene dimensions.');
   if(!['auto','opaque','paired'].includes(String(record.lightingMode)))throw new Error('Choose a valid scene lighting mode.');
-  if(!Array.isArray(record.openings)||record.openings.length<1||record.openings.length>50)throw new Error('Configure between 1 and 50 picture openings.');
+  if(!Array.isArray(record.openings)||record.openings.length<(options?.allowEmptyOpenings?0:1)||record.openings.length>50)throw new Error(options?.allowEmptyOpenings?'Configure no more than 50 picture openings.':'Configure between 1 and 50 picture openings.');
   const ids=new Set<string>();
   const openings=record.openings.map((value,index):OurTemplateImageOpening=>{
     if(!value||typeof value!=='object'||Array.isArray(value))throw new Error(`Opening ${index+1} is invalid.`);

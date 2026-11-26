@@ -5,8 +5,13 @@ import { getOurCategoryEditorData } from '@/lib/our-categories';
 
 export const dynamic = 'force-dynamic';
 
-export default async function CreateMultipleOurTemplatePage() {
+export default async function CreateMultipleOurTemplatePage({ searchParams }: {
+  searchParams?: Promise<{ portraitEnabled?: string; landscapeEnabled?: string }>;
+}) {
   const data = await getOurCategoryEditorData(undefined, 'multiple');
+  const orientations = await searchParams;
+  data.values.portraitEnabled = orientations?.portraitEnabled !== 'false';
+  data.values.landscapeEnabled = orientations?.landscapeEnabled !== 'false';
   return (
     <div>
       <Navbar />

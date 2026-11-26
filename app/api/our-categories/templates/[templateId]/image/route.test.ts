@@ -45,4 +45,12 @@ describe('template image response', () => {
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: 'S3 object not found: template.png' });
   });
+
+  it('passes a selected orientation through to the slot preview resolver', async () => {
+    getImage.mockResolvedValue({ contents: Buffer.from('landscape preview'), contentType: 'image/webp', fileName: 'room.webp' });
+    const response = await GET(new Request('http://localhost/api/our-categories/templates/108/image?preview=1&orientation=landscape'), {
+      params: Promise.resolve({ templateId: '108' }),
+    });
+    expect(response.status).toBe(200); expect(getImage).toHaveBeenCalledWith('108', true, 'landscape');
+  });
 });

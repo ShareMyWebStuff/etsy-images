@@ -6,7 +6,11 @@ import { getOurCategoryTemplateImage } from '@/lib/our-categories';
 export async function GET(request: Request, { params }: { params: Promise<{ templateId: string }> }) {
   try {
     const { templateId } = await params;
-    const image = await getOurCategoryTemplateImage(templateId, new URL(request.url).searchParams.get('preview') === '1');
+    const query = new URL(request.url).searchParams;
+    const orientation = query.get('orientation');
+    if (orientation !== null && orientation !== 'portrait' && orientation !== 'landscape') throw new Error('Choose Portrait or Landscape.');
+    const image = orientation ? await getOurCategoryTemplateImage(templateId, query.get('preview') === '1', orientation)
+      : await getOurCategoryTemplateImage(templateId, query.get('preview') === '1');
     return new Response(new Uint8Array(image.contents), {
       headers: {
         'Content-Type': image.contentType,

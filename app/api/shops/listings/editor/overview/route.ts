@@ -5,6 +5,7 @@ import {
   deleteAllListingImages,
   getGroupedListingThumbnail,
   getListingEditorData,
+  preflightListingImageGeneration,
   saveListingGroupItems,
   type ListingEditorContext,
 } from '@/lib/listing-editor';
@@ -13,6 +14,7 @@ import {
   generateMultipleListingDetailsWithBedrock,
 } from '@/lib/bedrock-listing-details';
 import { createGroupedDropboxInstructionPdf } from '@/lib/dropbox-bundle';
+import { assertListingDigitalDownloadDelivery, ListingDigitalDownloadDeliveryError } from '@/lib/listing-digital-download-delivery';
 import {
   generateListingOverview,
   recordCurrentListingOverviewFingerprint,
@@ -73,7 +75,7 @@ export async function POST(request: Request) {
     const body = await request.json() as OverviewRequest;
     const context = contextFrom(body);
     if (body.action === 'clear-images') {
-      return NextResponse.json({ data: await deleteAllListingImages(context) });
+      return NextResponse.json({ data: await deleteAllListingImages(context, { forGeneration: true }) });
     }
     if (body.action === 'images') {
       if (body.imageTemplateId !== undefined && (!Number.isSafeInteger(body.imageTemplateId) || body.imageTemplateId < 1)) {
@@ -82,6 +84,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ data: await generateListingTemplateImages(context, body.imageTemplateId) });
     }
     if (body.action === 'details') {
+      await preflightListingImageGeneration(context);
       const data = await getListingEditorData(context);
       if (!data) throw new Error('Listing not found.');
       return NextResponse.json({
@@ -91,6 +94,7 @@ export async function POST(request: Request) {
       });
     }
     if (body.action === 'grouped-pdf') {
+      await assertListingDigitalDownloadDelivery(context);
       await createGroupedDropboxInstructionPdf(context);
       return NextResponse.json({ data: await getListingEditorData(context) });
     }
@@ -106,6 +110,6 @@ export async function POST(request: Request) {
     const message = error instanceof Error && error.message.trim()
       ? error.message
       : 'Unable to generate the listing. The server returned an error without a message.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: error instanceof ListingDigitalDownloadDeliveryError ? error.status : 500 });
   }
 }

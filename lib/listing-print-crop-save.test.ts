@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   shop: vi.fn(), section: vi.fn(), subSection: vi.fn(), listing: vi.fn(), query: vi.fn(),
-  execute: vi.fn(), read: vi.fn(), mkdir: vi.fn(),
+  execute: vi.fn(), read: vi.fn(), mkdir: vi.fn(), invalidateConsumers: vi.fn(),
 }));
 vi.mock('@/lib/prisma', () => ({ prisma: {
   etsyShop: { findUnique: mocks.shop }, etsyShopSection: { findFirst: mocks.section },
@@ -12,6 +12,7 @@ vi.mock('@/lib/prisma', () => ({ prisma: {
   $queryRaw: mocks.query, $executeRaw: mocks.execute,
 } }));
 vi.mock('@/lib/s3-listing-storage', () => ({ readFile: mocks.read, mkdir: mocks.mkdir }));
+vi.mock('@/lib/listing-template-artwork-dependencies', () => ({ invalidateListingTemplateArtworkConsumers: mocks.invalidateConsumers }));
 
 import { saveListingPrintCropSettings } from '@/lib/listing-editor';
 import { fourByFivePrintCropDraft } from '@/lib/listing-print-crops';
@@ -41,6 +42,7 @@ describe('saving listing print crops', () => {
     // reload and inspect the persisted settings and invalidation flags.
     await expect(saveListingPrintCropSettings(context, draft)).rejects.toThrow('Listing not found.');
     expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.invalidateConsumers).toHaveBeenCalledWith([548]);
     const [sql, ...values] = mocks.execute.mock.calls[0];
     expect(sql.join('')).toMatch(/imagesChanged\s*=\s*true/);
     expect(sql.join('')).toMatch(/downloadsChanged\s*=\s*true/);

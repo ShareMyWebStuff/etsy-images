@@ -60,6 +60,7 @@ model EtsyListing {
   personalisationFontId         String?                      @db.VarChar(64)
   personalisationTextAreas      Json?
   printCropSettings             Json?
+  templateArtworkAssignments    Json?
   state                         String?
   url                           String?                      @db.Text
   quantity                      Int?
@@ -375,6 +376,8 @@ model OurCategory {
   itemCount            Int                        @default(1)
   roomTheme            String                     @db.VarChar(200)
   backgroundColour     String                     @default("#F5F0E8") @db.VarChar(7)
+  portraitEnabled      Boolean                    @default(true)
+  landscapeEnabled     Boolean                    @default(true)
   printsFrames         Boolean                    @default(true)
   customisePrints      Boolean                    @default(true)
   digitalDownload      Boolean                    @default(true)
@@ -506,6 +509,8 @@ model OurCategoryImageTemplate {
   categoryId                  Int
   ourTemplateImageId          String?                    @db.VarChar(36)
   ourTemplateImageItemMapping Json?
+  orientationVariants         Json?
+  templateImageDefinitionId    String?                    @db.VarChar(36)
   linkedSourceCategoryId      Int?
   linkedSourceImageTemplateId Int?
   linkedImageItemNumber       Int?
@@ -536,10 +541,12 @@ model OurCategoryImageTemplate {
   linkedSourceImageTemplate   OurCategoryImageTemplate?  @relation("LinkedImageTemplateSource", fields: [linkedSourceImageTemplateId], references: [id], onDelete: Restrict)
   linkedImageTemplates        OurCategoryImageTemplate[] @relation("LinkedImageTemplateSource")
   listingImages               EtsyListingImage[]
+  templateImageDefinition     OurTemplateImageDefinition? @relation(fields: [templateImageDefinitionId], references: [id], onDelete: Restrict)
 
   @@unique([categoryId, name])
   @@index([categoryId])
   @@index([ourTemplateImageId])
+  @@index([templateImageDefinitionId])
   @@index([linkedSourceCategoryId])
   @@index([linkedSourceImageTemplateId])
   @@map("our_category_image_templates")
@@ -556,9 +563,35 @@ model OurTemplateImage {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   tags             OurTemplateImageTagLink[]
+  definitions      OurTemplateImageDefinitionImage[]
 
   @@index([createdAt, id])
   @@map("our_template_images")
+}
+
+model OurTemplateImageDefinition {
+  id        String   @id @db.VarChar(36)
+  name      String   @db.VarChar(100)
+  mode      String   @db.VarChar(16)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  images    OurTemplateImageDefinitionImage[]
+  imageRoles OurCategoryImageTemplate[]
+
+  @@index([createdAt, id])
+  @@map("our_template_image_definitions")
+}
+
+model OurTemplateImageDefinitionImage {
+  definitionId String @db.VarChar(36)
+  variantSlot  String @db.VarChar(16)
+  sceneId      String @db.VarChar(36)
+  definition   OurTemplateImageDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  scene        OurTemplateImage @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+
+  @@id([definitionId, variantSlot])
+  @@index([sceneId])
+  @@map("our_template_image_definition_images")
 }
 
 model OurTemplateImageTag {

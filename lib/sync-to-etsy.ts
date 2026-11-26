@@ -12,6 +12,11 @@ import type { EtsySyncVariant } from '@/lib/etsy-sync-images';
 import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
 import { etsyPersonalisationFingerprint, loadEtsyPersonalisationSyncStates } from '@/lib/etsy-personalisation-sync-state';
 import { summarizeSectionPublication } from '@/lib/etsy-section-publication';
+import { getListingTemplateOrientationPlans } from '@/lib/listing-template-orientation';
+import { selectListingTemplateOrientation } from '@/lib/template-orientation';
+import { normalizeListingArtworkOrientation } from '@/lib/listing-print-crops';
+import { listingsNeedingImageGeneration } from '@/lib/listing-image-generation-state';
+import { getListingTemplateArtworkPlans, type ListingTemplateArtworkPlan } from '@/lib/listing-template-artwork';
 
 const MAX_ETSY_DOWNLOAD_SIZE_BYTES = 20 * 1024 * 1024;
 
@@ -37,6 +42,7 @@ export type SyncToEtsyListing = {
   categoryUses: string[];
   syncVariants: EtsySyncVariant[];
   listOnEtsy: boolean;
+  artworkAssignmentErrors?: string[];
   publication?: {
     allProductsSynced: boolean;
     readyVariants: EtsySyncVariant[];
@@ -135,7 +141,7 @@ export async function getSyncToEtsyData(
                   } },
                 },
               },
-              groupItems: { select: { id: true } },
+              groupItems: { select: { id: true, position: true, sourceListing: { select: { artworkOrientation: true } } } },
             },
           },
         },
@@ -144,6 +150,15 @@ export async function getSyncToEtsyData(
   });
 
   const shopIds = [...new Set(sections.map((section) => section.shop!.etsyShopId.toString()))];
+  const allListings = sections.flatMap((section) => section.subSections.flatMap((subSection) => subSection.listings));
+  const orientationPlans = await getListingTemplateOrientationPlans([...new Set(allListings.flatMap((listing) =>
+    typeof listing.ourCategoryId === 'number' ? [listing.ourCategoryId] : []))]);
+  const artworkContexts=sections.flatMap(section=>section.subSections.flatMap(subSection=>subSection.listings.filter(listing=>listing.ourCategoryId!==null).map(listing=>({
+    shopId:section.shop!.etsyShopId.toString(),sectionId:String(section.id),subSectionId:String(subSection.id),listingId:String(listing.id),
+  }))));
+  const artworkPlans=orientationPlans.size?await getListingTemplateArtworkPlans(artworkContexts,{includeCandidates:false,orientationPlans}):new Map<number,ListingTemplateArtworkPlan>();
+  const pendingImageListingIds = typeof prisma.$queryRaw === 'function'
+    ? await listingsNeedingImageGeneration(allListings.map((listing) => listing.id)) : new Set<number>();
   const personalisationStates = await loadEtsyPersonalisationSyncStates(sections.flatMap((section) => (
     section.subSections.flatMap((subSection) => subSection.listings.map((listing) => listing.id))
   )));
@@ -257,6 +272,14 @@ export async function getSyncToEtsyData(
             && listing.dropboxSyncedAt !== null
             && listing.dropboxRevision === listing.downloadsRevision
             && (listing.dropboxFiles.length === 0 || listing.files.some(isDropboxInstructionPdfFile));
+          const orientationPlan = listing.ourCategoryId === null ? undefined : orientationPlans.get(listing.ourCategoryId);
+          const sourceOrientations = orientationPlan && listing.ourCategory.templateType === 'multiple'
+            ? new Map(listing.groupItems.map((item) => [item.position, normalizeListingArtworkOrientation(item.sourceListing.artworkOrientation)])) : undefined;
+          const orientationSelection = orientationPlan
+            ? selectListingTemplateOrientation(orientationPlan, normalizeListingArtworkOrientation(listing.artworkOrientation), sourceOrientations) : null;
+          const artworkPlan=artworkPlans.get(listing.id);
+          const artworkErrors:string[]=artworkPlan?.errors??orientationSelection?.rows.filter(row=>!row.enabled).map(row=>row.disabledReason??`Configure ${row.name}.`)??[];
+          const expectedImageIds = artworkPlan?(artworkPlan.valid?artworkPlan.roles.map(role=>role.id):[]):orientationSelection?.expectedIds ?? listing.ourCategory.imageTemplates.map((template) => template.id);
           const isComplete = isListingComplete({
             isMultiple: listing.ourCategory?.templateType === 'multiple',
             hasTemplate: listing.ourCategory !== null,
@@ -273,11 +296,12 @@ export async function getSyncToEtsyData(
               }) !== null,
             requiresTextAreas: listing.ourCategory?.templateType !== 'multiple' && customisation.customisePrints,
             hasTextAreas: !customisation.customisePrints || listing.personalisationTextAreas !== null,
-            hasRequiredImages: (listing.ourCategory?.imageTemplates.length ?? 0) > 0
-              && listing.ourCategory!.imageTemplates.every((template) => listing.images.some((image) => image.ourCategoryImageTemplateId === template.id)),
+            hasRequiredImages: artworkErrors.length===0 && expectedImageIds.length > 0 && !pendingImageListingIds.has(listing.id)
+              && expectedImageIds.every((id) => listing.images.some((image) => image.ourCategoryImageTemplateId === id)),
             hasRequiredDigitalDownloads: listing.ourCategory?.templateType !== 'multiple' && hasRequiredPrintableDownloads(listing.files),
             hasCurrentZips: true,
             hasCurrentDropbox,
+            requiresDropbox: requiresEtsyDownloads,
             hasDownloadSection: hasRequiredTemplateDownloadSection(effectiveTemplate),
             hasTags: listing.tags.length > 0,
             hasTitle: listing.title.trim().length > 0,
@@ -408,7 +432,8 @@ export async function getSyncToEtsyData(
             if (templateChanged) changedAreas.push('Template');
             if (deliveryChanged) changedAreas.push('Markets & Delivery');
             if (personalisationChanged) changedAreas.push('Personalisation');
-            const needsSync = enabled && (remoteId === null || !sectionIsCurrent || changed || priceChanged || templateChanged || deliveryChanged || personalisationChanged);
+            if (artworkErrors.length) changedAreas.push('Artwork selections');
+            const needsSync = enabled && (remoteId === null || !sectionIsCurrent || changed || priceChanged || templateChanged || deliveryChanged || personalisationChanged || artworkErrors.length>0);
             const pending = [
               remoteId === null ? `New ${variant === 'download' ? 'digital' : variant} listing` : null,
               ...changedAreas,
@@ -423,7 +448,7 @@ export async function getSyncToEtsyData(
               : deliverySyncDisabledReason
               ? deliverySyncDisabledReason
               : !isComplete
-              ? 'Complete this listing before syncing it to Etsy.'
+              ? artworkErrors.length?artworkErrors.join(' '):'Complete this listing before syncing it to Etsy.'
               : !listOnEtsy && remoteId === null
               ? 'This listing is set not to be listed on Etsy.'
               : !requiredCategoriesExistOnEtsy
@@ -465,6 +490,7 @@ export async function getSyncToEtsyData(
             etsyCategory: '',
             templateCategories,
             variantStatuses,
+            ...(artworkErrors.length?{artworkAssignmentErrors:artworkErrors}:{}),
             listOnEtsy,
             hasEtsyListing,
             hasActiveEtsyListing,
@@ -483,7 +509,7 @@ export async function getSyncToEtsyData(
               ...sectionChanges,
             ],
             syncDisabledReason: !isComplete
-              ? 'Complete this listing before syncing it to Etsy.'
+              ? artworkErrors.length?artworkErrors.join(' '):'Complete this listing before syncing it to Etsy.'
               : !listOnEtsy && !hasEtsyListing
               ? 'This listing is set not to be listed on Etsy.'
               : !printEnabled && !requiresEtsyDownloads

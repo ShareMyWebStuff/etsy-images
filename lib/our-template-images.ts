@@ -16,6 +16,8 @@ import { normalizeArtworkBackgroundColour, type ArtworkBackgroundColour } from '
 import { removeListingImages } from '@/lib/listing-image-reset';
 import type { TemplateImageTag } from '@/lib/our-template-image-tag-types';
 import { assertTemplateImageTagsExist, getTagsForTemplateImages, saveTemplateImageTagIds, templateImageTagIdsFromForm } from '@/lib/our-template-image-tags';
+import { getSceneDefinitionContexts, getStoredTemplateImageDefinition, type TemplateImageDefinitionContext } from '@/lib/our-template-image-definition-context';
+import { getDefinitionArtworkItems, validateDefinitionChildMode, type TemplateImageArtworkItem, type TemplateImageVariantSlot } from '@/lib/our-template-image-definition-types';
 
 const MAX_BYTES = 25 * 1024 * 1024;
 // Brush masks live in the scene JSON; bound parsing work before inspecting individual strokes.
@@ -29,6 +31,10 @@ type SceneRow = {
 export type OurTemplateImageView = OurTemplateImageDefinition & {
   id: string; name: string; originalFileName: string; createdAt: string; updatedAt: string;
   tags: TemplateImageTag[];
+  parentDefinitionId?: string;
+  variantSlot?: TemplateImageVariantSlot;
+  artworkItems?: TemplateImageArtworkItem[];
+  artworkItemCount?: number;
 };
 
 function sceneId(value: string) {
@@ -38,9 +44,17 @@ function sceneId(value: string) {
 function definition(row: SceneRow): OurTemplateImageDefinition {
   return typeof row.definition === 'string' ? JSON.parse(row.definition) : row.definition;
 }
-function view(row: SceneRow, tags: TemplateImageTag[] = []): OurTemplateImageView {
+function view(row: SceneRow, tags: TemplateImageTag[] = [], contexts: TemplateImageDefinitionContext[] = []): OurTemplateImageView {
+  const primary = contexts.find((context) => context.definitionId === row.id) ?? contexts[0];
+  const configured = definition(row);
+  let artworkItems: TemplateImageArtworkItem[];
+  try { artworkItems = getDefinitionArtworkItems(configured); }
+  catch { artworkItems = [...new Map(configured.openings.map((opening) => [opening.imageItemNumber,
+    { imageItemNumber: opening.imageItemNumber, orientation: opening.orientation }])).values()]; }
   return { ...definition(row), id: row.id, name: row.name, originalFileName: row.originalFileName,
-    createdAt: new Date(row.createdAt).toISOString(), updatedAt: new Date(row.updatedAt).toISOString(), tags };
+    createdAt: new Date(row.createdAt).toISOString(), updatedAt: new Date(row.updatedAt).toISOString(), tags,
+    ...(primary ? { parentDefinitionId: primary.definitionId, variantSlot: primary.variantSlot } : {}),
+    artworkItems, artworkItemCount: artworkItems.length };
 }
 export async function getStoredOurTemplateImage(id: string): Promise<SceneRow> {
   const rows = await prisma.$queryRaw<SceneRow[]>`SELECT * FROM our_template_images WHERE id = ${sceneId(id)} LIMIT 1`;
@@ -49,22 +63,34 @@ export async function getStoredOurTemplateImage(id: string): Promise<SceneRow> {
 }
 export async function getOurTemplateImages(): Promise<OurTemplateImageView[]> {
   const rows = await prisma.$queryRaw<SceneRow[]>`SELECT * FROM our_template_images ORDER BY createdAt DESC, id DESC`;
-  const tags = await getTagsForTemplateImages(rows.map(({ id }) => id));
-  return rows.map((row) => view(row, tags.get(row.id)));
+  const [tags, contexts] = await Promise.all([getTagsForTemplateImages(rows.map(({ id }) => id)), getSceneDefinitionContexts(rows.map(({ id }) => id))]);
+  return rows.map((row) => view(row, tags.get(row.id), contexts.get(row.id)));
 }
 export async function getOurTemplateImage(id: string) {
   const row = await getStoredOurTemplateImage(id);
-  return view(row, (await getTagsForTemplateImages([row.id])).get(row.id));
+  const [tags, contexts] = await Promise.all([getTagsForTemplateImages([row.id]), getSceneDefinitionContexts([row.id])]);
+  return view(row, tags.get(row.id), contexts.get(row.id));
 }
 export async function getOurTemplateImageFile(id: string, preview = false) {
   const { imagePath } = await getStoredOurTemplateImage(id);
   return preview ? readImagePreview(imagePath) : readFile(imagePath);
 }
 
-export type SceneReferenceRow = { id: number; categoryId: number; ourTemplateImageId: string | null; linkedSourceImageTemplateId: number | null };
+export type SceneReferenceRow = { id: number; categoryId: number; ourTemplateImageId: string | null; linkedSourceImageTemplateId: number | null;
+  orientationVariants?: unknown; templateImageDefinitionId?: string | null };
 /** Resolve all image links before changing references; a deleted source cannot be traversed later. */
-export function dependentSceneReferences(rows: SceneReferenceRow[], id: string) {
-  const ids = new Set(rows.filter((row) => row.ourTemplateImageId === id).map((row) => row.id));
+export function dependentSceneReferences(rows: SceneReferenceRow[], id: string, definitionIds: readonly string[] = []) {
+  const ids = new Set(rows.filter((row) => {
+    if (row.templateImageDefinitionId && definitionIds.includes(row.templateImageDefinitionId)) return true;
+    if (row.ourTemplateImageId === id) return true;
+    let variants = row.orientationVariants;
+    if (typeof variants === 'string') { try { variants = JSON.parse(variants); } catch { return false; } }
+    if (!variants || typeof variants !== 'object' || Array.isArray(variants)) return false;
+    return ['portrait', 'landscape'].some((orientation) => {
+      const slot = (variants as Record<string, unknown>)[orientation];
+      return slot && typeof slot === 'object' && !Array.isArray(slot) && (slot as Record<string, unknown>).ourTemplateImageId === id;
+    });
+  }).map((row) => row.id));
   let changed = true;
   while (changed) {
     changed = false;
@@ -74,10 +100,11 @@ export function dependentSceneReferences(rows: SceneReferenceRow[], id: string) 
   }
   return rows.filter((row) => ids.has(row.id));
 }
-export async function sceneAffectedDependencies(id: string) {
+export async function sceneAffectedDependencies(id: string, additionalDefinitionIds: readonly string[] = []) {
   const rows = await prisma.$queryRaw<SceneReferenceRow[]>`
-    SELECT id, categoryId, ourTemplateImageId, linkedSourceImageTemplateId FROM our_category_image_templates`;
-  const references = dependentSceneReferences(rows, id);
+    SELECT id, categoryId, ourTemplateImageId, linkedSourceImageTemplateId, orientationVariants, templateImageDefinitionId FROM our_category_image_templates`;
+  const contexts = await getSceneDefinitionContexts([id]);
+  const references = dependentSceneReferences(rows, id, [...additionalDefinitionIds, ...(contexts.get(id)?.map((context) => context.definitionId) ?? [])]);
   const categoryIds = [...new Set(references.map((row) => row.categoryId))];
   const listings = categoryIds.length ? await prisma.etsyListing.findMany({
     where: { ourCategoryId: { in: categoryIds } }, select: { id: true },
@@ -121,7 +148,20 @@ async function prepareSceneForm(form: FormData, previous?: SceneRow) {
   }
   try { rawDefinition = serializedDefinition !== null ? JSON.parse(serializedDefinition) : previous ? definition(previous) : null; }
   catch { throw new Error('The opening settings are invalid.'); }
-  const configured = validateOurTemplateImageDefinition(rawDefinition);
+  const contexts = previous ? (await getSceneDefinitionContexts([previous.id])).get(previous.id) ?? [] : [];
+  if (!previous && form.has('parentDefinitionId')) {
+    const parent = await getStoredTemplateImageDefinition(String(form.get('parentDefinitionId')));
+    const variantSlot = form.get('variantSlot');
+    if (variantSlot !== 'portrait' && variantSlot !== 'landscape' && variantSlot !== 'single') throw new Error('Choose a valid image slot.');
+    contexts.push({ definitionId: parent.id, mode: parent.mode, variantSlot });
+  }
+  if (previous && form.has('parentDefinitionId') && !contexts.some((context) => context.definitionId === form.get('parentDefinitionId')
+    && (form.get('variantSlot') === null || context.variantSlot === form.get('variantSlot')))) {
+    throw new Error('This image does not belong to the selected template definition and slot.');
+  }
+  const configured = validateOurTemplateImageDefinition(rawDefinition, undefined, undefined, { allowEmptyOpenings: contexts.some((context) => context.mode === 'no-areas') });
+  for (const context of contexts) validateDefinitionChildMode(context.mode, context.variantSlot, configured);
+  if (!previous && !contexts.length) validateDefinitionChildMode('both', configured.openings.every((opening) => opening.orientation === 'landscape') ? 'landscape' : 'portrait', configured);
   if (configured.width !== metadata.width || configured.height !== metadata.height) throw new Error('The opening coordinates must match the original PNG dimensions.');
   const whiteFile = form.get('whiteFile'); const blackFile = form.get('blackFile');
   const hasWhite = whiteFile instanceof File && whiteFile.size > 0;
@@ -138,7 +178,7 @@ async function prepareSceneForm(form: FormData, previous?: SceneRow) {
   } else if (white || black) {
     throw new Error('Select paired lighting to use the white and black Canva exports.');
   }
-  return { name, image, contents, configured, white, black, tagIds };
+  return { name, image, contents, configured, white, black, tagIds, contexts };
 }
 async function persistPng(id: string, suffix: string, contents: Buffer) {
   const imagePath = path.join(DIRECTORY, id, `${randomUUID()}-${suffix}.png`);
@@ -148,6 +188,7 @@ async function persistPng(id: string, suffix: string, contents: Buffer) {
 }
 export async function createOurTemplateImage(form: FormData) {
   const prepared = await prepareSceneForm(form); const id = randomUUID(); const paths: string[] = [];
+  const dependencies = prepared.contexts[0] ? await sceneAffectedDependencies(id, [prepared.contexts[0].definitionId]) : null;
   let committed = false;
   try {
     const imagePath = await persistPng(id, 'scene', prepared.contents); paths.push(imagePath);
@@ -155,16 +196,35 @@ export async function createOurTemplateImage(form: FormData) {
     const blackPath = prepared.black ? await persistPng(id, 'black', prepared.black.contents) : null; if (blackPath) paths.push(blackPath);
     const serialized = JSON.stringify(prepared.configured); const now = new Date();
     await prisma.$transaction(async (transaction) => {
+      let context = prepared.contexts[0];
+      if (!context) {
+        const variantSlot = prepared.configured.openings.every((opening) => opening.orientation === 'landscape') ? 'landscape' : 'portrait';
+        validateDefinitionChildMode('both', variantSlot, prepared.configured);
+        await transaction.$executeRaw`INSERT INTO our_template_image_definitions (id, name, mode, createdAt, updatedAt)
+          VALUES (${id}, ${prepared.name}, ${'both'}, ${now}, ${now})`;
+        context = { definitionId: id, mode: 'both', variantSlot };
+      } else {
+        const [parent] = await transaction.$queryRaw<Array<{ id: string }>>`SELECT id FROM our_template_image_definitions WHERE id = ${context.definitionId} FOR UPDATE`;
+        if (!parent) throw new Error('The template image definition was deleted. Reload the library.');
+        const occupied = await transaction.$queryRaw<Array<{ sceneId: string }>>`SELECT sceneId FROM our_template_image_definition_images
+          WHERE definitionId = ${context.definitionId} AND variantSlot = ${context.variantSlot}`;
+        if (occupied.length) throw new Error('This image slot is already filled. Edit or delete its current image first.');
+      }
       await transaction.$executeRaw`INSERT INTO our_template_images
         (id, name, originalFileName, imagePath, whiteImagePath, blackImagePath, definition, createdAt, updatedAt)
         VALUES (${id}, ${prepared.name}, ${prepared.image!.name}, ${imagePath}, ${whitePath}, ${blackPath}, ${serialized}, ${now}, ${now})`;
+      await transaction.$executeRaw`INSERT INTO our_template_image_definition_images (definitionId, variantSlot, sceneId)
+        VALUES (${context.definitionId}, ${context.variantSlot}, ${id})`;
+      await transaction.$executeRaw`UPDATE our_template_image_definitions SET updatedAt = ${now} WHERE id = ${context.definitionId}`;
       if (prepared.tagIds?.length) await saveTemplateImageTagIds(transaction, id, prepared.tagIds);
+      if (dependencies) await invalidateListingImageGeneration(dependencies.listingIds, transaction);
     });
     committed = true;
     return await getOurTemplateImage(id);
   } catch (error) {
     // Reload failures must not remove files owned by the committed scene.
     if (!committed) await Promise.allSettled(paths.map((filePath) => unlink(filePath)));
+    if (committed) throw new Error(`${error instanceof Error ? error.message : 'The updated details could not be loaded.'} The template image was saved. Reload the definition before uploading again.`, { cause: error });
     throw error;
   }
 }
@@ -178,11 +238,13 @@ export async function updateOurTemplateImage(id: string, form: FormData) {
     const imagePath = prepared.image ? await persistPng(id, 'scene', prepared.contents) : previous.imagePath; if (prepared.image) paths.push(imagePath);
     const whitePath = prepared.white ? await persistPng(id, 'white', prepared.white.contents) : previous.whiteImagePath; if (prepared.white && whitePath) paths.push(whitePath);
     const blackPath = prepared.black ? await persistPng(id, 'black', prepared.black.contents) : previous.blackImagePath; if (prepared.black && blackPath) paths.push(blackPath);
-    const serialized = JSON.stringify(prepared.configured); const now = new Date();
+    const serialized = JSON.stringify(prepared.configured); const now = new Date(Math.max(Date.now(), new Date(previous.updatedAt).getTime() + 1));
     await prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`UPDATE our_template_images SET name = ${prepared.name},
+      const updated = await transaction.$executeRaw`UPDATE our_template_images SET name = ${prepared.name},
         originalFileName = ${prepared.image?.name ?? previous.originalFileName}, imagePath = ${imagePath},
-        whiteImagePath = ${whitePath}, blackImagePath = ${blackPath}, definition = ${serialized}, updatedAt = ${now} WHERE id = ${id}`;
+        whiteImagePath = ${whitePath}, blackImagePath = ${blackPath}, definition = ${serialized}, updatedAt = ${now}
+        WHERE id = ${id} AND updatedAt = ${previous.updatedAt}`;
+      if (Number(updated) !== 1) throw new Error('This image changed or was deleted while saving. Refresh and try again.');
       if (prepared.tagIds !== undefined) await saveTemplateImageTagIds(transaction, id, prepared.tagIds);
       if (dependencies) await invalidateListingImageGeneration(dependencies.listingIds, transaction);
     });
@@ -195,6 +257,7 @@ export async function updateOurTemplateImage(id: string, form: FormData) {
   } catch (error) {
     // Once committed, replacement files belong to the saved scene even if its reload fails.
     if (!committed) await Promise.allSettled(paths.map((filePath) => unlink(filePath)));
+    if (committed) throw new Error(`${error instanceof Error ? error.message : 'The updated details could not be loaded.'} The template image was saved. Reload the definition before uploading again.`, { cause: error });
     throw error;
   }
 }
@@ -232,6 +295,11 @@ export async function renderSavedOurTemplateImage(id: string,
   artworks: Map<number, { contents: Buffer; cropSettings?: ListingPrintCropSettings; backgroundColour?: ArtworkBackgroundColour }>,
   mapItem?: (openingId: string, original: number) => number) {
   const row = await getStoredOurTemplateImage(id); const configured = definition(row);
+  if (!configured.openings.length) {
+    const contexts = await getSceneDefinitionContexts([id]);
+    if (!contexts.get(id)?.some((context) => context.mode === 'no-areas')) throw new Error('The saved scene has no artwork openings.');
+    return readFile(row.imagePath);
+  }
   const effective = mapItem ? { ...configured, openings: configured.openings.map((opening) => ({
     ...opening, imageItemNumber: mapItem(opening.id, opening.imageItemNumber),
   })) } : configured;
@@ -242,8 +310,9 @@ export async function renderSavedOurTemplateImage(id: string,
 
 export async function getOurTemplateArtworkOptions() {
   const rows = await prisma.etsyListing.findMany({ where: { thumbnailFileName: { not: null } },
-    select: { id: true, title: true, localDirectoryName: true }, orderBy: [{ id: 'desc' }], take: 500 });
-  return rows.map((row) => ({ id: String(row.id), name: row.localDirectoryName || row.title || `Listing ${row.id}` }));
+    select: { id: true, title: true, localDirectoryName: true, artworkOrientation: true }, orderBy: [{ id: 'desc' }], take: 500 });
+  return rows.map((row) => ({ id: String(row.id), name: row.localDirectoryName || row.title || `Listing ${row.id}`,
+    orientation: row.artworkOrientation === 'landscape' ? 'landscape' as const : 'portrait' as const }));
 }
 async function savedSampleArtwork(value: string) {
   const id = Number(value);
@@ -265,6 +334,7 @@ async function savedSampleArtwork(value: string) {
     orientation: details?.artworkOrientation === 'landscape' ? 'landscape' : 'portrait',
   }) ?? undefined;
   return { contents: await readFile(path.join(directory, 'thumbnail', listing.thumbnailFileName)), cropSettings,
+    orientation: details?.artworkOrientation === 'landscape' ? 'landscape' as const : 'portrait' as const,
     backgroundColour: normalizeArtworkBackgroundColour(listing.backgroundColour ?? listing.ourCategory?.backgroundColour) };
 }
 export async function testOurTemplateImage(id: string, form: FormData) {
@@ -278,8 +348,15 @@ export async function testOurTemplateImage(id: string, form: FormData) {
       const contents = Buffer.from(await file.arrayBuffer());
       const metadata = await sharp(contents, { failOn: 'error' }).metadata().catch(() => null);
       if (!metadata || !['png', 'jpeg', 'webp'].includes(metadata.format ?? '')) throw new Error(`Choose a PNG, JPG or WebP for artwork ${item}.`);
+      const dimensions = metadata.autoOrient ?? metadata;
+      const orientation = dimensions.width && dimensions.height && dimensions.width > dimensions.height ? 'landscape' : 'portrait';
+      if (configured.openings.some((opening) => opening.imageItemNumber === item && opening.orientation !== orientation)) throw new Error(`Artwork item ${item} must match its ${configured.openings.find((opening) => opening.imageItemNumber === item)!.orientation} area orientation.`);
       artworks.set(item, { contents });
-    } else if (typeof listingId === 'string' && listingId) artworks.set(item, await savedSampleArtwork(listingId));
+    } else if (typeof listingId === 'string' && listingId) {
+      const sample = await savedSampleArtwork(listingId);
+      if (configured.openings.some((opening) => opening.imageItemNumber === item && opening.orientation !== sample.orientation)) throw new Error(`Artwork item ${item} must match its ${configured.openings.find((opening) => opening.imageItemNumber === item)!.orientation} area orientation.`);
+      artworks.set(item, sample);
+    }
     else throw new Error(`Supply artwork item ${item}.`);
   }
   return renderSavedOurTemplateImage(id, artworks);
@@ -291,7 +368,7 @@ export function ourTemplateImageRenderFingerprint(definitionValue: OurTemplateIm
 }
 
 function renderDefinitionSignature(value: OurTemplateImageDefinition) {
-  const normalized = validateOurTemplateImageDefinition(value);
+  const normalized = validateOurTemplateImageDefinition(value, undefined, undefined, { allowEmptyOpenings: value.openings.length === 0 });
   return JSON.stringify({ ...normalized,
     // Smart selections are strokes with compact regions and no brush points.
     foregroundMask: normalized.foregroundMask?.strokes.length ? normalized.foregroundMask : undefined,

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -143,6 +143,7 @@ function multipleData(): OurCategoryEditorData {
 }
 
 beforeEach(() => {
+  window.history.replaceState({}, '', '/');
   vi.spyOn(window.history, 'pushState').mockImplementation(() => undefined);
   vi.spyOn(window.history, 'forward').mockImplementation(() => undefined);
 });
@@ -152,6 +153,98 @@ afterEach(() => {
 });
 
 describe('Our Template editor', () => {
+  it('shows whole definitions with only Delete and parent Edit, retaining the row order handle', () => {
+    const initial = dataWithTemplate();
+    initial.imageTemplates[0] = { ...initial.imageTemplates[0], name: 'Old attachment name', templateImageDefinitionId: 'global-definition',
+      definitionName: 'Current global name', definitionMode: 'combined' };
+    render(<OurCategoryEditorClient initialData={initial} initialTab="image-templates" />);
+    expect(screen.getAllByRole('columnheader').map(header => header.textContent)).toEqual(['Order', 'Name', 'Description', 'Used On', 'Actions']);
+    const row = screen.getByRole('row', { name: 'Drag Current global name to reorder' });
+    expect(row.getAttribute('title')).toBe('Click and drag to reorder');
+    expect(within(row).getByText('A room template')).toBeTruthy();
+    expect(within(row).getByText('Prints, Customised prints, Digital downloads')).toBeTruthy();
+    expect(within(row).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual(['Delete Current global name']);
+    const editUrl = new URL(within(row).getByRole('link', { name: 'Edit Current global name' }).getAttribute('href')!, window.location.origin);
+    expect(editUrl.pathname).toBe('/our-template-images');
+    expect(editUrl.searchParams.get('definition')).toBe('global-definition');
+    expect(editUrl.searchParams.get('returnTo')).toBe('/our-templates/1/edit?tab=image-templates');
+    expect(screen.queryByText('Old attachment name')).toBeNull();
+    for (const name of ['Copy From', 'Link', 'Create', 'Test Current global name', 'Make copy of Current global name']) expect(screen.queryByRole('button', { name })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Create PNG' })).toBeTruthy();
+  });
+
+  it.each([
+    '/our-templates/25/edit',
+    '/our-templates/25/edit?tab=details&filter=Nursery#role-9',
+  ])('carries the owning template Image Templates tab into its global Edit link from %s', currentUrl => {
+    window.history.replaceState({}, '', currentUrl);
+    const initial = dataWithTemplate(); initial.categoryId = '25';
+    initial.imageTemplates[0] = { ...initial.imageTemplates[0], templateImageDefinitionId: 'global-definition', definitionName: 'Global room', isLinked: true, linkedSourceCategoryId: 7 };
+    render(<OurCategoryEditorClient initialData={initial} initialTab="image-templates" />);
+    const editUrl = new URL(screen.getByRole('link', { name: 'Edit Global room' }).getAttribute('href')!, window.location.origin);
+    expect(editUrl.pathname).toBe('/our-template-images');
+    expect(editUrl.searchParams.get('definition')).toBe('global-definition');
+    expect(editUrl.searchParams.get('returnTo')).toBe('/our-templates/25/edit?tab=image-templates');
+  });
+
+  it('adds a multi-artwork global definition to a single template with its description and selected products', async () => {
+    const user = userEvent.setup(), initial = dataWithTemplate();
+    const attached = { ...initial.imageTemplates[0], templateImageDefinitionId: 'four-artworks', definitionName: 'Combined room',
+      definitionMode: 'combined' as const, description: 'Four matching prints', useOnCustomised: false, useOnDigital: false };
+    initial.imageTemplates = [];
+    const candidate = { id: 'four-artworks', name: 'Combined room', mode: 'combined', createdAt: '2026-01-01', updatedAt: '2026-01-01',
+      images: [{ id: 'scene-four', name: 'Four frames', width: 1200, height: 800, updatedAt: '2026-01-01', tags: [],
+        openings: [1, 2, 3, 4].map(item => ({ ...openingRegion(item, item), orientation: item % 2 ? 'portrait' : 'landscape' })) }] };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, options) => {
+      if (String(url) === '/api/our-template-image-definitions') return { ok: true, json: async () => ({ definitions: [candidate] }) } as Response;
+      if (String(url) === '/api/our-template-image-tags') return { ok: true, json: async () => ({ tags: [] }) } as Response;
+      if (options?.method === 'POST') return { ok: true, json: async () => ({ template: attached }) } as Response;
+      throw new Error(`Unexpected request ${url}`);
+    });
+    render(<OurCategoryEditorClient initialData={initial} initialTab="image-templates" />);
+    await user.click(screen.getByRole('button', { name: 'Add Our Template Image' }));
+    await user.click(await screen.findByRole('button', { name: 'Select Combined room' }));
+    const dialog = screen.getByRole('dialog', { name: 'Add Our Template Image' });
+    expect(within(dialog).getByText(/4 distinct artwork items/)).toBeTruthy();
+    await user.clear(within(dialog).getByLabelText('Description'));
+    await user.type(within(dialog).getByLabelText('Description'), attached.description);
+    await user.click(within(dialog).getByLabelText('Customised prints'));
+    await user.click(within(dialog).getByLabelText('Digital downloads'));
+    await user.click(within(dialog).getByRole('button', { name: 'Add template image' }));
+    const row = await screen.findByRole('row', { name: 'Drag Combined room to reorder' });
+    expect(within(row).getByText(attached.description)).toBeTruthy();
+    expect(within(row).getByText('Prints')).toBeTruthy();
+    const post = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST')!;
+    expect(post[0]).toBe('/api/our-categories/1/templates');
+    const form = post[1]!.body as FormData;
+    expect(form.get('templateImageDefinitionId')).toBe('four-artworks');
+    expect(form.has('ourTemplateImageId')).toBe(false); expect(form.has('file')).toBe(false);
+    expect(form.get('description')).toBe(attached.description);
+    expect(form.get('useOnPrints')).toBe('true'); expect(form.get('useOnCustomised')).toBe('false'); expect(form.get('useOnDigital')).toBe('false');
+  });
+  it('defaults legacy orientation flags to both enabled and saves a valid selection after rejecting neither', async () => {
+    const user = userEvent.setup();
+    const initial = dataWithTemplate();
+    const saved = { ...initial, values: { ...initial.values, portraitEnabled: true, landscapeEnabled: false } };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ data: saved }) } as Response);
+    render(<OurCategoryEditorClient initialData={initial} />);
+    expect((screen.getByRole('checkbox', { name: 'Portrait' }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('checkbox', { name: 'Landscape' }) as HTMLInputElement).checked).toBe(true);
+    await user.click(screen.getByRole('checkbox', { name: 'Portrait' }));
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);
+    await user.click(screen.getByRole('checkbox', { name: 'Landscape' }));
+    expect(screen.getByRole('alert').textContent).toContain('Select at least one artwork orientation');
+    const invalidSave = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+    expect(invalidSave.disabled).toBe(true);
+    await user.click(invalidSave);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('checkbox', { name: 'Portrait' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/our-categories/1', expect.objectContaining({ method: 'PUT' })));
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toMatchObject({ name: initial.values.name, portraitEnabled: true, landscapeEnabled: false, printsFrames: true });
+  });
+
   it('opens on the requested Image Templates tab', () => {
     render(<OurCategoryEditorClient initialData={dataWithTemplate()} initialTab="image-templates" />);
 
@@ -273,7 +366,7 @@ describe('Our Template editor', () => {
     expect(within(screen.getByLabelText('Digital Download Section')).queryByRole('option', { name: 'Wall Art' })).toBeTruthy();
   });
 
-  it('orders Delete, Test, Make Copy, and Edit and opens their dialogs', async () => {
+  it('keeps only Delete and Edit actions and preserves the legacy PNG editor', async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
@@ -291,19 +384,17 @@ describe('Our Template editor', () => {
     render(<OurCategoryEditorClient initialData={dataWithTemplate()} />);
     await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
     expect(screen.getByRole('link', { name: 'New Create' }).getAttribute('href')).toBe('/our-templates/1/edit/image');
-    expect(screen.getByText(/Click and drag a row to change its order/)).toBeTruthy();
+    expect(screen.getByText(/Drag a row to change the order of listing images/)).toBeTruthy();
     const row = screen.getByText('Room mockup').closest('tr');
     expect(row).toBeTruthy();
     expect(row?.getAttribute('title')).toBe('Click and drag to reorder');
-    const actions = within(row!).getAllByRole('button');
+    const actions = within(within(row!).getAllByRole('cell').at(-1)!).getAllByRole('button');
     expect(actions.map((button) => button.getAttribute('aria-label'))).toEqual([
       'Delete Room mockup',
-      'Test Room mockup',
-      'Make copy of Room mockup',
       'Edit Room mockup',
     ]);
 
-    await user.click(actions[3]);
+    await user.click(actions[1]);
     expect(screen.getByRole('heading', { name: 'Edit Image Template' })).toBeTruthy();
     expect((screen.getByLabelText('Template Name') as HTMLInputElement).value).toBe('Room mockup');
     expect((screen.getByLabelText('Template Image') as HTMLInputElement).required).toBe(false);
@@ -335,34 +426,6 @@ describe('Our Template editor', () => {
     expect(screen.getByRole('button', { name: 'Continue' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    await user.click(actions[1]);
-    expect(screen.getByRole('heading', { name: 'Test Room mockup' })).toBeTruthy();
-    expect(screen.getByLabelText('Image to attach')).toBeTruthy();
-  });
-
-  it('makes an independent image-template copy at the bottom of the list', async () => {
-    const user = userEvent.setup();
-    const initial = dataWithTemplate();
-    const copiedTemplate = {
-      ...initial.imageTemplates[0],
-      id: '10',
-      name: 'Copied from Room mockup',
-      createdAt: new Date(1).toISOString(),
-      updatedAt: new Date(1).toISOString(),
-    };
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      json: async () => ({ template: copiedTemplate }),
-    } as Response);
-    render(<OurCategoryEditorClient initialData={initial} />);
-
-    await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
-    await user.click(screen.getByRole('button', { name: 'Make copy of Room mockup' }));
-
-    expect(await screen.findByText('Copied from Room mockup')).toBeTruthy();
-    const rows = screen.getAllByRole('row').slice(1);
-    expect(within(rows.at(-1)!).getByText('Copied from Room mockup')).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledWith('/api/our-categories/templates/9/copy', { method: 'POST' });
   });
 
   it('warns about and deletes generated listing images and linked multiple-template images', async () => {
@@ -418,223 +481,5 @@ describe('Our Template editor', () => {
     expect(screen.queryByRole('button', { name: 'Edit Room mockup' })).toBeNull();
   });
 
-  it('tests a generated font showcase without requesting an artwork image', async () => {
-    const user = userEvent.setup();
-    const initial = dataWithTemplate();
-    initial.imageTemplates[0] = { ...initial.imageTemplates[0], displayFonts: true };
-    render(<OurCategoryEditorClient initialData={initial} />);
 
-    await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
-    await user.click(screen.getByRole('button', { name: 'Test Room mockup' }));
-
-    expect(screen.getByText('This generated showcase displays every available font and does not require an attached image.')).toBeTruthy();
-    expect(screen.queryByLabelText('Image to attach')).toBeNull();
-    expect((screen.getByRole('button', { name: 'Test' }) as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it('requests the configured number of images when testing a multiple template', async () => {
-    const user = userEvent.setup();
-    const initial = multipleData();
-    const existingTemplate = {
-      ...dataWithTemplate().imageTemplates[0],
-      openingRegions: [openingRegion(1, 1), openingRegion(2, 2), openingRegion(3, 3)],
-    };
-    render(<OurCategoryEditorClient initialData={{
-      ...initial,
-      categoryId: '10',
-      values: {
-        ...initial.values,
-        name: 'Nursery set',
-        followedTemplateId: 2,
-        itemCount: 3,
-      },
-      imageTemplates: [existingTemplate],
-    }} />);
-
-    await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
-    await user.click(screen.getByRole('button', { name: 'Test Room mockup' }));
-
-    expect(screen.getByText('Add the 3 images required by this image template.', { exact: false })).toBeTruthy();
-    expect(screen.getByLabelText('Image 1')).toBeTruthy();
-    expect(screen.getByLabelText('Image 2')).toBeTruthy();
-    expect(screen.getByLabelText('Image 3')).toBeTruthy();
-    expect(screen.queryByLabelText('Image 4')).toBeNull();
-    expect((screen.getByRole('button', { name: 'Test' }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('requests only the distinct images used by an image template, including a linked single image', async () => {
-    const user = userEvent.setup();
-    const initial = multipleData();
-    const baseTemplate = dataWithTemplate().imageTemplates[0];
-    const threeImageTemplate = {
-      ...baseTemplate,
-      id: '40',
-      name: 'Three-image room',
-      openingRegions: [
-        openingRegion(2, 1),
-        openingRegion(4, 2),
-        openingRegion(6, 3),
-        openingRegion(4, 4),
-      ],
-    };
-    const linkedSingleTemplate = {
-      ...baseTemplate,
-      id: '41',
-      name: 'Linked single room',
-      openingRegions: [openingRegion(5, 1), openingRegion(5, 2)],
-      isLinked: true,
-      linkedSourceCategoryId: 2,
-      linkedSourceImageTemplateId: 9,
-      linkedImageItemNumber: 5,
-      linkedSourceTemplateName: 'Nursery print',
-      linkedSourceImageTemplateName: 'Room mockup',
-    };
-    render(<OurCategoryEditorClient initialData={{
-      ...initial,
-      categoryId: '16',
-      values: { ...initial.values, name: 'Six print set', followedTemplateId: 2, itemCount: 6 },
-      imageTemplates: [threeImageTemplate, linkedSingleTemplate],
-    }} />);
-
-    await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
-    await user.click(screen.getByRole('button', { name: 'Test Three-image room' }));
-    expect(screen.getByLabelText('Image 2')).toBeTruthy();
-    expect(screen.getByLabelText('Image 4')).toBeTruthy();
-    expect(screen.getByLabelText('Image 6')).toBeTruthy();
-    expect(screen.queryByLabelText('Image 1')).toBeNull();
-    expect(screen.queryByLabelText('Image 3')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    await user.click(screen.getByRole('button', { name: 'Test Linked single room' }));
-    expect(screen.getByText('Add the 1 image required by this image template.', { exact: false })).toBeTruthy();
-    expect(screen.getByLabelText('Image 5')).toBeTruthy();
-    expect(screen.queryByLabelText('Image 1')).toBeNull();
-  });
-
-  it('copies an image from a compatible single or same-size multiple template', async () => {
-    const user = userEvent.setup();
-    const initial = multipleData();
-    const sourceImage = dataWithTemplate().imageTemplates[0];
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      json: async () => ({ template: { ...sourceImage, id: '30' } }),
-    } as Response);
-    render(<OurCategoryEditorClient initialData={{
-      ...initial,
-      categoryId: '12',
-      values: { ...initial.values, name: 'Nursery set', followedTemplateId: 2 },
-      followedImageTemplates: [sourceImage],
-      copySourceTemplates: [
-        { id: 2, name: 'Nursery print', templateType: 'single', itemCount: 1, imageTemplates: [sourceImage] },
-        { id: 14, name: 'Other set', templateType: 'multiple', itemCount: 3, imageTemplates: [{ ...sourceImage, id: '19' }] },
-      ],
-    }} />);
-
-    await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
-    const createButton = screen.getByRole('button', { name: 'Create' });
-    expect(createButton.parentElement?.textContent).toContain('Copy FromLinkNew CreateCreate');
-    expect(screen.getByRole('link', { name: 'New Create' }).getAttribute('href')).toBe('/our-templates/12/edit/image');
-    await user.click(screen.getByRole('button', { name: 'Copy From' }));
-    expect(screen.getByRole('heading', { name: 'Copy Image Template' })).toBeTruthy();
-    expect(within(screen.getByLabelText('Copy from template')).getByRole('option', { name: 'Nursery print (Single)' })).toBeTruthy();
-    expect(within(screen.getByLabelText('Copy from template')).getByRole('option', { name: 'Other set (3 items)' })).toBeTruthy();
-    await user.selectOptions(screen.getByLabelText('Copy from template'), '14');
-    expect((screen.getByLabelText('Copy image selection') as HTMLInputElement).value).toBe('All');
-    await user.selectOptions(screen.getByLabelText('Image template to copy'), '19');
-    expect((screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement).disabled).toBe(false);
-    await user.selectOptions(screen.getByLabelText('Copy from template'), '2');
-    await user.selectOptions(screen.getByLabelText('Image template to copy'), '9');
-    await user.selectOptions(screen.getByLabelText('Copy to image number'), '2');
-    await user.click(screen.getByRole('button', { name: 'Copy' }));
-
-    expect(fetchMock).toHaveBeenCalledWith('/api/our-categories/12/templates/copy', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ sourceCategoryId: '2', sourceTemplateId: '9', imageItemNumbers: [2] }),
-    }));
-  });
-
-  it('requires a unique target image for every image in a smaller multiple template', async () => {
-    const user = userEvent.setup();
-    const initial = multipleData();
-    const sourceImage = dataWithTemplate().imageTemplates[0];
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      json: async () => ({ template: { ...sourceImage, id: '32' } }),
-    } as Response);
-    render(<OurCategoryEditorClient initialData={{
-      ...initial,
-      categoryId: '16',
-      values: { ...initial.values, name: 'Six print set', followedTemplateId: 2, itemCount: 6 },
-      copySourceTemplates: [
-        { id: 14, name: 'Three print set', templateType: 'multiple', itemCount: 3, imageTemplates: [sourceImage] },
-      ],
-    }} />);
-
-    await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
-    await user.click(screen.getByRole('button', { name: 'Copy From' }));
-    await user.selectOptions(screen.getByLabelText('Copy from template'), '14');
-    await user.selectOptions(screen.getByLabelText('Image template to copy'), '9');
-    const copyButton = screen.getByRole('button', { name: 'Copy' }) as HTMLButtonElement;
-    expect(copyButton.disabled).toBe(true);
-    expect(screen.getByText('Select 3 different target images before copying.')).toBeTruthy();
-    await user.selectOptions(screen.getByLabelText('Copy source Image 1 to'), '2');
-    await user.selectOptions(screen.getByLabelText('Copy source Image 2 to'), '4');
-    await user.selectOptions(screen.getByLabelText('Copy source Image 3 to'), '4');
-    expect(copyButton.disabled).toBe(true);
-    await user.selectOptions(screen.getByLabelText('Copy source Image 3 to'), '6');
-    expect(copyButton.disabled).toBe(false);
-    await user.click(copyButton);
-
-    expect(fetchMock).toHaveBeenCalledWith('/api/our-categories/16/templates/copy', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ sourceCategoryId: '14', sourceTemplateId: '9', imageItemNumbers: [2, 4, 6] }),
-    }));
-  });
-
-  it('links a followed image template to a selected image number and marks it as linked', async () => {
-    const user = userEvent.setup();
-    const initial = multipleData();
-    const sourceImage = dataWithTemplate().imageTemplates[0];
-    const linkedImage = {
-      ...sourceImage,
-      id: '31',
-      name: 'Room mockup - Image 3',
-      isLinked: true,
-      linkedSourceCategoryId: 2,
-      linkedSourceImageTemplateId: 9,
-      linkedImageItemNumber: 3,
-      linkedSourceTemplateName: 'Nursery print',
-      linkedSourceImageTemplateName: 'Room mockup',
-    };
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      json: async () => ({ template: linkedImage }),
-    } as Response);
-    render(<OurCategoryEditorClient initialData={{
-      ...initial,
-      categoryId: '12',
-      values: { ...initial.values, name: 'Nursery set', followedTemplateId: 2 },
-      followedImageTemplates: [sourceImage],
-    }} />);
-
-    await user.click(screen.getByRole('tab', { name: 'Image Templates' }));
-    await user.click(screen.getByRole('button', { name: 'Link' }));
-    expect(screen.getByRole('heading', { name: 'Link Image Template' })).toBeTruthy();
-    await user.selectOptions(screen.getByLabelText('Image template to link'), '9');
-    expect(within(screen.getByLabelText('Linked image number')).getAllByRole('option').map((option) => option.textContent)).toEqual([
-      'Image 1',
-      'Image 2',
-      'Image 3',
-    ]);
-    await user.selectOptions(screen.getByLabelText('Linked image number'), '3');
-    await user.click(screen.getByRole('button', { name: 'Select' }));
-
-    expect(fetchMock).toHaveBeenCalledWith('/api/our-categories/12/templates/link', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ sourceTemplateId: '9', imageItemNumber: 3 }),
-    }));
-    expect(screen.getByText('Linked')).toBeTruthy();
-    expect(screen.getByText('Nursery print / Room mockup / Image 3')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Edit Room mockup - Image 3' }) as HTMLButtonElement).disabled).toBe(true);
-  });
 });

@@ -108,6 +108,13 @@ describe('saved scene frame geometry',()=>{
     expect(()=>validateOurTemplateImageDefinition({...base,openings:[{...base.openings[0],corners:{...corners,topRight:corners.bottomLeft,bottomLeft:corners.topRight}}]})).toThrow(/convex/);
     expect(()=>validateOurTemplateImageDefinition({...base,openings:[{...base.openings[0],placements:{invalid:{x:0,y:0,width:1}}}]})).toThrow(/unsupported/);
   });
+
+  it('allows an empty opening list only when the trusted No areas caller opts in',()=>{
+    const definition={width:180,height:200,lightingMode:'auto',openings:[]};
+    expect(()=>validateOurTemplateImageDefinition(definition)).toThrow(/1 and 50/);
+    expect(validateOurTemplateImageDefinition(definition,180,200,{allowEmptyOpenings:true}).openings).toEqual([]);
+    expect(()=>validateOurTemplateImageDefinition(definition,100,100,{allowEmptyOpenings:true})).toThrow(/dimensions/);
+  });
 });
 
 describe('clicked frame opening detection',()=>{

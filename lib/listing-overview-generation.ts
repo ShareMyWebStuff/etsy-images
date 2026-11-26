@@ -21,8 +21,9 @@ import {
 } from '@/lib/listing-editor';
 import { prisma } from '@/lib/prisma';
 import { getPrintableDownloadStatus, PRINTABLE_DOWNLOAD_SPECS } from '@/lib/printable-download-specs';
+import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
 
-const GENERATION_FINGERPRINT_VERSION = 2;
+const GENERATION_FINGERPRINT_VERSION = 4;
 
 type StoredFingerprintRow = { overviewGenerationFingerprint: string | null };
 
@@ -113,6 +114,8 @@ async function loadGenerationSnapshot(context: ListingEditorContext) {
             customisePrints: true,
             digitalDownload: true,
             printsFrames: true,
+            digitalDownloadOverride: true,
+            printsFramesOverride: true,
           },
         },
         ourCategory: {
@@ -248,6 +251,7 @@ async function loadGenerationSnapshot(context: ListingEditorContext) {
   ]);
 
   if (!data || !listing) throw new Error('Listing not found.');
+  const requiresDropbox = effectiveListingTemplateSettings(data.template, data.etsyProducts.config).digitalDownload;
 
   const fingerprint = createListingOverviewFingerprint({
     version: GENERATION_FINGERPRINT_VERSION,
@@ -255,11 +259,16 @@ async function loadGenerationSnapshot(context: ListingEditorContext) {
     subSectionName: data.subSection.name,
     personalisationTextAreas: data.listing.personalisationTextAreas,
     artworkOrientation: data.listing.artworkOrientation,
+    templateArtwork: data.templateArtwork?.fingerprint ?? null,
+    templateOrientations: data.template ? { portraitEnabled: data.template.portraitEnabled, landscapeEnabled: data.template.landscapeEnabled,
+      images: data.template.imageTemplates.map((image) => ({ id: image.id, enabled: image.enabled, disabledReason: image.disabledReason })) } : null,
     printCropSettings: data.listing.printCropSettings,
+    requiresDropbox,
     listing,
   });
   const hasInstructions = listing.files.some(isDropboxInstructionPdfFile);
   const incompleteItems: string[] = [];
+  if (data.templateArtwork?.valid === false) incompleteItems.push(...data.templateArtwork.errors);
   if (data.listing.imagesNeedRegeneration) incompleteItems.push('listing images need regeneration');
   if (!data.template) {
     incompleteItems.push('listing template');
@@ -268,7 +277,7 @@ async function loadGenerationSnapshot(context: ListingEditorContext) {
       incompleteItems.push('image templates (the selected template has none)');
     } else {
       incompleteItems.push(...data.template.imageTemplates
-        .filter((template) => !template.generated)
+        .filter((template) => template.enabled !== false && !template.generated)
         .map((template) => `image "${template.name}"`));
     }
 
@@ -283,7 +292,7 @@ async function loadGenerationSnapshot(context: ListingEditorContext) {
     if (!data.listing.secondaryColour.trim()) incompleteItems.push('secondary colour');
 
     if (data.template.templateType === 'multiple') {
-      if (!hasInstructions) incompleteItems.push('grouped download instructions PDF');
+      if (requiresDropbox && !hasInstructions) incompleteItems.push('grouped download instructions PDF');
     } else {
       const downloads = getPrintableDownloadStatus(listing.files);
       incompleteItems.push(...downloads.items
@@ -293,8 +302,8 @@ async function loadGenerationSnapshot(context: ListingEditorContext) {
       if (!downloads.complete && downloads.items.every((item) => item.created) && downloads.guideCreated) {
         incompleteItems.push('digital downloads with one consistent orientation');
       }
-      if (!hasInstructions) incompleteItems.push('Dropbox download instructions PDF');
-      if (!data.dropbox.current) incompleteItems.push('current Dropbox upload');
+      if (requiresDropbox && !hasInstructions) incompleteItems.push('Dropbox download instructions PDF');
+      if (requiresDropbox && !data.dropbox.current) incompleteItems.push('current Dropbox upload');
     }
   }
 
@@ -321,26 +330,33 @@ export async function recordCurrentListingOverviewFingerprint(context: ListingEd
 async function regenerateListingOverview(context: ListingEditorContext) {
   const current = await getListingEditorData(context);
   if (!current) throw new Error('Listing not found.');
+  if (current.templateArtwork?.valid === false) throw new Error('Resolve the template artwork errors in ToDo before generating: ' + current.templateArtwork.errors.join(' '));
   if (current.template?.templateType !== 'multiple') {
     if (!current.listing.printCropSettings) throw new Error('Complete Set Size before generating this listing.');
     if (current.etsyProducts.config.customisePrints && !current.listing.personalisationTextAreas) {
       throw new Error('Complete Set Text Areas before generating this listing.');
     }
   }
-  await deleteAllListingImages(context);
+  await deleteAllListingImages(context, { forGeneration: true });
   await generateListingTemplateImages(context);
   const data = await getListingEditorData(context);
   if (!data) throw new Error('Listing not found.');
+  if (data.templateArtwork?.valid === false) throw new Error('The template artwork changed during generation. Resolve the errors in ToDo: ' + data.templateArtwork.errors.join(' '));
+  if (data.listing.imagesNeedRegeneration) throw new Error('The source artwork or template changed during image generation. Generate again before creating the listing details.');
 
   if (data.template?.templateType === 'multiple') {
-    await generateMultipleListingDetailsWithBedrock(context);
-    await createGroupedDropboxInstructionPdf(context);
+    const refreshed = await generateMultipleListingDetailsWithBedrock(context);
+    if (effectiveListingTemplateSettings(refreshed.template, refreshed.etsyProducts.config).digitalDownload) {
+      await createGroupedDropboxInstructionPdf(context);
+    }
   } else {
     await generateListingDetailsWithBedrock(context);
     for (const spec of PRINTABLE_DOWNLOAD_SPECS) await generateListingPrintableDownload(context, spec.key);
-    await generateListingHowToPrintGuide(context);
-    await createOrUpdateDropbox(context);
-    await createDropboxInstructionPdf(context);
+    const refreshed = await generateListingHowToPrintGuide(context);
+    if (effectiveListingTemplateSettings(refreshed.template, refreshed.etsyProducts.config).digitalDownload) {
+      await createOrUpdateDropbox(context);
+      await createDropboxInstructionPdf(context);
+    }
   }
 }
 
@@ -349,6 +365,7 @@ export async function generateListingOverview(
   mode: 'all' | 'changed',
 ): Promise<ListingOverviewGenerationResult> {
   const before = await loadGenerationSnapshot(context);
+  if (before.data.templateArtwork?.valid === false) throw new Error('Resolve the template artwork errors in ToDo before generating: ' + before.data.templateArtwork.errors.join(' '));
   if (mode === 'changed' && before.complete) {
     if (before.previousFingerprint === before.fingerprint) {
       return { data: before.data, generation: { regenerated: false, baselineCreated: false } };

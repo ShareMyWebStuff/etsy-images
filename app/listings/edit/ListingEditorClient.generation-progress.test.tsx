@@ -62,6 +62,16 @@ function editorData(): ListingEditorData {
   };
 }
 
+function multipleData(): ListingEditorData {
+  const initial = editorData();
+  initial.template = { ...initial.template!, templateType: 'multiple', itemCount: 3, followedTemplateId: 4 };
+  initial.listing.numberOfItems = 3;
+  initial.groupItems = ['Fox', 'Bear', 'Bunny'].map((name, index) => ({ id: String(301 + index), position: index + 1,
+    name, sectionId: '7', subSectionId: '12', thumbnailFileName: `${name.toLowerCase()}.png`, printCropSettings: initial.listing.printCropSettings }));
+  initial.groupCandidates = initial.groupItems.map((item) => ({ ...item }));
+  return initial;
+}
+
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 }
@@ -313,12 +323,7 @@ describe('listing generation progress', () => {
   });
 
   it('tracks grouped generation through its instruction PDF without standalone downloads or a Dropbox stage', async () => {
-    const initial = editorData();
-    initial.template = { ...initial.template!, templateType: 'multiple', itemCount: 3, followedTemplateId: 4 };
-    initial.listing.numberOfItems = 3;
-    initial.groupItems = ['Fox', 'Bear', 'Bunny'].map((name, index) => ({ id: String(301 + index), position: index + 1,
-      name, sectionId: '7', subSectionId: '12', thumbnailFileName: `${name.toLowerCase()}.png`, printCropSettings: initial.listing.printCropSettings }));
-    initial.groupCandidates = initial.groupItems.map((item) => ({ ...item }));
+    const initial = multipleData();
     const pdf = deferred(); const finalSave = deferred();
     const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
       if (url !== overviewEndpoint) throw new Error(`Grouped generation must use the overview workflow: ${url}`);
@@ -346,6 +351,108 @@ describe('listing generation progress', () => {
     await screen.findByText('Generation complete');
     expect(progress().value).toBe(6);
     expect(fetchMock.mock.calls.map(([, options]) => body(options).action)).toEqual(['clear-images', 'images', 'images', 'details', 'grouped-pdf', 'mark-current']);
+  });
+
+  it.each([
+    { type: 'single', disabledBy: 'template' }, { type: 'single', disabledBy: 'listing override' },
+    { type: 'multiple', disabledBy: 'template' }, { type: 'multiple', disabledBy: 'listing override' },
+  ] as const)('finishes physical $type generation without Dropbox or instruction PDFs when disabled by $disabledBy', async ({ type, disabledBy }) => {
+    const initial = type === 'multiple' ? multipleData() : editorData();
+    if (disabledBy === 'template') initial.template!.digitalDownload = false;
+    else initial.etsyProducts.config.digitalDownloadOverride = false;
+    // A stale/legacy raw flag must not override the effective template settings.
+    expect(initial.etsyProducts.config.digitalDownload).toBe(true);
+    const finalSave = deferred();
+    const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+      const request = body(options);
+      if (url === overviewEndpoint && request.action === 'mark-current') return finalSave.promise;
+      if (url === overviewEndpoint && ['clear-images', 'images', 'details'].includes(request.action ?? '')) return json({ data: initial });
+      if (url === downloadsEndpoint && type === 'single') return json({ data: initial });
+      throw new Error(`Physical generation must not create Dropbox files or instruction PDFs: ${url} ${JSON.stringify(request)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ListingEditorClient initialData={initial} />);
+    expect(screen.queryByRole('row', { name: /Download Instructions/ })).toBeNull();
+    expect(screen.queryByRole('row', { name: /Create Dropbox/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, options]) => body(options).action === 'mark-current')).toBe(true));
+    const total = 1 + initial.template!.imageTemplates.length + 1 + (type === 'single' ? PRINTABLE_DOWNLOAD_SPECS.length + 1 : 0) + 1;
+    expect(progress().max).toBe(total); expect(progress().value).toBe(total - 1);
+    const stages = screen.getByRole('list', { name: 'Listing generation progress' });
+    expect(within(stages).queryByText('Dropbox')).toBeNull();
+    expect(within(stages).getAllByRole('listitem')).toHaveLength(type === 'single' ? 3 : 2);
+    expect(screen.queryByRole('row', { name: /Download Instructions/ })).toBeNull();
+    expect(screen.queryByRole('row', { name: /Create Dropbox/ })).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => url === dropboxEndpoint)).toBe(false);
+    expect(fetchMock.mock.calls.filter(([url]) => url === overviewEndpoint).map(([, options]) => body(options).action)).toEqual(['clear-images', 'images', 'images', 'details', 'mark-current']);
+    expect(fetchMock.mock.calls.filter(([url]) => url === downloadsEndpoint).map(([, options]) => body(options).ratio)).toEqual(type === 'single' ? [...PRINTABLE_DOWNLOAD_SPECS.map(spec => spec.key), 'guide'] : []);
+    if (type === 'single') expect(within(row('How to print guide')).getByText('Completed')).toBeTruthy();
+    await finish(finalSave, json({ data: initial }));
+    await screen.findByText('Generation complete');
+    expect(progress().value).toBe(total);
+  });
+
+  it.each(['single', 'multiple'] as const)('removes pending Dropbox/PDF work when refreshed %s settings disable digital downloads after details', async type => {
+    const initial = type === 'multiple' ? multipleData() : editorData();
+    const physical = structuredClone(initial); physical.etsyProducts.config.digitalDownloadOverride = false;
+    const details = deferred(), finalSave = deferred();
+    const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+      const request = body(options);
+      if (url === overviewEndpoint && request.action === 'details') return details.promise;
+      if (url === overviewEndpoint && request.action === 'mark-current') return finalSave.promise;
+      if (url === overviewEndpoint && ['clear-images', 'images'].includes(request.action ?? '')) return json({ data: initial });
+      if (url === downloadsEndpoint && type === 'single') return json({ data: physical });
+      throw new Error(`Refreshed physical settings must prevent later Dropbox/PDF work: ${url} ${JSON.stringify(request)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ListingEditorClient initialData={initial} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await waitFor(() => expect(within(row('Create details')).getByText('Running')).toBeTruthy());
+    const completedBeforeDetails = 1 + initial.template!.imageTemplates.length;
+    const physicalTotal = completedBeforeDetails + 1 + (type === 'single' ? PRINTABLE_DOWNLOAD_SPECS.length + 1 : 0) + 1;
+    expect(progress().max).toBe(physicalTotal + (type === 'single' ? 2 : 1));
+    expect(progress().value).toBe(completedBeforeDetails);
+    await finish(details, json({ data: physical }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, options]) => body(options).action === 'mark-current')).toBe(true));
+    expect(progress().max).toBe(physicalTotal); expect(progress().value).toBe(physicalTotal - 1);
+    expect(within(screen.getByRole('list', { name: 'Listing generation progress' })).queryByText('Dropbox')).toBeNull();
+    expect(screen.queryByRole('row', { name: /Download Instructions/ })).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => url === dropboxEndpoint)).toBe(false);
+    expect(fetchMock.mock.calls.some(([, options]) => body(options).action === 'grouped-pdf')).toBe(false);
+    expect(fetchMock.mock.calls.filter(([url]) => url === downloadsEndpoint).map(([, options]) => body(options).ratio)).toEqual(type === 'single' ? [...PRINTABLE_DOWNLOAD_SPECS.map(spec => spec.key), 'guide'] : []);
+    await finish(finalSave, json({ data: physical }));
+    await screen.findByText('Generation complete');
+    expect(progress().value).toBe(physicalTotal);
+  });
+
+  it('drops pending Dropbox/PDF steps when the completed print guide refresh disables digital downloads', async () => {
+    const initial = editorData(), physical = structuredClone(initial);
+    physical.etsyProducts.config.digitalDownloadOverride = false;
+    const guide = deferred(), finalSave = deferred();
+    const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+      const request = body(options);
+      if (url === overviewEndpoint && request.action === 'mark-current') return finalSave.promise;
+      if (url === overviewEndpoint && ['clear-images', 'images', 'details'].includes(request.action ?? '')) return json({ data: initial });
+      if (url === downloadsEndpoint) return request.ratio === 'guide' ? guide.promise : json({ data: initial });
+      throw new Error(`The refreshed print-guide settings must prevent Dropbox/PDF work: ${url} ${JSON.stringify(request)}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ListingEditorClient initialData={initial} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await waitFor(() => expect(within(row('How to print guide')).getByText('Running')).toBeTruthy());
+    const physicalTotal = 1 + initial.template!.imageTemplates.length + 1 + PRINTABLE_DOWNLOAD_SPECS.length + 1 + 1;
+    expect(progress().max).toBe(physicalTotal + 2); expect(progress().value).toBe(physicalTotal - 2);
+    await finish(guide, json({ data: physical }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, options]) => body(options).action === 'mark-current')).toBe(true));
+    expect(progress().max).toBe(physicalTotal); expect(progress().value).toBe(physicalTotal - 1);
+    expect(within(row('How to print guide')).getByText('Completed')).toBeTruthy();
+    expect(within(screen.getByRole('list', { name: 'Listing generation progress' })).queryByText('Dropbox')).toBeNull();
+    expect(screen.queryByRole('row', { name: /Download Instructions/ })).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => url === dropboxEndpoint)).toBe(false);
+    expect(fetchMock.mock.calls.filter(([url]) => url === downloadsEndpoint).map(([, options]) => body(options).ratio)).toEqual([...PRINTABLE_DOWNLOAD_SPECS.map(spec => spec.key), 'guide']);
+    await finish(finalSave, json({ data: physical }));
+    await screen.findByText('Generation complete');
+    expect(progress().value).toBe(physicalTotal); expect(progress().value).toBe(progress().max);
   });
 
   it('preserves completed stages when a full-generation download fails and never starts later stages', async () => {

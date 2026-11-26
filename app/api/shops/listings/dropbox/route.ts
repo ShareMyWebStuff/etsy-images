@@ -7,6 +7,7 @@ import {
   DropboxBundleStateError,
 } from '@/lib/dropbox-bundle';
 import { getListingEditorData } from '@/lib/listing-editor';
+import { assertListingDigitalDownloadDelivery, ListingDigitalDownloadDeliveryError } from '@/lib/listing-digital-download-delivery';
 
 type RequestBody = {
   shopId?: string; sectionId?: string; subSectionId?: string; listingId?: string;
@@ -20,6 +21,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing listing context.' }, { status: 400 });
     }
     const context = { shopId: body.shopId, sectionId: body.sectionId, subSectionId: body.subSectionId, listingId: body.listingId };
+    if (body.action === 'dropbox' || body.action === 'pdf' || body.action === 'grouped-pdf') await assertListingDigitalDownloadDelivery(context);
     let result: unknown;
     if (body.action === 'zip') result = await createDropboxZips(context);
     else if (body.action === 'dropbox') result = await createOrUpdateDropbox(context);
@@ -36,7 +38,7 @@ export async function POST(request: Request) {
     console.error('Dropbox listing action failed:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Dropbox action failed.' },
-      { status: error instanceof DropboxBundleStateError ? error.status : 500 },
+      { status: error instanceof DropboxBundleStateError || error instanceof ListingDigitalDownloadDeliveryError ? error.status : 500 },
     );
   }
 }

@@ -2,7 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { OurTemplateImageForegroundMask } from '@/lib/our-template-image-types';
-import { OurTemplateImagesClient, type SceneImage } from './OurTemplateImagesClient';
+import { SceneEditorTestHarness as OurTemplateImagesClient } from './scene-editor-test-harness';
+import type { SceneImage } from './SceneImageEditor';
 
 const painted: OurTemplateImageForegroundMask = { version: 1, strokes: [{
   mode: 'paint', size: 14, softness: 0.25, points: [{ x: 80, y: 40 }, { x: 82, y: 42 }],

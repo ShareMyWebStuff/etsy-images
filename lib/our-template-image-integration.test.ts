@@ -87,6 +87,18 @@ function expectColour(actual: number[], expected: number[]) {
 }
 
 describe('Our Template Images through the existing listing renderer', () => {
+  it('renders explicitly selected artwork by its original scene number without applying the saved legacy mapping twice', async () => {
+    mapping = { '1': 3, '2': 1 };
+    const red = await solid('#ee2200'), blue = await solid('#0022ee');
+    const expected = await renderSavedOurTemplateImage(sceneId, new Map([[1, { contents: red }], [2, { contents: blue }]]));
+    const actual = await renderOurCategoryImageTemplate(94, new Map([[1, red], [2, blue]]),
+      undefined, undefined, undefined, undefined, undefined, new Map([[1, 'portrait'], [2, 'portrait']]), 'portrait',
+      { sourceItemNumbersAreSceneItems: true });
+    expect(actual.equals(expected)).toBe(true);
+    expect(mapping).toEqual({ '1': 3, '2': 1 });
+    expect(mocks.execute).not.toHaveBeenCalled(); expect(mocks.write).not.toHaveBeenCalled();
+  });
+
   it('keeps lower portrait artwork visible at centred minimum cover, preserves its saved crop and matches listing-artwork Test output', async () => {
     const { contents, crops } = await preparePortraitMarkerSample();
     const body = new FormData(); body.set('listing-1', '586');

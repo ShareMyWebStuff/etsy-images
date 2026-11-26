@@ -107,6 +107,7 @@ beforeEach(async () => {
       definition: storedDefinition, createdAt, updatedAt: createdAt }] : [];
     if (statement.includes('FROM our_categories')) return [{ id: 1, shopId: 1, name: 'Nursery', templateType: 'single', itemCount: 1,
       printsFrames: true, customisePrints: false, digitalDownload: true, customTop: false, customBottom: false, sizes: {}, frames: {} }];
+    if (statement.includes('FROM our_template_image_definition_images')) return [];
     if (statement.includes('SELECT linked.id')) return [];
     if (statement.includes('FROM our_category_image_templates')) return [...templates.values()];
     throw new Error(`Unexpected query: ${statement}`);

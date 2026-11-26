@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SubSectionListingsTable } from '@/app/listings/SubSectionListingsTable';
@@ -34,6 +34,32 @@ const data: SubSectionListingsPageData = {
 };
 
 describe('SubSectionListingsTable categories', () => {
+  it.each(['active', 'published'])('shows an accessible yellow orientation warning without removing %s deletion protection', (status) => {
+    const warning = 'This template does not support landscape artwork. Room images will be skipped.';
+    const initial: SubSectionListingsPageData = { ...data, subSection: { ...data.subSection, numberOfDownloads: 1 },
+      listings: [{ ...data.listings[0], artworkOrientation: 'landscape', status, isComplete: true, orientationWarning: warning, hasEtsyListingId: false }] };
+    const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+    const { container, rerender } = render(<SubSectionListingsTable data={initial} shopId="66615491" sectionId="3" subSectionId="8" />);
+    const row = container.querySelector('[data-listing-id="500"]') as HTMLTableRowElement;
+    expect(row.classList.contains('bg-yellow-50')).toBe(true);
+    expect(row.classList.contains('bg-green-50')).toBe(false);
+    const indicator = within(row).getByTitle(warning);
+    expect(indicator.textContent).toContain('Warning');
+    expect(within(indicator).getByText(`: ${warning}`).classList.contains('sr-only')).toBe(true);
+    const remove = within(row).getByRole('button', { name: 'Delete Sea Creatures Set' }) as HTMLButtonElement;
+    expect(remove.disabled).toBe(true); fireEvent.click(remove);
+    expect(screen.queryByRole('dialog')).toBeNull(); expect(fetchMock).not.toHaveBeenCalled();
+
+    const matching = { ...initial, listings: [{ ...initial.listings[0], orientationWarning: null }] };
+    rerender(<SubSectionListingsTable data={matching} shopId="66615491" sectionId="3" subSectionId="8" />);
+    const updated = container.querySelector('[data-listing-id="500"]') as HTMLTableRowElement;
+    expect(updated.classList.contains('bg-yellow-50')).toBe(false);
+    expect(updated.classList.contains('bg-green-50')).toBe(true);
+    expect(within(updated).getByText(status)).toBeTruthy();
+    expect(within(updated).queryByTitle(warning)).toBeNull();
+    expect((within(updated).getByRole('button', { name: 'Delete Sea Creatures Set' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('opens the whole-section gallery between Generate and Edit even when the displayed subsection is empty', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ sectionName: data.section.sectionName,
       listings: [{ id: '701', listingName: 'Artwork from another subsection', hasThumbnail: true,

@@ -63,6 +63,10 @@ import { PRICE_OPTIONS } from '@/lib/set-prices-core';
 import { getTemplateDownloadSectionId, hasRequiredTemplateDownloadSection } from '@/lib/template-download-section';
 import { effectiveListingCustomisation } from '@/lib/listing-customisation';
 import { effectiveListingTemplateSettings } from '@/lib/listing-template-settings';
+import { getListingTemplateOrientationPlans } from '@/lib/listing-template-orientation';
+import { selectListingTemplateOrientation } from '@/lib/template-orientation';
+import { getListingTemplateArtworkPlan, type ListingTemplateArtworkPlan } from '@/lib/listing-template-artwork';
+import { invalidateListingTemplateArtworkConsumers } from '@/lib/listing-template-artwork-dependencies';
 import { analyseListingThumbnailDimensions, type ListingThumbnailRatio } from '@/lib/listing-thumbnail-ratio';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
@@ -79,6 +83,7 @@ type PendingListingChange = 'Thumbnail' | 'Etsy Products' | 'Images' | 'Details'
 
 export type ListingEditorData = {
   context: ListingEditorContext;
+  templateArtwork?: ListingTemplateArtworkPlan | null;
   shop: {
     id: string;
     shopName: string;
@@ -137,6 +142,7 @@ export type ListingEditorData = {
     includeAllItems: boolean;
     thumbnailUpdatedAt: string | null;
     imagesNeedRegeneration?: boolean;
+    orientationWarning?: string | null;
   };
   template: {
     id: number;
@@ -151,8 +157,10 @@ export type ListingEditorData = {
     digitalDownload: boolean;
     sharedPhysicalDelivery?: boolean;
     backgroundColour: ArtworkBackgroundColour;
+    portraitEnabled?: boolean;
+    landscapeEnabled?: boolean;
     downloadSection: { title: string; etsyShopSectionId: number } | null;
-    imageTemplates: Array<{ id: string; name: string; position: number; generated: boolean }>;
+    imageTemplates: Array<{ id: string; name: string; position: number; generated: boolean; enabled?: boolean; disabledReason?: string | null }>;
   } | null;
   groupCandidates: Array<{
     id: string;
@@ -618,8 +626,10 @@ export async function mapEditorData(
     data.subSection.name,
     data.listing.localDirectoryName ?? `Listing-${data.listing.id}`,
   );
-  const zipStorageStatus = await inspectListingZipStorage(data.listing, listingPath);
-  const zippedFilesAreCurrent = zipStorageStatus.valid;
+  const listingTemplateSettings = effectiveListingTemplateSettings(data.listing.ourCategory, data.listing.productConfig);
+  const requiresDropbox = listingTemplateSettings.digitalDownload;
+  const zipStorageStatus = requiresDropbox ? await inspectListingZipStorage(data.listing, listingPath) : null;
+  const zippedFilesAreCurrent = zipStorageStatus?.valid ?? false;
   const hasDigitalDownloads = data.listing.files.some((file) => !isDropboxInstructionPdfFile(file));
   const groupedDropboxNeedsPdf = data.listing.dropboxFiles.length > 0;
   const hasDropboxInstructionPdf = data.listing.files.some(isDropboxInstructionPdfFile);
@@ -672,11 +682,26 @@ export async function mapEditorData(
   const backgroundColour = normalizeArtworkBackgroundColour(
     data.listing.backgroundColour ?? templateBackgroundColour,
   );
-  const expectedTemplateImageIds = data.listing.ourCategory?.imageTemplates.map((template) => template.id) ?? [];
+  const orientationPlan = data.listing.ourCategory
+    ? (await getListingTemplateOrientationPlans([data.listing.ourCategory.id])).get(data.listing.ourCategory.id)
+    : undefined;
+  const sourceOrientations = new Map<number, ListingArtworkOrientation>(isMultipleTemplate
+    ? data.listing.groupItems.map((item) => [item.position, normalizeListingArtworkOrientation(item.sourceListing.artworkOrientation)])
+    : [[1, normalizeListingArtworkOrientation(data.listing.artworkOrientation)]]);
+  const orientationSelection = orientationPlan
+    ? selectListingTemplateOrientation(orientationPlan, normalizeListingArtworkOrientation(data.listing.artworkOrientation), sourceOrientations)
+    : null;
+  const hasSceneRoles = orientationPlan?.rows.some((role) => role.orientationSpecific || role.error || role.portrait.sceneId || role.landscape.sceneId);
+  const templateArtwork = hasSceneRoles ? await getListingTemplateArtworkPlan(context) : null;
+  const expectedTemplateImageIds = templateArtwork
+    ? templateArtwork.roles.map((role) => role.id)
+    : orientationSelection?.expectedIds
+    ?? data.listing.ourCategory?.imageTemplates.map((template) => template.id) ?? [];
   const generatedTemplateImageIds = new Set(data.listing.images.flatMap((image) => (
     image.ourCategoryImageTemplateId == null ? [] : [image.ourCategoryImageTemplateId]
   )));
   const hasAllTemplateImages = expectedTemplateImageIds.length > 0
+    && templateArtwork?.valid !== false
     && !data.listing.imageGenerationState.needsRegeneration
     && expectedTemplateImageIds.every((templateId) => generatedTemplateImageIds.has(templateId));
   const dropboxIsCurrent = Boolean(data.listing.dropboxBundle?.sharedUrl?.trim())
@@ -697,9 +722,10 @@ export async function mapEditorData(
     hasRequiredDigitalDownloads: !isMultipleTemplate && hasRequiredPrintableDownloads(data.listing.files),
     hasCurrentZips: zippedFilesAreCurrent,
     hasCurrentDropbox: dropboxIsCurrent,
+    requiresDropbox,
     hasDownloadSection: hasRequiredTemplateDownloadSection(data.listing.ourCategory ? {
       ...data.listing.ourCategory,
-      ...effectiveListingTemplateSettings(data.listing.ourCategory, data.listing.productConfig),
+      ...listingTemplateSettings,
     } : null),
     hasTags: data.listing.tags.length > 0,
     hasTitle: normalize(data.listing.title).length > 0,
@@ -712,8 +738,11 @@ export async function mapEditorData(
     hasSecondaryColour: normalize(data.listing.secondaryColour).length > 0,
     hasEtsySku: normalize(data.listing.productConfig?.sku).length > 0,
   });
+  if (templateArtwork && !templateArtwork.valid) todoItems.unshift(...templateArtwork.errors.map((label): ListingTodoItem => ({ label, tab: 'overview' })));
   let dropboxMessage: string | null = null;
-  if (!hasDigitalDownloads) {
+  if (!requiresDropbox) {
+    dropboxMessage = 'Dropbox is only needed for listings sold as digital downloads.';
+  } else if (!hasDigitalDownloads) {
     dropboxMessage = 'Add at least one file to Digital Downloads before creating Dropbox.';
   } else if (groupedDropboxNeedsPdf && !hasDropboxInstructionPdf) {
     dropboxMessage = 'Create or update Dropbox to generate the Etsy download PDF.';
@@ -730,6 +759,7 @@ export async function mapEditorData(
 
   return {
     context,
+    templateArtwork,
     shop: {
       id: data.shop.etsyShopId.toString(),
       shopName: data.shop.shopName ?? data.shop.title ?? `Shop ${data.shop.etsyShopId}`,
@@ -788,6 +818,7 @@ export async function mapEditorData(
       includeAllItems: data.listing.includeAllItems,
       thumbnailUpdatedAt: data.listing.thumbnailUpdatedAt?.toISOString() ?? null,
       imagesNeedRegeneration: data.listing.imageGenerationState.needsRegeneration,
+      orientationWarning: templateArtwork ? templateArtwork.errors.join(' ') || null : orientationSelection?.warning ?? null,
     },
     template: data.listing.ourCategory ? {
       id: data.listing.ourCategory.id,
@@ -803,14 +834,22 @@ export async function mapEditorData(
       sharedPhysicalDelivery: data.listing.ourCategory.printFrameSectionId !== null
         && data.listing.ourCategory.printFrameSectionId === data.listing.ourCategory.customisedSectionId,
       backgroundColour: templateBackgroundColour,
+      portraitEnabled: orientationPlan?.portraitEnabled ?? true,
+      landscapeEnabled: orientationPlan?.landscapeEnabled ?? true,
       downloadSection: data.listing.ourCategory.downloadSection,
-      imageTemplates: data.listing.ourCategory.imageTemplates.map((template) => ({
-        id: String(template.id),
-        name: template.name,
-        position: template.position,
-        generated: !data.listing.imageGenerationState.needsRegeneration
-          && data.listing.images.some((image) => image.ourCategoryImageTemplateId === template.id),
-      })),
+      imageTemplates: data.listing.ourCategory.imageTemplates.map((template) => {
+        const orientationRow = orientationSelection?.rows.find((row) => row.id === template.id);
+        const artworkRole = templateArtwork?.roles.find((role) => role.id === template.id);
+        return {
+          id: String(template.id),
+          name: template.name,
+          position: template.position,
+          enabled: artworkRole ? artworkRole.valid : orientationRow?.enabled ?? true,
+          disabledReason: artworkRole ? artworkRole.errors.join(' ') || null : orientationRow?.disabledReason ?? null,
+          generated: (artworkRole ? artworkRole.valid : orientationRow?.enabled !== false) && !data.listing.imageGenerationState.needsRegeneration
+            && data.listing.images.some((image) => image.ourCategoryImageTemplateId === template.id),
+        };
+      }),
     } : null,
     groupCandidates: data.groupCandidates.flatMap((candidate) => candidate.subSectionId && candidate.subSection ? [{
       id: String(candidate.id),
@@ -852,8 +891,8 @@ export async function mapEditorData(
       data.listing.downloadsChanged ? 'Digital Downloads' as const : null,
       data.listing.productsChanged ? 'Etsy Products' as const : null,
     ].filter((area): area is Exclude<PendingListingChange, 'Thumbnail' | 'Dropbox'> => area !== null),
-    readyToUpload: missingUploadFields.length === 0,
-    missingUploadFields,
+    readyToUpload: missingUploadFields.length === 0 && templateArtwork?.valid !== false,
+    missingUploadFields: [...missingUploadFields, ...(templateArtwork?.errors ?? [])],
     todoItems,
     tags: data.listing.tags.map((tag) => ({ id: String(tag.id), value: tag.tag })),
     materials: data.listing.materials.map((material) => ({ id: String(material.id), value: material.material })),
@@ -969,10 +1008,10 @@ export async function mapEditorData(
         updatedAt: data.listing.dropboxBundle.updatedAt.toISOString(),
       } : null,
       current: dropboxIsCurrent,
-      canCreateZips: data.listing.dropboxFiles.length > 0,
+      canCreateZips: requiresDropbox && data.listing.dropboxFiles.length > 0,
       zipsCurrent: zippedFilesAreCurrent,
       message: dropboxMessage,
-      action: hasDigitalDownloads ? (data.listing.dropboxBundle ? 'update' : 'create') : null,
+      action: requiresDropbox && hasDigitalDownloads ? (data.listing.dropboxBundle ? 'update' : 'create') : null,
     },
   };
 }
@@ -1222,6 +1261,7 @@ export async function saveListingArtworkOrientation(
           lastLocalChangeAt = ${new Date()}
       WHERE id = ${data.listing.id}
     `;
+    await invalidateListingTemplateArtworkConsumers([data.listing.id]);
   } else {
     await prisma.$executeRaw`
       UPDATE etsy_listings
@@ -1364,24 +1404,33 @@ export async function getGroupedListingThumbnail(
   return preview ? { ...file, fileName: `${file.fileName}.webp` } : file;
 }
 
-export async function generateListingTemplateImages(
-  context: ListingEditorContext,
-  imageTemplateId?: number,
-) {
-  const { data, listingPath } = await getListingAssetDirectory(context);
-  const generationRevision = data.listing.imageGenerationState.revision;
+type PreparedArtworkSource = Awaited<ReturnType<typeof readSourceListingThumbnail>>;
+
+async function prepareListingImageGeneration(context: ListingEditorContext, data: Awaited<ReturnType<typeof getListingForContext>>, listingPath: string) {
   const template = data.listing.ourCategory;
   if (!template) throw new Error('Choose a template for this listing before generating images.');
-  if (template.imageTemplates.length === 0) throw new Error('The selected template has no image templates.');
-  const backgroundColour = normalizeArtworkBackgroundColour(
-    data.listing.backgroundColour ?? template.backgroundColour,
-  );
-
-  if (template.templateType !== 'multiple') {
+  if (!template.imageTemplates.length) throw new Error('The selected template has no image templates.');
+  const orientation = normalizeListingArtworkOrientation(data.listing.artworkOrientation);
+  const orientationPlan = (await getListingTemplateOrientationPlans([template.id])).get(template.id);
+  const hasSceneRoles = orientationPlan?.rows.some((role) => role.orientationSpecific || role.error || role.portrait.sceneId || role.landscape.sceneId);
+  const artworkPlan = hasSceneRoles ? await getListingTemplateArtworkPlan(context, { includeCandidates: false }) : null;
+  if (artworkPlan && !artworkPlan.valid) throw new Error('Resolve the template artwork errors in ToDo before generating: ' + artworkPlan.errors.join(' '));
+  const selectedSources = new Map<string, PreparedArtworkSource>();
+  for (const id of new Set(artworkPlan?.roles.flatMap((role) => role.items.flatMap((item) => item.sourceListingId ? [item.sourceListingId] : [])) ?? [])) {
+    const source = await readSourceListingThumbnail(data.shop.etsyShopId.toString(), Number(id));
+    if (!source.printCropSettings) throw new Error('Complete Set Size for listing ' + id + ' before generating images.');
+    selectedSources.set(id, source);
+  }
+  for (const role of artworkPlan?.roles ?? []) for (const item of role.items) {
+    const source = selectedSources.get(item.sourceListingId!);
+    if (!source || source.artworkOrientation !== item.orientation) {
+      throw new Error(`${role.name}: Artwork item ${item.itemNumber} needs ${item.orientation} artwork. The source changed; reload this listing.`);
+    }
+  }
+  const hasAdaptiveRoles = !artworkPlan || artworkPlan.roles.some((role) => role.mode === 'legacy' && !role.sceneId);
+  if (hasAdaptiveRoles && template.templateType !== 'multiple') {
     const crops = parseCurrentListingPrintCropSettings(data.listing.printCropSettings, {
-      fileName: data.listing.thumbnailFileName,
-      updatedAt: data.listing.thumbnailUpdatedAt?.toISOString() ?? null,
-      orientation: normalizeListingArtworkOrientation(data.listing.artworkOrientation),
+      fileName: data.listing.thumbnailFileName, updatedAt: data.listing.thumbnailUpdatedAt?.toISOString() ?? null, orientation,
     });
     if (!crops) throw new Error('Complete Set Size before generating listing images.');
     const customisation = effectiveListingCustomisation(template, data.listing.productConfig);
@@ -1389,14 +1438,13 @@ export async function generateListingTemplateImages(
       throw new Error('Complete Set Text Areas before generating listing images.');
     }
   }
-
   const sourceImages = new Map<number, Buffer>();
   const sourceTextAreas = new Map<number, ListingPersonalisationTextAreaSettings | null>();
   const sourceTextRatios = new Map<number, PrintableDownloadRatio>();
   const sourcePrintCrops = new Map<number, ListingPrintCropSettings | null>();
   const sourceOrientations = new Map<number, ListingArtworkOrientation>();
   const sourceCustomisation = new Map<number, ReturnType<typeof effectiveListingCustomisation>>();
-  if (template.templateType === 'multiple') {
+  if (hasAdaptiveRoles && template.templateType === 'multiple') {
     if (data.listing.groupItems.length !== template.itemCount) {
       throw new Error(`Select and save exactly ${template.itemCount} grouped listings before generating images.`);
     }
@@ -1409,7 +1457,7 @@ export async function generateListingTemplateImages(
       sourceOrientations.set(item.position, source.artworkOrientation);
       sourceCustomisation.set(item.position, source.customisation);
     }
-  } else {
+  } else if (hasAdaptiveRoles) {
     if (!data.listing.thumbnailFileName) throw new Error('Upload a thumbnail before generating images.');
     sourceImages.set(1, await readFile(path.join(listingPath, 'thumbnail', data.listing.thumbnailFileName)));
     sourceTextAreas.set(1, parseListingPersonalisationTextAreas(data.listing.personalisationTextAreas));
@@ -1424,28 +1472,60 @@ export async function generateListingTemplateImages(
     sourceCustomisation.set(1, effectiveListingCustomisation(template, data.listing.productConfig));
   }
 
-  const imageTemplates = imageTemplateId === undefined
-    ? template.imageTemplates
+
+  const orientationSelection = orientationPlan ? selectListingTemplateOrientation(orientationPlan, orientation, sourceOrientations) : null;
+  if (!artworkPlan && orientationSelection?.skippedIds.length) throw new Error(orientationSelection.warning ?? 'Resolve the template orientation errors before generating images.');
+  return { artworkPlan, selectedSources, sourceImages, sourceTextAreas, sourceTextRatios, sourcePrintCrops, sourceOrientations,
+    sourceCustomisation, orientation, expectedIds: artworkPlan?.roles.map((role) => role.id) ?? orientationSelection?.expectedIds };
+}
+
+/** Validate every role and read its selected artwork before removing any existing listing image. */
+export async function preflightListingImageGeneration(context: ListingEditorContext) {
+  const { data, listingPath } = await getListingAssetDirectory(context);
+  await prepareListingImageGeneration(context, data, listingPath);
+}
+
+export async function generateListingTemplateImages(
+  context: ListingEditorContext,
+  imageTemplateId?: number,
+) {
+  const { data, listingPath } = await getListingAssetDirectory(context);
+  const generationRevision = data.listing.imageGenerationState.revision;
+  const template = data.listing.ourCategory;
+  if (!template) throw new Error('Choose a template for this listing before generating images.');
+  if (template.imageTemplates.length === 0) throw new Error('The selected template has no image templates.');
+  const backgroundColour = normalizeArtworkBackgroundColour(data.listing.backgroundColour ?? template.backgroundColour);
+  const prepared = await prepareListingImageGeneration(context, data, listingPath);
+  const { sourceImages, sourceTextAreas, sourceTextRatios, sourcePrintCrops, sourceOrientations, sourceCustomisation, orientation } = prepared;
+  const imageTemplates = imageTemplateId === undefined ? template.imageTemplates
     : template.imageTemplates.filter((imageTemplate) => imageTemplate.id === imageTemplateId);
-  if (imageTemplates.length === 0) throw new Error('The selected image template is not available on this listing template.');
+  if (!imageTemplates.length) throw new Error('The selected image template is not available on this listing template.');
 
   await mkdir(listingPath, { recursive: true });
   for (const imageTemplate of imageTemplates) {
     const index = template.imageTemplates.findIndex((candidate) => candidate.id === imageTemplate.id);
+    const role = prepared.artworkPlan?.roles.find((candidate) => candidate.id === imageTemplate.id);
+    const scoped = role?.sceneId ? role.items.map((item) => {
+      const source = prepared.selectedSources.get(item.sourceListingId!);
+      if (!source) throw new Error('The selected source artwork is no longer available. Reload this listing.');
+      return { itemNumber: item.itemNumber, source };
+    }) : null;
     const output = await renderOurCategoryImageTemplate(
       imageTemplate.id,
-      sourceImages,
-      sourceTextAreas,
-      sourceCustomisation,
-      sourceTextRatios,
-      sourcePrintCrops,
+      scoped ? new Map(scoped.map(({ itemNumber, source }) => [itemNumber, source.contents])) : sourceImages,
+      scoped ? new Map(scoped.map(({ itemNumber, source }) => [itemNumber, source.personalisationTextAreas])) : sourceTextAreas,
+      scoped ? new Map(scoped.map(({ itemNumber, source }) => [itemNumber, source.customisation])) : sourceCustomisation,
+      scoped ? new Map(scoped.map(({ itemNumber, source }) => [itemNumber, source.sourceRatio])) : sourceTextRatios,
+      scoped ? new Map(scoped.map(({ itemNumber, source }) => [itemNumber, source.printCropSettings])) : sourcePrintCrops,
       backgroundColour,
-      sourceOrientations,
+      scoped ? new Map(scoped.map(({ itemNumber, source }) => [itemNumber, source.artworkOrientation])) : sourceOrientations,
+      orientation,
+      { sourceItemNumbersAreSceneItems: Boolean(scoped) },
     );
     const fileName = `template-${imageTemplate.id}.png`;
     const targetPath = path.join(listingPath, fileName);
+    let writeAttempted = false;
     try {
-      await writeFile(targetPath, output);
       const metadata = await sharp(output).metadata();
       await prisma.$transaction(async (transaction) => {
         // Assignment updates lock this same parent row before checking its
@@ -1460,6 +1540,10 @@ export async function generateListingTemplateImages(
         if (Number(current.listingImagesRevision) !== generationRevision) {
           throw new Error('The listing images changed while generation was running. Reload the listing and generate its images again.');
         }
+        // Publish only while holding the same revision lock as assignment/source
+        // changes, so a stale render cannot overwrite a newer tracked image.
+        writeAttempted = true;
+        await writeFile(targetPath, output);
         await transaction.etsyListingImage.upsert({
           where: {
             listingId_ourCategoryImageTemplateId: {
@@ -1487,6 +1571,7 @@ export async function generateListingTemplateImages(
         });
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30_000 });
     } catch (error) {
+      if (!writeAttempted) throw error;
       // The listing snapshot may be stale: a concurrent deletion can remove an
       // old reference, or another generation can commit this same filename.
       // Only clean a failed output after confirming it has no live reference.
@@ -1512,7 +1597,8 @@ export async function generateListingTemplateImages(
     }
     await recordListingTemplateImageRevision(data.listing.id, imageTemplate.id, generationRevision);
   }
-  await markListingImageGenerationComplete(data.listing.id, generationRevision);
+  if (prepared.expectedIds) await markListingImageGenerationComplete(data.listing.id, generationRevision, prepared.expectedIds);
+  else await markListingImageGenerationComplete(data.listing.id, generationRevision);
   await prisma.etsyListing.update({
     where: { id: data.listing.id },
     data: { imagesChanged: true, lastLocalChangeAt: new Date() },
@@ -1522,14 +1608,29 @@ export async function generateListingTemplateImages(
   return refreshed;
 }
 
-export async function deleteAllListingImages(context: ListingEditorContext) {
+export async function deleteAllListingImages(context: ListingEditorContext, options?: { forGeneration?: boolean }) {
   const { data, listingPath } = await getListingAssetDirectory(context);
+  if (options?.forGeneration) await prepareListingImageGeneration(context, data, listingPath);
   // A deleted template can leave a generated image without a database row.
   // Include only the storage layer's reserved generated filenames, alongside
   // the registered images that this action has always removed.
   const generatedFiles = await listGeneratedListingImageFiles(listingPath);
   const images = [...data.listing.images, ...generatedFiles.map((localFileName) => ({ localFileName }))];
   await removeListingImages(listingPath, images, async () => {
+    if (options?.forGeneration) {
+      await prisma.$transaction(async (transaction) => {
+        const [current] = await transaction.$queryRaw<Array<{ ourCategoryId: number | null; listingImagesRevision: number }>>`
+          SELECT ourCategoryId, listingImagesRevision FROM etsy_listings WHERE id = ${data.listing.id} FOR UPDATE
+        `;
+        if (!current || current.ourCategoryId !== data.listing.ourCategory?.id
+          || Number(current.listingImagesRevision) !== data.listing.imageGenerationState.revision) {
+          throw new Error('The listing or its artwork selections changed. Reload it before generating again.');
+        }
+        await transaction.etsyListingImage.deleteMany({ where: { listingId: data.listing.id } });
+        await transaction.etsyListing.update({ where: { id: data.listing.id }, data: { imagesChanged: true, lastLocalChangeAt: new Date() } });
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30_000 });
+      return;
+    }
     await prisma.$transaction([
       prisma.etsyListingImage.deleteMany({ where: { listingId: data.listing.id } }),
       prisma.etsyListing.update({
@@ -1666,6 +1767,7 @@ export async function saveListingPersonalisationTextAreas(
     SET personalisationTextAreas = ${JSON.stringify(saved)}, lastLocalChangeAt = ${new Date()}
     WHERE id = ${data.listing.id}
   `;
+  await invalidateListingTemplateArtworkConsumers([data.listing.id]);
   const refreshed = await getListingEditorData(context);
   if (!refreshed) throw new Error('Listing not found.');
   return refreshed;
@@ -1704,6 +1806,7 @@ export async function saveListingPrintCropSettings(
         lastLocalChangeAt = ${new Date()}
     WHERE id = ${data.listing.id}
   `;
+  await invalidateListingTemplateArtworkConsumers([data.listing.id]);
   const refreshed = await getListingEditorData(context);
   if (!refreshed) throw new Error('Listing not found.');
   return refreshed;
@@ -2011,6 +2114,7 @@ async function invalidateListingPrintCrops(listingId: number) {
         lastLocalChangeAt = ${new Date()}
     WHERE id = ${listingId}
   `;
+  await invalidateListingTemplateArtworkConsumers([listingId]);
 }
 
 async function normalizeListingThumbnail(

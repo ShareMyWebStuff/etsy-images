@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { Route } from 'next';
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { Fragment } from 'react';
-import { Check, ChevronDown, ChevronRight, ImageIcon, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronRight, ImageIcon, Pencil, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -526,11 +526,14 @@ export function SubSectionListingsTable({
                         </button> : sourceSectionName}
                       </TableCell>
                     </TableRow> : null}
-                    {!hasCollapsibleGroups || isSectionExpanded ? <TableRow data-listing-id={listing.id} className={listing.isComplete ? 'bg-green-50 hover:bg-green-100' : undefined}>
+                    {!hasCollapsibleGroups || isSectionExpanded ? <TableRow data-listing-id={listing.id} className={listing.orientationWarning ? 'bg-yellow-50 hover:bg-yellow-100' : listing.isComplete ? 'bg-green-50 hover:bg-green-100' : undefined}>
                       {!isSingleListings ? <TableCell className="text-muted-foreground">{sourceSectionName}</TableCell> : null}
                       <TableCell className="font-medium">{listing.listingName}</TableCell>
                       <TableCell className="whitespace-nowrap">{listing.artworkOrientation === 'landscape' ? 'Landscape' : listing.artworkOrientation === 'portrait' ? 'Portrait' : '-'}</TableCell>
-                      <TableCell>{listing.status}</TableCell>
+                      <TableCell>{listing.orientationWarning ? <span className="inline-flex items-center gap-1 text-amber-800" title={listing.orientationWarning}>
+                        <AlertTriangle className="h-4 w-4" aria-hidden="true" />Warning
+                        <span className="sr-only">: {listing.orientationWarning}</span>
+                      </span> : listing.status}</TableCell>
                       <TableCell className="text-right tabular-nums">{listing.quantity ?? 'None'}</TableCell>
                       <TableCell className="text-right tabular-nums">{listing.price}</TableCell>
                       <TableCell>
